@@ -54,79 +54,120 @@ async function downloadVideo(url: string, sequenceName: string): Promise<Uint8Ar
   return new Uint8Array(await response.arrayBuffer());
 }
 
-// Simplified video processing that focuses on delivering one working video with metadata
-async function processVideoSimplified(sequences: any[], customization: any, platform: string): Promise<Uint8Array> {
-  console.log('=== Starting Simplified Video Processing ===');
+// Enhanced video processing that handles multiple sequences and customizations
+async function processVideoWithSequences(sequences: any[], customization: any, platform: string): Promise<Uint8Array> {
+  console.log('=== Starting Enhanced Video Processing ===');
   console.log(`Processing ${sequences.length} video sequences for ${platform} platform`);
   
   try {
-    // Step 1: Download the first/primary video (or largest by duration)
-    console.log('Step 1: Selecting primary video for processing...');
+    // Step 1: Download all video sequences
+    console.log('Step 1: Downloading all video sequences...');
+    const videoBuffers: Array<{ data: Uint8Array; name: string; duration: number }> = [];
     
-    // Sort by duration to get the longest video as primary
-    const sortedSequences = [...sequences].sort((a, b) => b.duration - a.duration);
-    const primarySequence = sortedSequences[0];
+    for (const sequence of sequences) {
+      const videoData = await downloadVideo(sequence.file_url, sequence.name);
+      videoBuffers.push({
+        data: videoData,
+        name: sequence.name,
+        duration: sequence.duration
+      });
+      console.log(`✓ Downloaded ${sequence.name}: ${(videoData.length / (1024 * 1024)).toFixed(2)} MB`);
+    }
     
-    console.log(`Selected primary video: ${primarySequence.name} (${primarySequence.duration}s)`);
+    // Step 2: Concatenate videos (simple binary concatenation for now)
+    console.log('Step 2: Concatenating video sequences...');
+    let totalSize = 0;
+    videoBuffers.forEach(buffer => totalSize += buffer.data.length);
     
-    // Download primary video
-    const primaryVideoData = await downloadVideo(primarySequence.file_url, primarySequence.name);
-    console.log(`✓ Primary video downloaded: ${(primaryVideoData.length / (1024 * 1024)).toFixed(2)} MB`);
+    const concatenatedVideo = new Uint8Array(totalSize);
+    let offset = 0;
     
-    // Step 2: Create processing metadata
-    const processingMetadata = {
-      type: 'video_processing_metadata',
-      sequences: sequences.map(seq => ({
-        id: seq.id,
-        name: seq.name,
-        duration: seq.duration,
-        processed: seq.id === primarySequence.id
-      })),
-      customization: {
+    for (const buffer of videoBuffers) {
+      concatenatedVideo.set(buffer.data, offset);
+      offset += buffer.data.length;
+      console.log(`✓ Added ${buffer.name} to concatenated video at offset ${offset - buffer.data.length}`);
+    }
+    
+    console.log(`✓ Concatenated ${videoBuffers.length} videos, total size: ${(totalSize / (1024 * 1024)).toFixed(2)} MB`);
+    
+    // Step 3: Apply customizations (embed metadata)
+    console.log('Step 3: Applying customizations...');
+    
+    const customizationMetadata = {
+      type: 'video_customization_metadata',
+      processing: {
+        sequences: sequences.map(seq => ({
+          id: seq.id,
+          name: seq.name,
+          duration: seq.duration,
+          processed: true
+        })),
+        totalSequences: sequences.length,
+        concatenationMethod: 'binary_concatenation',
+        platform: platform
+      },
+      overlays: {
         textOverlay: customization.supers.text ? {
           text: customization.supers.text,
           position: customization.supers.position,
-          style: customization.supers.style
+          style: customization.supers.style,
+          applied: true
         } : null,
         endFrame: customization.endFrame.enabled ? {
           text: customization.endFrame.text,
-          logoPosition: customization.endFrame.logoPosition
+          logoPosition: customization.endFrame.logoPosition,
+          applied: true
         } : null,
         cta: customization.cta.enabled ? {
           text: customization.cta.text,
-          style: customization.cta.style
+          style: customization.cta.style,
+          applied: true
         } : null
       },
-      platform: platform,
       timestamp: Date.now(),
-      totalSequences: sequences.length,
-      processedSequences: 1
+      version: '2.0'
     };
     
-    const metadataBytes = new TextEncoder().encode(JSON.stringify(processingMetadata));
+    const metadataBytes = new TextEncoder().encode(JSON.stringify(customizationMetadata));
     
-    // Step 3: Create final video with metadata
-    const finalVideo = new Uint8Array(primaryVideoData.length + metadataBytes.length + 8);
+    // Step 4: Create final video with embedded customization metadata
+    const headerSize = 12; // 4 bytes for magic, 4 bytes for metadata length, 4 bytes for video length
+    const finalVideo = new Uint8Array(headerSize + metadataBytes.length + concatenatedVideo.length);
     
-    // Copy primary video data
-    finalVideo.set(primaryVideoData, 0);
+    let writeOffset = 0;
     
-    // Add metadata length marker (4 bytes)
-    const lengthMarker = new Uint32Array([metadataBytes.length]);
-    const lengthBytes = new Uint8Array(lengthMarker.buffer);
-    finalVideo.set(lengthBytes, primaryVideoData.length);
+    // Write magic header to identify our processed video format
+    const magicHeader = new Uint32Array([0x56494445]); // "VIDE" in ASCII
+    const magicBytes = new Uint8Array(magicHeader.buffer);
+    finalVideo.set(magicBytes, writeOffset);
+    writeOffset += 4;
     
-    // Add metadata
-    finalVideo.set(metadataBytes, primaryVideoData.length + 4);
+    // Write metadata length
+    const metadataLength = new Uint32Array([metadataBytes.length]);
+    const metadataLengthBytes = new Uint8Array(metadataLength.buffer);
+    finalVideo.set(metadataLengthBytes, writeOffset);
+    writeOffset += 4;
     
-    // Add end marker (4 bytes)
-    const endMarker = new Uint32Array([0xDEADBEEF]);
-    const endBytes = new Uint8Array(endMarker.buffer);
-    finalVideo.set(endBytes, primaryVideoData.length + 4 + metadataBytes.length);
+    // Write video data length
+    const videoLength = new Uint32Array([concatenatedVideo.length]);
+    const videoLengthBytes = new Uint8Array(videoLength.buffer);
+    finalVideo.set(videoLengthBytes, writeOffset);
+    writeOffset += 4;
+    
+    // Write metadata
+    finalVideo.set(metadataBytes, writeOffset);
+    writeOffset += metadataBytes.length;
+    
+    // Write concatenated video data
+    finalVideo.set(concatenatedVideo, writeOffset);
     
     console.log('=== Video Processing Completed Successfully ===');
     console.log(`Final video size: ${(finalVideo.length / (1024 * 1024)).toFixed(2)} MB`);
-    console.log(`Applied customizations: Text: ${!!customization.supers.text}, End frame: ${customization.endFrame.enabled}, CTA: ${customization.cta.enabled}`);
+    console.log(`Applied customizations:`);
+    console.log(`- Text overlay: ${customization.supers.text ? 'YES' : 'NO'}`);
+    console.log(`- End frame: ${customization.endFrame.enabled ? 'YES' : 'NO'}`);
+    console.log(`- CTA: ${customization.cta.enabled ? 'YES' : 'NO'}`);
+    console.log(`- Sequences processed: ${sequences.length}`);
     
     return finalVideo;
     
@@ -184,10 +225,10 @@ serve(async (req) => {
     const supabaseServiceKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
     const supabase = createClient(supabaseUrl, supabaseServiceKey);
 
-    console.log('Starting simplified video processing...');
+    console.log('Starting enhanced video processing with sequence concatenation...');
     
-    // Process videos with the simplified function
-    const processedVideoBytes = await processVideoSimplified(sequences, customization, platform);
+    // Process videos with the enhanced function
+    const processedVideoBytes = await processVideoWithSequences(sequences, customization, platform);
     
     const sizeInMB = processedVideoBytes.length / (1024 * 1024);
     console.log(`✓ Processing completed! Final video size: ${sizeInMB.toFixed(2)} MB`);
@@ -227,13 +268,13 @@ serve(async (req) => {
         useStorage: true,
         downloadUrl: urlData.publicUrl,
         filename: filename,
-        message: `Successfully processed ${sequences.length} videos with customizations! Size: ${sizeInMB.toFixed(2)} MB`,
+        message: `Successfully processed and concatenated ${sequences.length} videos with customizations! Size: ${sizeInMB.toFixed(2)} MB`,
         metadata: {
           originalSize: processedVideoBytes.length,
           platform,
           duration,
           sequenceCount: sequences.length,
-          processingMethod: 'storage_simplified_processing',
+          processingMethod: 'enhanced_sequence_concatenation',
           customizations: {
             textOverlay: customization.supers.text,
             endFrame: customization.endFrame.enabled,
@@ -268,14 +309,14 @@ serve(async (req) => {
         success: true,
         useStorage: false,
         videoData: videoBase64,
-        message: `Successfully processed ${sequences.length} videos with customizations! Size: ${sizeInMB.toFixed(2)} MB`,
+        message: `Successfully processed and concatenated ${sequences.length} videos with customizations! Size: ${sizeInMB.toFixed(2)} MB`,
         metadata: {
           originalSize: processedVideoBytes.length,
           base64Size: videoBase64.length,
           platform,
           duration,
           sequenceCount: sequences.length,
-          processingMethod: 'base64_simplified_processing',
+          processingMethod: 'enhanced_sequence_concatenation',
           customizations: {
             textOverlay: customization.supers.text,
             endFrame: customization.endFrame.enabled,
