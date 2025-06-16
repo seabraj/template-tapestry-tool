@@ -36,22 +36,13 @@ interface VideoProcessingRequest {
   duration: number;
 }
 
-// Memory monitoring utility
-function getMemoryUsage(): number {
-  try {
-    return (performance as any).memory?.usedJSHeapSize || 0;
-  } catch {
-    return 0;
-  }
-}
-
-// Safe video download with streaming and memory checks
+// Safe video download with proper error handling
 async function downloadVideoSafely(url: string, sequenceName: string, maxSize = 50 * 1024 * 1024): Promise<Uint8Array | null> {
   try {
     console.log(`📥 Downloading: ${sequenceName} from ${url}`);
     
     const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 60000); // 60s timeout
+    const timeoutId = setTimeout(() => controller.abort(), 60000);
     
     const response = await fetch(url, { 
       signal: controller.signal,
@@ -73,26 +64,21 @@ async function downloadVideoSafely(url: string, sequenceName: string, maxSize = 
       return null;
     }
     
-    const memoryBefore = getMemoryUsage();
     const arrayBuffer = await response.arrayBuffer();
-    const memoryAfter = getMemoryUsage();
-    
     console.log(`✅ Downloaded ${sequenceName}: ${(arrayBuffer.byteLength / (1024 * 1024)).toFixed(2)} MB`);
-    console.log(`📊 Memory usage: ${((memoryAfter - memoryBefore) / (1024 * 1024)).toFixed(2)} MB increase`);
     
     return new Uint8Array(arrayBuffer);
     
   } catch (error) {
-    console.error(`❌ Download failed for ${sequenceName}:`, error.message);
+    console.error(`❌ Download failed for ${sequenceName}:`, error?.message || 'Unknown error');
     return null;
   }
 }
 
-// Simple binary concatenation - concatenate video data directly
+// Simple binary concatenation
 async function concatenateMP4Videos(videoBuffers: Array<{ data: Uint8Array; name: string; order: number }>): Promise<Uint8Array> {
   console.log('🎬 Starting MP4 concatenation...');
   
-  // Sort videos by order to ensure correct sequence
   const sortedVideos = videoBuffers.sort((a, b) => a.order - b.order);
   console.log(`📋 Concatenation order: ${sortedVideos.map(v => `${v.order}. ${v.name}`).join(', ')}`);
   
@@ -103,15 +89,12 @@ async function concatenateMP4Videos(videoBuffers: Array<{ data: Uint8Array; name
 
   console.log(`🔄 Concatenating ${sortedVideos.length} videos in order...`);
   
-  // Calculate total size for the concatenated video
   const totalSize = sortedVideos.reduce((sum, video) => sum + video.data.length, 0);
   console.log(`📊 Total concatenated size will be: ${(totalSize / (1024 * 1024)).toFixed(2)} MB`);
   
-  // Create a new buffer to hold all video data
   const concatenatedBuffer = new Uint8Array(totalSize);
   let offset = 0;
   
-  // Copy each video's data into the concatenated buffer in order
   for (const video of sortedVideos) {
     console.log(`📝 Adding ${video.name} at offset ${offset} (${(video.data.length / (1024 * 1024)).toFixed(2)} MB)`);
     concatenatedBuffer.set(video.data, offset);
@@ -124,14 +107,13 @@ async function concatenateMP4Videos(videoBuffers: Array<{ data: Uint8Array; name
   return concatenatedBuffer;
 }
 
-// Process videos with proper concatenation in user-selected order
+// Process videos with proper error handling
 async function processVideosWithConcatenation(sequences: any[], platform: string): Promise<Uint8Array> {
   console.log('🚀 Starting video concatenation processing...');
   console.log(`📋 Processing ${sequences.length} sequences for ${platform} in user-selected order`);
   
-  // Step 1: Download videos in the exact order selected by user
   const videoBuffers: Array<{ data: Uint8Array; name: string; order: number }> = [];
-  const maxMemoryPerVideo = 30 * 1024 * 1024; // 30MB per video
+  const maxMemoryPerVideo = 30 * 1024 * 1024;
   
   for (let i = 0; i < sequences.length; i++) {
     const sequence = sequences[i];
@@ -143,16 +125,20 @@ async function processVideosWithConcatenation(sequences: any[], platform: string
       videoBuffers.push({
         data: videoData,
         name: sequence.name,
-        order: i + 1 // Use 1-based ordering to match user selection
+        order: i + 1
       });
       console.log(`✅ Added ${sequence.name} to concatenation queue (position: ${i + 1})`);
     } else {
       console.warn(`⚠️ Skipped ${sequence.name} due to download failure`);
     }
     
-    // Memory management: Force garbage collection periodically
+    // Force garbage collection periodically
     if (i % 2 === 0 && globalThis.gc) {
-      globalThis.gc();
+      try {
+        globalThis.gc();
+      } catch (e) {
+        // Ignore gc errors
+      }
     }
   }
   
@@ -162,9 +148,7 @@ async function processVideosWithConcatenation(sequences: any[], platform: string
   
   console.log(`📊 Successfully downloaded ${videoBuffers.length}/${sequences.length} videos for concatenation`);
   
-  // Step 2: Concatenate videos in the exact user-selected order
   const concatenatedVideo = await concatenateMP4Videos(videoBuffers);
-  
   console.log(`🎉 Video concatenation completed: ${(concatenatedVideo.length / (1024 * 1024)).toFixed(2)} MB`);
   
   return concatenatedVideo;
@@ -176,38 +160,35 @@ serve(async (req) => {
     return new Response(null, { headers: corsHeaders });
   }
 
-  let requestData: VideoProcessingRequest;
-  
   try {
     console.log('🎬 === Video Concatenation Request Started ===');
     
-    // Parse request with timeout
-    const parsePromise = req.json();
-    const timeoutPromise = new Promise((_, reject) => 
-      setTimeout(() => reject(new Error('Request parsing timeout')), 10000)
-    );
-    
-    requestData = await Promise.race([parsePromise, timeoutPromise]) as VideoProcessingRequest;
-    
+    // Parse request with proper error handling
+    let requestData: VideoProcessingRequest;
+    try {
+      const body = await req.text();
+      if (!body || body.trim() === '') {
+        throw new Error('Empty request body');
+      }
+      requestData = JSON.parse(body);
+    } catch (parseError) {
+      console.error('❌ Request parsing failed:', parseError);
+      return new Response(
+        JSON.stringify({
+          success: false,
+          error: 'Invalid request format',
+          details: parseError?.message || 'Failed to parse request',
+          timestamp: new Date().toISOString()
+        }),
+        {
+          status: 400,
+          headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+        }
+      );
+    }
+
     console.log(`📊 Request parsed: ${requestData.sequences?.length || 0} sequences, platform: ${requestData.platform}`);
     
-  } catch (error) {
-    console.error('❌ Request parsing failed:', error);
-    return new Response(
-      JSON.stringify({
-        success: false,
-        error: 'Invalid request format',
-        details: error.message,
-        timestamp: new Date().toISOString()
-      }),
-      {
-        status: 400,
-        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-      }
-    );
-  }
-
-  try {
     // Validate environment
     const supabaseUrl = Deno.env.get('SUPABASE_URL');
     const supabaseKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY');
@@ -223,10 +204,10 @@ serve(async (req) => {
       throw new Error('No valid sequences provided');
     }
     
-    // Preserve the exact order from user selection - don't filter by URLs yet
+    // Preserve the exact order from user selection
     const orderedSequences = sequences.map((seq, index) => ({
       ...seq,
-      originalOrder: index // Preserve original order
+      originalOrder: index
     }));
     
     // Filter valid sequences while maintaining order
@@ -245,7 +226,7 @@ serve(async (req) => {
     console.log(`✅ Validated ${validSequences.length}/${sequences.length} sequences for concatenation`);
     console.log(`📋 Final order: ${validSequences.map((seq, idx) => `${idx + 1}. ${seq.name}`).join(', ')}`);
     
-    // Process videos with proper concatenation preserving user order
+    // Process videos with proper concatenation
     const concatenatedVideo = await processVideosWithConcatenation(validSequences, platform);
     const sizeInMB = concatenatedVideo.length / (1024 * 1024);
     
@@ -253,35 +234,41 @@ serve(async (req) => {
     console.log(`📺 Contains ${validSequences.length} videos in exact user-selected order`);
     
     // Initialize Supabase for storage operations
-    const supabase = createClient(supabaseUrl, supabaseKey);
+    let supabase;
+    try {
+      supabase = createClient(supabaseUrl, supabaseKey);
+    } catch (supabaseError) {
+      console.error('❌ Supabase client creation failed:', supabaseError);
+      throw new Error('Failed to initialize Supabase client');
+    }
     
     // Use storage for files > 8MB, base64 for smaller ones
     if (sizeInMB > 8) {
       console.log('📤 Using storage upload for large concatenated file...');
       
-      const timestamp = Date.now();
-      const filename = `concatenated_${timestamp}_${platform}_${validSequences.length}videos.mp4`;
-      
-      const { data: uploadData, error: uploadError } = await supabase.storage
-        .from('processed-videos')
-        .upload(filename, concatenatedVideo, {
-          contentType: 'video/mp4',
-          upsert: false
-        });
+      try {
+        const timestamp = Date.now();
+        const filename = `concatenated_${timestamp}_${platform}_${validSequences.length}videos.mp4`;
+        
+        const { data: uploadData, error: uploadError } = await supabase.storage
+          .from('processed-videos')
+          .upload(filename, concatenatedVideo, {
+            contentType: 'video/mp4',
+            upsert: false
+          });
 
-      if (uploadError) {
-        console.error('❌ Storage upload failed:', uploadError);
-        throw new Error(`Storage upload failed: ${uploadError.message}`);
-      }
+        if (uploadError) {
+          console.error('❌ Storage upload failed:', uploadError);
+          throw new Error(`Storage upload failed: ${uploadError.message}`);
+        }
 
-      const { data: urlData } = supabase.storage
-        .from('processed-videos')
-        .getPublicUrl(filename);
+        const { data: urlData } = supabase.storage
+          .from('processed-videos')
+          .getPublicUrl(filename);
 
-      console.log('✅ Concatenated video uploaded to storage successfully');
+        console.log('✅ Concatenated video uploaded to storage successfully');
 
-      return new Response(
-        JSON.stringify({
+        const response = {
           success: true,
           useStorage: true,
           downloadUrl: urlData.publicUrl,
@@ -298,21 +285,28 @@ serve(async (req) => {
               originalOrder: seq.originalOrder 
             }))
           }
-        }),
-        {
-          status: 200,
-          headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-        }
-      );
+        };
+
+        return new Response(
+          JSON.stringify(response),
+          {
+            status: 200,
+            headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+          }
+        );
+      } catch (storageError) {
+        console.error('❌ Storage operation failed:', storageError);
+        throw new Error(`Storage operation failed: ${storageError.message}`);
+      }
       
     } else {
       console.log('📤 Using base64 transfer for smaller concatenated file...');
       
-      const videoBase64 = encode(concatenatedVideo);
-      console.log(`✅ Base64 encoding completed: ${videoBase64.length} characters`);
-      
-      return new Response(
-        JSON.stringify({
+      try {
+        const videoBase64 = encode(concatenatedVideo);
+        console.log(`✅ Base64 encoding completed: ${videoBase64.length} characters`);
+        
+        const response = {
           success: true,
           useStorage: false,
           videoData: videoBase64,
@@ -329,12 +323,19 @@ serve(async (req) => {
               originalOrder: seq.originalOrder 
             }))
           }
-        }),
-        {
-          status: 200,
-          headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-        }
-      );
+        };
+        
+        return new Response(
+          JSON.stringify(response),
+          {
+            status: 200,
+            headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+          }
+        );
+      } catch (encodingError) {
+        console.error('❌ Base64 encoding failed:', encodingError);
+        throw new Error(`Base64 encoding failed: ${encodingError.message}`);
+      }
     }
 
   } catch (error) {
