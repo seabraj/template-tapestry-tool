@@ -168,6 +168,8 @@ const Index = () => {
                   <CustomizationPanel
                     settings={customization}
                     onSettingsChange={setCustomization}
+                    sequences={sequences}
+                    platform={platform}
                   />
                 )}
                 {step === 5 && (

@@ -5,14 +5,19 @@ import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Switch } from '@/components/ui/switch';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
-import { CustomizationSettings } from '@/pages/Index';
+import { CustomizationSettings, VideoSequence } from '@/pages/Index';
+import { useVideoAssets } from '@/hooks/useVideoAssets';
 
 interface CustomizationPanelProps {
   settings: CustomizationSettings;
   onSettingsChange: (settings: CustomizationSettings) => void;
+  sequences: VideoSequence[];
+  platform: string;
 }
 
-const CustomizationPanel = ({ settings, onSettingsChange }: CustomizationPanelProps) => {
+const CustomizationPanel = ({ settings, onSettingsChange, sequences, platform }: CustomizationPanelProps) => {
+  const { assets } = useVideoAssets(platform);
+  
   const updateSupers = (updates: Partial<typeof settings.supers>) => {
     onSettingsChange({
       ...settings,
@@ -32,6 +37,23 @@ const CustomizationPanel = ({ settings, onSettingsChange }: CustomizationPanelPr
       ...settings,
       cta: { ...settings.cta, ...updates }
     });
+  };
+
+  const getFirstSelectedVideoUrl = () => {
+    const selectedSequence = sequences.find(s => s.selected);
+    if (!selectedSequence) return null;
+    
+    const asset = assets.find(asset => asset.id === selectedSequence.id);
+    return asset?.file_url || null;
+  };
+
+  const getAspectRatioClass = () => {
+    switch (platform) {
+      case 'youtube': return 'w-80 h-45';
+      case 'facebook': return 'w-64 h-64';
+      case 'instagram': return 'w-36 h-64';
+      default: return 'w-80 h-45';
+    }
   };
 
   return (
@@ -104,26 +126,41 @@ const CustomizationPanel = ({ settings, onSettingsChange }: CustomizationPanelPr
                 </div>
               </div>
 
-              {/* Preview */}
-              <div className="bg-gray-900 rounded-lg p-8 text-white relative overflow-hidden">
-                <div className="absolute inset-0 bg-gradient-to-r from-blue-600/20 to-purple-600/20"></div>
-                <div className={`
-                  relative z-10 text-center
-                  ${settings.supers.position === 'top' ? 'absolute top-4 left-0 right-0' : ''}
-                  ${settings.supers.position === 'center' ? 'absolute top-1/2 left-0 right-0 transform -translate-y-1/2' : ''}
-                  ${settings.supers.position === 'bottom' ? 'absolute bottom-4 left-0 right-0' : ''}
-                `}>
-                  <p className={`
-                    text-2xl
-                    ${settings.supers.style === 'bold' ? 'font-bold' : ''}
-                    ${settings.supers.style === 'light' ? 'font-light' : ''}
-                    ${settings.supers.style === 'outline' ? 'font-bold text-transparent bg-clip-text bg-gradient-to-r from-white to-gray-300' : ''}
-                  `}>
-                    {settings.supers.text || 'Your overlay text will appear here'}
-                  </p>
-                </div>
-                <div className="text-center text-gray-400 text-sm">
-                  Video Content Preview
+              {/* Video Preview with Overlay */}
+              <div className="bg-gray-900 rounded-lg p-4 relative overflow-hidden">
+                <div className={`mx-auto bg-gray-800 rounded-lg relative overflow-hidden ${getAspectRatioClass()}`}>
+                  {getFirstSelectedVideoUrl() ? (
+                    <video 
+                      src={getFirstSelectedVideoUrl()!}
+                      className="w-full h-full object-cover"
+                      muted
+                      autoPlay
+                      loop
+                    />
+                  ) : (
+                    <div className="w-full h-full bg-gray-700 flex items-center justify-center">
+                      <span className="text-gray-400 text-sm">Select a video to preview</span>
+                    </div>
+                  )}
+                  
+                  {/* Text overlay preview */}
+                  {settings.supers.text && (
+                    <div className={`
+                      absolute z-10 text-white text-center px-4 w-full
+                      ${settings.supers.position === 'top' ? 'top-2' : ''}
+                      ${settings.supers.position === 'center' ? 'top-1/2 transform -translate-y-1/2' : ''}
+                      ${settings.supers.position === 'bottom' ? 'bottom-2' : ''}
+                    `}>
+                      <p className={`
+                        text-lg md:text-xl lg:text-2xl
+                        ${settings.supers.style === 'bold' ? 'font-bold' : ''}
+                        ${settings.supers.style === 'light' ? 'font-light' : ''}
+                        ${settings.supers.style === 'outline' ? 'font-bold text-transparent bg-clip-text bg-gradient-to-r from-white to-gray-300' : ''}
+                      `}>
+                        {settings.supers.text}
+                      </p>
+                    </div>
+                  )}
                 </div>
               </div>
             </CardContent>
@@ -245,29 +282,43 @@ const CustomizationPanel = ({ settings, onSettingsChange }: CustomizationPanelPr
                     </Select>
                   </div>
 
-                  {/* CTA Preview */}
-                  <div className="bg-gray-900 rounded-lg p-8 text-center relative">
-                    <div className="absolute bottom-4 left-0 right-0">
-                      {settings.cta.style === 'button' && (
-                        <button className="bg-gradient-to-r from-blue-500 to-purple-500 text-white px-6 py-3 rounded-full font-semibold hover:scale-105 transition-transform">
-                          {settings.cta.text || 'Your CTA'}
-                        </button>
-                      )}
-                      {settings.cta.style === 'text' && (
-                        <p className="text-white text-xl font-semibold">
-                          {settings.cta.text || 'Your CTA'}
-                        </p>
-                      )}
-                      {settings.cta.style === 'animated' && (
-                        <div className="animate-pulse">
-                          <button className="bg-gradient-to-r from-purple-500 to-pink-500 text-white px-8 py-4 rounded-full font-bold text-lg shadow-lg">
-                            {settings.cta.text || 'Your CTA'} ✨
-                          </button>
+                  {/* CTA Preview with Video */}
+                  <div className="bg-gray-900 rounded-lg p-4 relative overflow-hidden">
+                    <div className={`mx-auto bg-gray-800 rounded-lg relative overflow-hidden ${getAspectRatioClass()}`}>
+                      {getFirstSelectedVideoUrl() ? (
+                        <video 
+                          src={getFirstSelectedVideoUrl()!}
+                          className="w-full h-full object-cover"
+                          muted
+                          autoPlay
+                          loop
+                        />
+                      ) : (
+                        <div className="w-full h-full bg-gray-700 flex items-center justify-center">
+                          <span className="text-gray-400 text-sm">Select a video to preview</span>
                         </div>
                       )}
-                    </div>
-                    <div className="text-gray-400 text-sm mb-16">
-                      Video content area
+
+                      {/* CTA preview */}
+                      <div className="absolute bottom-2 left-0 right-0 text-center">
+                        {settings.cta.style === 'button' && (
+                          <button className="bg-gradient-to-r from-blue-500 to-purple-500 text-white px-4 py-2 rounded-full font-semibold hover:scale-105 transition-transform text-sm">
+                            {settings.cta.text || 'Your CTA'}
+                          </button>
+                        )}
+                        {settings.cta.style === 'text' && (
+                          <p className="text-white text-lg font-semibold">
+                            {settings.cta.text || 'Your CTA'}
+                          </p>
+                        )}
+                        {settings.cta.style === 'animated' && (
+                          <div className="animate-pulse">
+                            <button className="bg-gradient-to-r from-purple-500 to-pink-500 text-white px-6 py-3 rounded-full font-bold shadow-lg text-sm">
+                              {settings.cta.text || 'Your CTA'} ✨
+                            </button>
+                          </div>
+                        )}
+                      </div>
                     </div>
                   </div>
                 </>
