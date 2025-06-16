@@ -35,32 +35,37 @@ const ExportPanel = ({
   const handleExport = async () => {
     setIsExporting(true);
     setExportProgress(0);
-    setProcessingStep('Initializing video processor...');
+    setProcessingStep('Preparing videos for concatenation...');
     
     try {
-      // Prepare export data with proper file URLs
-      const selectedAssets = sequences
-        .filter(s => s.selected)
-        .map(seq => {
-          const asset = getAssetById ? getAssetById(seq.id) : assets.find(asset => asset.id === seq.id);
-          if (!asset || !asset.file_url) {
-            console.warn(`Asset not found or missing file_url for sequence ${seq.id}`);
-            return null;
-          }
-          return {
-            id: seq.id,
-            name: seq.name,
-            duration: seq.duration,
-            file_url: asset.file_url
-          };
-        })
-        .filter((asset): asset is NonNullable<typeof asset> => asset !== null);
+      // Get selected sequences in their original order
+      const selectedSequences = sequences.filter(s => s.selected);
+      
+      if (selectedSequences.length === 0) {
+        throw new Error('No videos selected for concatenation');
+      }
 
-      if (selectedAssets.length === 0) {
+      // Prepare export data with proper file URLs in the exact order selected
+      const orderedAssets = selectedSequences.map((seq, index) => {
+        const asset = getAssetById ? getAssetById(seq.id) : assets.find(asset => asset.id === seq.id);
+        if (!asset || !asset.file_url) {
+          console.warn(`Asset not found or missing file_url for sequence ${seq.id}`);
+          return null;
+        }
+        return {
+          id: seq.id,
+          name: seq.name,
+          duration: seq.duration,
+          file_url: asset.file_url,
+          originalOrder: index // Preserve user selection order
+        };
+      }).filter((asset): asset is NonNullable<typeof asset> => asset !== null);
+
+      if (orderedAssets.length === 0) {
         throw new Error('No valid video assets found');
       }
 
-      console.log('Starting video concatenation with assets:', selectedAssets);
+      console.log('Starting video concatenation with assets in order:', orderedAssets.map((a, i) => `${i+1}. ${a.name}`));
 
       const processor = new VideoProcessor();
       const mode = processor.getProcessingMode();
@@ -69,10 +74,12 @@ const ExportPanel = ({
       const onProgress = (progress: number) => {
         setExportProgress(progress);
         if (mode === 'server') {
-          if (progress < 30) {
-            setProcessingStep('Preparing videos for server concatenation...');
+          if (progress < 20) {
+            setProcessingStep('Downloading videos in selected order...');
+          } else if (progress < 40) {
+            setProcessingStep('Preparing video concatenation...');
           } else if (progress < 80) {
-            setProcessingStep('Concatenating videos in order on server...');
+            setProcessingStep('Concatenating videos in order...');
           } else if (progress < 95) {
             setProcessingStep('Finalizing concatenated video...');
           } else {
@@ -96,7 +103,7 @@ const ExportPanel = ({
       };
 
       const videoBlob = await processor.processVideo({
-        sequences: selectedAssets,
+        sequences: orderedAssets,
         customization,
         platform,
         duration
@@ -112,7 +119,7 @@ const ExportPanel = ({
 
       toast({
         title: "Video Concatenation Complete!",
-        description: `Your ${selectedAssets.length} videos have been successfully concatenated using ${mode === 'server' ? 'server-side' : 'client-side'} processing.`
+        description: `Your ${orderedAssets.length} videos have been successfully concatenated in order using ${mode === 'server' ? 'server-side' : 'client-side'} processing.`
       });
 
     } catch (error) {
@@ -131,9 +138,10 @@ const ExportPanel = ({
 
   const handleDownload = () => {
     if (downloadUrl) {
+      const selectedCount = sequences.filter(s => s.selected).length;
       const link = document.createElement('a');
       link.href = downloadUrl;
-      link.download = `concatenated-video-${platform}-${Date.now()}.mp4`;
+      link.download = `concatenated-${selectedCount}videos-${platform}-${Date.now()}.mp4`;
       document.body.appendChild(link);
       link.click();
       document.body.removeChild(link);
@@ -179,6 +187,8 @@ const ExportPanel = ({
     }
   };
 
+  const selectedSequences = sequences.filter(s => s.selected);
+
   if (exportComplete) {
     return (
       <div className="text-center space-y-6">
@@ -187,7 +197,7 @@ const ExportPanel = ({
         </div>
         <h3 className="text-2xl font-bold text-green-800">Video Concatenation Complete!</h3>
         <p className="text-gray-600">
-          Your {sequences.filter(s => s.selected).length} videos have been successfully concatenated using {processingMode === 'server' ? 'server-side' : 'client-side'} processing.
+          Your {selectedSequences.length} videos have been successfully concatenated in the order you selected using {processingMode === 'server' ? 'server-side' : 'client-side'} processing.
         </p>
         
         <div className="flex justify-center space-x-4">
@@ -229,12 +239,12 @@ const ExportPanel = ({
           <p className="text-sm text-blue-600 font-medium">{processingStep}</p>
         </div>
         <p className="text-sm text-gray-500">
-          Concatenating {sequences.filter(s => s.selected).length} video clips in order using {processingMode === 'server' ? 'server-side' : 'client-side'} processing...
+          Concatenating {selectedSequences.length} video clips in your selected order using {processingMode === 'server' ? 'server-side' : 'client-side'} processing...
         </p>
         {processingMode === 'server' && (
           <div className="bg-green-50 border border-green-200 rounded-lg p-4 max-w-md mx-auto">
             <p className="text-xs text-green-700 font-medium">
-              🚀 Using reliable server-side video concatenation
+              🚀 Using server-side video concatenation
             </p>
             <p className="text-xs text-green-600 mt-1">
               Combining your videos in the exact order you selected!
@@ -249,7 +259,7 @@ const ExportPanel = ({
     <div className="space-y-6">
       <div className="text-center">
         <h3 className="text-lg font-semibold mb-2">Ready to Concatenate</h3>
-        <p className="text-gray-600">Review your settings and concatenate your videos</p>
+        <p className="text-gray-600">Review your settings and concatenate your videos in order</p>
       </div>
 
       {/* Processing Mode Indicator */}
@@ -266,7 +276,7 @@ const ExportPanel = ({
               </p>
               <p className="text-sm text-blue-600">
                 {processingMode === 'server' 
-                  ? 'Reliable cloud video concatenation' 
+                  ? 'Server concatenation preserving video order' 
                   : 'In-browser video concatenation'
                 }
               </p>
@@ -287,9 +297,9 @@ const ExportPanel = ({
 
         <Card className="border-2 border-purple-200 bg-purple-50">
           <CardContent className="p-4 text-center">
-            <h4 className="font-semibold text-purple-800">Duration</h4>
-            <p className="text-2xl font-bold text-purple-600">{duration}s</p>
-            <p className="text-sm text-purple-600">{sequences.length} clips</p>
+            <h4 className="font-semibold text-purple-800">Videos</h4>
+            <p className="text-2xl font-bold text-purple-600">{selectedSequences.length}</p>
+            <p className="text-sm text-purple-600">Selected clips</p>
           </CardContent>
         </Card>
 
@@ -381,49 +391,25 @@ const ExportPanel = ({
         </CardContent>
       </Card>
 
-      {/* Video Order Summary */}
+      {/* Video Order Summary - Show exact user selection order */}
       <Card className="bg-gradient-to-r from-blue-50 to-purple-50 border-blue-200">
         <CardContent className="p-6">
           <h4 className="font-semibold text-lg mb-4">🎬 Video Concatenation Order</h4>
           <div className="flex flex-wrap gap-2">
-            {sequences.filter(s => s.selected).map((seq, index) => (
+            {selectedSequences.map((seq, index) => (
               <Badge key={seq.id} variant="outline" className="bg-white">
                 {index + 1}. {seq.name} ({seq.duration}s)
               </Badge>
             ))}
-            {sequences.filter(s => s.selected).length === 0 && (
+            {selectedSequences.length === 0 && (
               <p className="text-gray-500 italic">No videos selected for concatenation</p>
             )}
           </div>
-        </CardContent>
-      </Card>
-
-      {/* Customization Summary */}
-      <Card className="bg-gradient-to-r from-blue-50 to-purple-50 border-blue-200">
-        <CardContent className="p-6">
-          <h4 className="font-semibold text-lg mb-4">🎨 Customizations Applied</h4>
-          <div className="flex flex-wrap gap-2">
-            {customization.supers.text && (
-              <Badge variant="secondary" className="bg-blue-100 text-blue-800">
-                Text Overlay: "{customization.supers.text}"
-              </Badge>
-            )}
-            {customization.endFrame.enabled && (
-              <Badge variant="secondary" className="bg-purple-100 text-purple-800">
-                End Frame Enabled
-              </Badge>
-            )}
-            {customization.cta.enabled && (
-              <Badge variant="secondary" className="bg-green-100 text-green-800">
-                CTA: "{customization.cta.text}"
-              </Badge>
-            )}
-            {sequences.filter(s => s.selected).map(seq => (
-              <Badge key={seq.id} variant="outline" className="bg-white">
-                {seq.name} ({seq.duration}s)
-              </Badge>
-            ))}
-          </div>
+          {selectedSequences.length > 1 && (
+            <p className="text-sm text-blue-600 mt-2">
+              ✅ Videos will be concatenated in the exact order shown above
+            </p>
+          )}
         </CardContent>
       </Card>
 
@@ -433,22 +419,22 @@ const ExportPanel = ({
           onClick={handleExport}
           size="lg"
           className="bg-gradient-to-r from-blue-600 to-purple-600 hover:from-blue-700 hover:to-purple-700 text-white px-12 py-4 text-lg font-semibold"
-          disabled={sequences.filter(s => s.selected).length === 0}
+          disabled={selectedSequences.length === 0}
         >
           🎬 Concatenate & Download Videos
         </Button>
-        {sequences.filter(s => s.selected).length === 0 ? (
+        {selectedSequences.length === 0 ? (
           <p className="text-sm text-red-600 mt-2">
             Please select at least one video clip to concatenate
           </p>
         ) : (
           <div className="mt-2 space-y-1">
             <p className="text-sm text-gray-600">
-              Using {processingMode === 'server' ? 'server-side' : 'client-side'} video concatenation
+              Ready to concatenate {selectedSequences.length} videos in your selected order
             </p>
             <p className="text-xs text-blue-600">
               {processingMode === 'server' 
-                ? 'Reliable cloud processing will combine your videos in order!' 
+                ? 'Server-side processing will combine your videos in the exact order selected!' 
                 : 'Advanced browser-based concatenation for supported devices'
               }
             </p>

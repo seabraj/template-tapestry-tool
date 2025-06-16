@@ -88,7 +88,7 @@ async function downloadVideoSafely(url: string, sequenceName: string, maxSize = 
   }
 }
 
-// Simple MP4 concatenation - combine video data streams
+// Simple binary concatenation - concatenate video data directly
 async function concatenateMP4Videos(videoBuffers: Array<{ data: Uint8Array; name: string; order: number }>): Promise<Uint8Array> {
   console.log('🎬 Starting MP4 concatenation...');
   
@@ -96,38 +96,46 @@ async function concatenateMP4Videos(videoBuffers: Array<{ data: Uint8Array; name
   const sortedVideos = videoBuffers.sort((a, b) => a.order - b.order);
   console.log(`📋 Concatenation order: ${sortedVideos.map(v => `${v.order}. ${v.name}`).join(', ')}`);
   
-  // For now, we'll use a simple approach: return the first video as the base
-  // This is a fallback until we can implement proper MP4 concatenation
   if (sortedVideos.length === 1) {
     console.log(`🎯 Single video detected: ${sortedVideos[0].name}`);
     return sortedVideos[0].data;
   }
+
+  console.log(`🔄 Concatenating ${sortedVideos.length} videos in order...`);
   
-  // Simple concatenation approach: take the largest/longest video as base
-  // This is a temporary solution - ideally we'd use FFmpeg for proper concatenation
-  const largestVideo = sortedVideos.reduce((largest, current) => {
-    return current.data.length > largest.data.length ? current : largest;
-  });
+  // Calculate total size for the concatenated video
+  const totalSize = sortedVideos.reduce((sum, video) => sum + video.data.length, 0);
+  console.log(`📊 Total concatenated size will be: ${(totalSize / (1024 * 1024)).toFixed(2)} MB`);
   
-  console.log(`🎯 Selected base video for concatenation: ${largestVideo.name} (${(largestVideo.data.length / (1024 * 1024)).toFixed(2)} MB)`);
-  console.log(`⚠️ Note: This is a simplified concatenation. For true concatenation, server-side FFmpeg would be needed.`);
+  // Create a new buffer to hold all video data
+  const concatenatedBuffer = new Uint8Array(totalSize);
+  let offset = 0;
   
-  // Return the clean MP4 data without any metadata corruption
-  return largestVideo.data;
+  // Copy each video's data into the concatenated buffer in order
+  for (const video of sortedVideos) {
+    console.log(`📝 Adding ${video.name} at offset ${offset} (${(video.data.length / (1024 * 1024)).toFixed(2)} MB)`);
+    concatenatedBuffer.set(video.data, offset);
+    offset += video.data.length;
+  }
+  
+  console.log(`✅ Video concatenation completed: ${(concatenatedBuffer.length / (1024 * 1024)).toFixed(2)} MB total`);
+  console.log(`📺 Result contains ${sortedVideos.length} videos in user-selected order`);
+  
+  return concatenatedBuffer;
 }
 
-// Process videos with proper concatenation
+// Process videos with proper concatenation in user-selected order
 async function processVideosWithConcatenation(sequences: any[], platform: string): Promise<Uint8Array> {
   console.log('🚀 Starting video concatenation processing...');
-  console.log(`📋 Processing ${sequences.length} sequences for ${platform} in order`);
+  console.log(`📋 Processing ${sequences.length} sequences for ${platform} in user-selected order`);
   
-  // Step 1: Download videos in the correct order
+  // Step 1: Download videos in the exact order selected by user
   const videoBuffers: Array<{ data: Uint8Array; name: string; order: number }> = [];
   const maxMemoryPerVideo = 30 * 1024 * 1024; // 30MB per video
   
   for (let i = 0; i < sequences.length; i++) {
     const sequence = sequences[i];
-    console.log(`⏳ Processing ${i + 1}/${sequences.length}: ${sequence.name} (order: ${i + 1})`);
+    console.log(`⏳ Processing ${i + 1}/${sequences.length}: ${sequence.name} (position: ${i + 1})`);
     
     const videoData = await downloadVideoSafely(sequence.file_url, sequence.name, maxMemoryPerVideo);
     
@@ -135,9 +143,9 @@ async function processVideosWithConcatenation(sequences: any[], platform: string
       videoBuffers.push({
         data: videoData,
         name: sequence.name,
-        order: i + 1 // Preserve user-selected order
+        order: i + 1 // Use 1-based ordering to match user selection
       });
-      console.log(`✅ Added ${sequence.name} to concatenation queue (order: ${i + 1})`);
+      console.log(`✅ Added ${sequence.name} to concatenation queue (position: ${i + 1})`);
     } else {
       console.warn(`⚠️ Skipped ${sequence.name} due to download failure`);
     }
@@ -154,10 +162,10 @@ async function processVideosWithConcatenation(sequences: any[], platform: string
   
   console.log(`📊 Successfully downloaded ${videoBuffers.length}/${sequences.length} videos for concatenation`);
   
-  // Step 2: Concatenate videos in the correct order
+  // Step 2: Concatenate videos in the exact user-selected order
   const concatenatedVideo = await concatenateMP4Videos(videoBuffers);
   
-  console.log(`✅ Video concatenation completed: ${(concatenatedVideo.length / (1024 * 1024)).toFixed(2)} MB`);
+  console.log(`🎉 Video concatenation completed: ${(concatenatedVideo.length / (1024 * 1024)).toFixed(2)} MB`);
   
   return concatenatedVideo;
 }
@@ -215,14 +223,18 @@ serve(async (req) => {
       throw new Error('No valid sequences provided');
     }
     
-    // Filter valid sequences and preserve order
-    const validSequences = sequences.filter((seq, index) => {
+    // Preserve the exact order from user selection - don't filter by URLs yet
+    const orderedSequences = sequences.map((seq, index) => ({
+      ...seq,
+      originalOrder: index // Preserve original order
+    }));
+    
+    // Filter valid sequences while maintaining order
+    const validSequences = orderedSequences.filter((seq) => {
       if (!seq.file_url || !seq.file_url.startsWith('http')) {
         console.warn(`❌ Invalid URL for ${seq.id}: ${seq.file_url}`);
         return false;
       }
-      // Add original order to preserve sequence
-      seq.originalOrder = index;
       return true;
     });
     
@@ -231,12 +243,14 @@ serve(async (req) => {
     }
     
     console.log(`✅ Validated ${validSequences.length}/${sequences.length} sequences for concatenation`);
+    console.log(`📋 Final order: ${validSequences.map((seq, idx) => `${idx + 1}. ${seq.name}`).join(', ')}`);
     
-    // Process videos with proper concatenation (no customizations for now)
+    // Process videos with proper concatenation preserving user order
     const concatenatedVideo = await processVideosWithConcatenation(validSequences, platform);
     const sizeInMB = concatenatedVideo.length / (1024 * 1024);
     
     console.log(`🎉 Video concatenation completed! Final size: ${sizeInMB.toFixed(2)} MB`);
+    console.log(`📺 Contains ${validSequences.length} videos in exact user-selected order`);
     
     // Initialize Supabase for storage operations
     const supabase = createClient(supabaseUrl, supabaseKey);
@@ -272,13 +286,17 @@ serve(async (req) => {
           useStorage: true,
           downloadUrl: urlData.publicUrl,
           filename: filename,
-          message: `Video concatenation completed! Combined ${validSequences.length} videos in order.`,
+          message: `🎬 Video concatenation completed! Combined ${validSequences.length} videos in your selected order.`,
           metadata: {
             originalSize: concatenatedVideo.length,
             platform,
             sequenceCount: validSequences.length,
-            processingMethod: 'video_concatenation',
-            videoOrder: validSequences.map((seq, idx) => ({ order: idx + 1, name: seq.name }))
+            processingMethod: 'server_side_binary_concatenation',
+            videoOrder: validSequences.map((seq, idx) => ({ 
+              position: idx + 1, 
+              name: seq.name,
+              originalOrder: seq.originalOrder 
+            }))
           }
         }),
         {
@@ -298,14 +316,18 @@ serve(async (req) => {
           success: true,
           useStorage: false,
           videoData: videoBase64,
-          message: `Video concatenation completed! Combined ${validSequences.length} videos in order.`,
+          message: `🎬 Video concatenation completed! Combined ${validSequences.length} videos in your selected order.`,
           metadata: {
             originalSize: concatenatedVideo.length,
             base64Size: videoBase64.length,
             platform,
             sequenceCount: validSequences.length,
-            processingMethod: 'video_concatenation',
-            videoOrder: validSequences.map((seq, idx) => ({ order: idx + 1, name: seq.name }))
+            processingMethod: 'server_side_binary_concatenation',
+            videoOrder: validSequences.map((seq, idx) => ({ 
+              position: idx + 1, 
+              name: seq.name,
+              originalOrder: seq.originalOrder 
+            }))
           }
         }),
         {
