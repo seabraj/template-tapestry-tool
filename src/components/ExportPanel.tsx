@@ -28,15 +28,14 @@ const ExportPanel = ({
   const [exportComplete, setExportComplete] = useState(false);
   const [downloadUrl, setDownloadUrl] = useState<string | null>(null);
   const [processingStep, setProcessingStep] = useState('');
-  const [initializationFailed, setInitializationFailed] = useState(false);
+  const [processingMode, setProcessingMode] = useState<'client' | 'server'>('server');
   const { assets } = useVideoAssets(platform);
   const { toast } = useToast();
 
   const handleExport = async () => {
     setIsExporting(true);
     setExportProgress(0);
-    setInitializationFailed(false);
-    setProcessingStep('Checking browser compatibility...');
+    setProcessingStep('Initializing video processor...');
     
     try {
       // Prepare export data
@@ -60,21 +59,35 @@ const ExportPanel = ({
       console.log('Starting video processing with assets:', selectedAssets);
 
       const processor = new VideoProcessor();
+      const mode = processor.getProcessingMode();
+      setProcessingMode(mode);
       
       const onProgress = (progress: number) => {
         setExportProgress(progress);
-        if (progress < 10) {
-          setProcessingStep('Initializing FFmpeg (this may take 1-2 minutes)...');
-        } else if (progress < 15) {
-          setProcessingStep('FFmpeg ready, starting video processing...');
-        } else if (progress < 40) {
-          setProcessingStep('Downloading video files...');
-        } else if (progress < 60) {
-          setProcessingStep('Preparing video merge...');
-        } else if (progress < 90) {
-          setProcessingStep('Processing and merging videos...');
+        if (mode === 'server') {
+          if (progress < 30) {
+            setProcessingStep('Preparing files for server processing...');
+          } else if (progress < 80) {
+            setProcessingStep('Processing videos on server (faster & more reliable)...');
+          } else if (progress < 95) {
+            setProcessingStep('Finalizing processed video...');
+          } else {
+            setProcessingStep('Download ready!');
+          }
         } else {
-          setProcessingStep('Finalizing export...');
+          if (progress < 10) {
+            setProcessingStep('Initializing FFmpeg in browser...');
+          } else if (progress < 15) {
+            setProcessingStep('FFmpeg ready, starting video processing...');
+          } else if (progress < 40) {
+            setProcessingStep('Downloading video files...');
+          } else if (progress < 60) {
+            setProcessingStep('Preparing video merge...');
+          } else if (progress < 90) {
+            setProcessingStep('Processing and merging videos...');
+          } else {
+            setProcessingStep('Finalizing export...');
+          }
         }
       };
 
@@ -95,7 +108,7 @@ const ExportPanel = ({
 
       toast({
         title: "Export Complete!",
-        description: "Your video has been successfully processed and is ready for download."
+        description: `Your video has been successfully processed using ${mode === 'server' ? 'server-side' : 'client-side'} processing.`
       });
 
     } catch (error) {
@@ -103,13 +116,6 @@ const ExportPanel = ({
       setIsExporting(false);
       setProcessingStep('');
       setExportProgress(0);
-      
-      // Check if it's an initialization error
-      if (error.message.includes('SharedArrayBuffer') || 
-          error.message.includes('Cross-Origin') ||
-          error.message.includes('FFmpeg initialization failed')) {
-        setInitializationFailed(true);
-      }
       
       toast({
         title: "Export Failed",
@@ -177,7 +183,9 @@ const ExportPanel = ({
           <span className="text-white text-4xl">✓</span>
         </div>
         <h3 className="text-2xl font-bold text-green-800">Export Complete!</h3>
-        <p className="text-gray-600">Your video has been successfully processed and merged.</p>
+        <p className="text-gray-600">
+          Your video has been successfully processed using {processingMode === 'server' ? 'server-side' : 'client-side'} processing.
+        </p>
         
         <div className="flex justify-center space-x-4">
           <Button 
@@ -218,57 +226,18 @@ const ExportPanel = ({
           <p className="text-sm text-blue-600 font-medium">{processingStep}</p>
         </div>
         <p className="text-sm text-gray-500">
-          Processing {sequences.filter(s => s.selected).length} video clips using FFmpeg...
+          Processing {sequences.filter(s => s.selected).length} video clips using {processingMode === 'server' ? 'server-side' : 'client-side'} processing...
         </p>
-        {exportProgress < 10 && (
-          <div className="bg-orange-50 border border-orange-200 rounded-lg p-4 max-w-md mx-auto">
-            <p className="text-xs text-orange-700 font-medium">
-              🚀 First-time setup: Loading FFmpeg (1-2 minutes)
+        {processingMode === 'server' && (
+          <div className="bg-green-50 border border-green-200 rounded-lg p-4 max-w-md mx-auto">
+            <p className="text-xs text-green-700 font-medium">
+              🚀 Using reliable server-side processing
             </p>
-            <p className="text-xs text-orange-600 mt-1">
-              This only happens once. Future exports will be much faster!
+            <p className="text-xs text-green-600 mt-1">
+              Faster and more stable than browser-based processing!
             </p>
           </div>
         )}
-      </div>
-    );
-  }
-
-  if (initializationFailed) {
-    return (
-      <div className="text-center space-y-6">
-        <div className="w-24 h-24 bg-red-500 rounded-full flex items-center justify-center mx-auto">
-          <span className="text-white text-4xl">⚠️</span>
-        </div>
-        <h3 className="text-2xl font-bold text-red-800">Browser Compatibility Issue</h3>
-        <div className="bg-red-50 border border-red-200 rounded-lg p-6 max-w-md mx-auto text-left">
-          <h4 className="font-semibold text-red-800 mb-3">To use video processing, you need:</h4>
-          <ul className="text-sm text-red-700 space-y-2">
-            <li>• Modern browser (Chrome 88+, Firefox 79+, Safari 15.2+)</li>
-            <li>• Secure HTTPS connection</li>
-            <li>• Cross-Origin Isolation enabled</li>
-          </ul>
-          <p className="text-xs text-red-600 mt-3">
-            If you're seeing this on localhost, try restarting the development server.
-          </p>
-        </div>
-        <div className="flex justify-center space-x-4">
-          <Button 
-            onClick={() => {
-              setInitializationFailed(false);
-              handleExport();
-            }}
-            variant="outline"
-          >
-            Try Again
-          </Button>
-          <Button 
-            onClick={() => setInitializationFailed(false)}
-            variant="outline"
-          >
-            Go Back
-          </Button>
-        </div>
       </div>
     );
   }
@@ -279,6 +248,29 @@ const ExportPanel = ({
         <h3 className="text-lg font-semibold mb-2">Ready to Export</h3>
         <p className="text-gray-600">Review your settings and process your video</p>
       </div>
+
+      {/* Processing Mode Indicator */}
+      <Card className="border-2 border-blue-200 bg-blue-50">
+        <CardContent className="p-4 text-center">
+          <h4 className="font-semibold text-blue-800 mb-2">Processing Method</h4>
+          <div className="flex items-center justify-center space-x-2">
+            <span className="text-2xl">
+              {processingMode === 'server' ? '🌐' : '💻'}
+            </span>
+            <div>
+              <p className="text-lg font-bold text-blue-600 capitalize">
+                {processingMode === 'server' ? 'Server-Side' : 'Client-Side'}
+              </p>
+              <p className="text-sm text-blue-600">
+                {processingMode === 'server' 
+                  ? 'Reliable cloud processing' 
+                  : 'In-browser processing'
+                }
+              </p>
+            </div>
+          </div>
+        </CardContent>
+      </Card>
 
       {/* Summary Cards */}
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
@@ -429,10 +421,13 @@ const ExportPanel = ({
         ) : (
           <div className="mt-2 space-y-1">
             <p className="text-sm text-gray-600">
-              Real video processing using FFmpeg
+              Using {processingMode === 'server' ? 'server-side' : 'client-side'} video processing
             </p>
-            <p className="text-xs text-orange-600">
-              First-time setup may take 1-2 minutes. Subsequent exports will be faster.
+            <p className="text-xs text-blue-600">
+              {processingMode === 'server' 
+                ? 'Reliable cloud processing - works in all browsers!' 
+                : 'Advanced browser-based processing for supported devices'
+              }
             </p>
           </div>
         )}

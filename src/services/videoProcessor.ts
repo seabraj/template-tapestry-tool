@@ -1,6 +1,7 @@
 
 import { FFmpeg } from '@ffmpeg/ffmpeg';
 import { toBlobURL } from '@ffmpeg/util';
+import { supabase } from '@/integrations/supabase/client';
 
 export interface VideoProcessingOptions {
   sequences: Array<{
@@ -33,136 +34,86 @@ export interface VideoProcessingOptions {
 export class VideoProcessor {
   private ffmpeg: FFmpeg;
   private isLoaded = false;
+  private processingMode: 'client' | 'server' = 'server'; // Default to server-side
 
   constructor() {
     this.ffmpeg = new FFmpeg();
+    this.detectProcessingCapability();
   }
 
-  private checkBrowserCompatibility(): void {
-    // Check for SharedArrayBuffer support
-    if (typeof SharedArrayBuffer === 'undefined') {
-      throw new Error('SharedArrayBuffer is not available. Please use a modern browser with proper security headers.');
-    }
+  private detectProcessingCapability(): void {
+    // Check for client-side processing capability
+    const hasSharedArrayBuffer = typeof SharedArrayBuffer !== 'undefined';
+    const isCrossOriginIsolated = typeof crossOriginIsolated !== 'undefined' && crossOriginIsolated;
+    const isSecureContext = typeof isSecureContext !== 'undefined' && isSecureContext;
 
-    // Check for Cross-Origin Isolation
-    if (!crossOriginIsolated) {
-      console.warn('Cross-Origin Isolation is not enabled. FFmpeg may not work properly.');
-    }
-  }
+    console.log('Browser capability check:', {
+      hasSharedArrayBuffer,
+      isCrossOriginIsolated,
+      isSecureContext
+    });
 
-  private async loadWithTimeout<T>(promise: Promise<T>, timeoutMs: number, errorMessage: string): Promise<T> {
-    return Promise.race([
-      promise,
-      new Promise<never>((_, reject) => 
-        setTimeout(() => reject(new Error(errorMessage)), timeoutMs)
-      )
-    ]);
-  }
-
-  async initialize(onProgress?: (progress: number) => void): Promise<void> {
-    if (this.isLoaded) return;
-
-    try {
-      console.log('Checking browser compatibility...');
-      this.checkBrowserCompatibility();
-      
-      console.log('Starting FFmpeg initialization...');
-      onProgress?.(1);
-
-      // Set up progress monitoring
-      if (onProgress) {
-        this.ffmpeg.on('progress', ({ progress }) => {
-          // Map FFmpeg internal progress to our 0-100 scale during initialization
-          const mappedProgress = Math.round(1 + (progress * 9)); // 1-10% for initialization
-          onProgress(mappedProgress);
-        });
-      }
-
-      // Try multiple CDN sources with fallback
-      const cdnSources = [
-        'https://unpkg.com/@ffmpeg/core@0.12.6/dist/umd',
-        'https://cdn.jsdelivr.net/npm/@ffmpeg/core@0.12.6/dist/umd',
-        'https://unpkg.com/@ffmpeg/core@0.12.4/dist/umd'
-      ];
-
-      let lastError: Error | null = null;
-
-      for (let i = 0; i < cdnSources.length; i++) {
-        const baseURL = cdnSources[i];
-        
-        try {
-          console.log(`Attempting to load FFmpeg from CDN ${i + 1}/${cdnSources.length}: ${baseURL}`);
-          onProgress?.(2 + i);
-
-          // Load core files with timeout
-          console.log('Loading FFmpeg core files...');
-          const coreURL = await this.loadWithTimeout(
-            toBlobURL(`${baseURL}/ffmpeg-core.js`, 'text/javascript'),
-            30000,
-            'Timeout loading FFmpeg core JavaScript'
-          );
-          
-          const wasmURL = await this.loadWithTimeout(
-            toBlobURL(`${baseURL}/ffmpeg-core.wasm`, 'application/wasm'),
-            60000,
-            'Timeout loading FFmpeg WASM binary'
-          );
-          
-          console.log('Core files loaded successfully, initializing FFmpeg...');
-          onProgress?.(5);
-          
-          // Initialize FFmpeg with timeout
-          await this.loadWithTimeout(
-            this.ffmpeg.load({
-              coreURL,
-              wasmURL,
-            }),
-            90000,
-            'Timeout during FFmpeg initialization'
-          );
-          
-          this.isLoaded = true;
-          console.log('FFmpeg loaded successfully');
-          onProgress?.(10);
-          return; // Success, exit the retry loop
-          
-        } catch (error) {
-          lastError = error as Error;
-          console.warn(`Failed to load from CDN ${i + 1}: ${error.message}`);
-          
-          if (i < cdnSources.length - 1) {
-            console.log('Trying next CDN source...');
-            continue;
-          }
-        }
-      }
-
-      // If we get here, all CDN sources failed
-      throw lastError || new Error('Failed to load FFmpeg from all CDN sources');
-      
-    } catch (error) {
-      this.isLoaded = false;
-      console.error('FFmpeg initialization failed:', error);
-      
-      let errorMessage = 'FFmpeg initialization failed';
-      if (error.message.includes('SharedArrayBuffer')) {
-        errorMessage += ': Browser does not support required features. Please use Chrome, Firefox, or Safari with proper security headers.';
-      } else if (error.message.includes('Timeout')) {
-        errorMessage += ': Loading took too long. Please check your internet connection and try again.';
-      } else if (error.message.includes('CDN')) {
-        errorMessage += ': Unable to download required files. Please check your internet connection.';
-      } else {
-        errorMessage += `: ${error.message}`;
-      }
-      
-      throw new Error(errorMessage);
+    if (hasSharedArrayBuffer && isCrossOriginIsolated && isSecureContext) {
+      this.processingMode = 'client';
+      console.log('Client-side processing available');
+    } else {
+      this.processingMode = 'server';
+      console.log('Using server-side processing fallback');
     }
   }
 
   async processVideo(options: VideoProcessingOptions, onProgress?: (progress: number) => void): Promise<Blob> {
+    if (this.processingMode === 'server') {
+      return this.processVideoServerSide(options, onProgress);
+    } else {
+      return this.processVideoClientSide(options, onProgress);
+    }
+  }
+
+  private async processVideoServerSide(options: VideoProcessingOptions, onProgress?: (progress: number) => void): Promise<Blob> {
     try {
-      console.log('Starting video processing...');
-      await this.initialize(onProgress);
+      console.log('Starting server-side video processing...');
+      onProgress?.(10);
+
+      onProgress?.(30);
+      console.log('Sending request to server...');
+
+      const { data, error } = await supabase.functions.invoke('process-video', {
+        body: JSON.stringify(options)
+      });
+
+      if (error) {
+        throw new Error(`Server processing failed: ${error.message}`);
+      }
+
+      onProgress?.(80);
+
+      if (!data.success) {
+        throw new Error(data.error || 'Server processing failed');
+      }
+
+      onProgress?.(95);
+
+      // Convert base64 back to blob
+      const binaryString = atob(data.videoData);
+      const bytes = new Uint8Array(binaryString.length);
+      for (let i = 0; i < binaryString.length; i++) {
+        bytes[i] = binaryString.charCodeAt(i);
+      }
+
+      onProgress?.(100);
+      return new Blob([bytes], { type: 'video/mp4' });
+
+    } catch (error) {
+      console.error('Server-side video processing failed:', error);
+      throw new Error(`Server processing failed: ${error.message}`);
+    }
+  }
+
+  private async processVideoClientSide(options: VideoProcessingOptions, onProgress?: (progress: number) => void): Promise<Blob> {
+    try {
+      console.log('Starting client-side video processing...');
+      await this.initializeFFmpeg(onProgress);
 
       // Download all video files
       onProgress?.(15);
@@ -252,9 +203,98 @@ export class VideoProcessor {
 
       return new Blob([outputData], { type: 'video/mp4' });
     } catch (error) {
-      console.error('Video processing failed:', error);
-      throw new Error(`Video processing failed: ${error.message}`);
+      console.error('Client-side video processing failed:', error);
+      throw new Error(`Client-side processing failed: ${error.message}`);
     }
+  }
+
+  private async initializeFFmpeg(onProgress?: (progress: number) => void): Promise<void> {
+    if (this.isLoaded) return;
+
+    try {
+      console.log('Starting FFmpeg initialization...');
+      onProgress?.(1);
+
+      // Set up progress monitoring
+      if (onProgress) {
+        this.ffmpeg.on('progress', ({ progress }) => {
+          const mappedProgress = Math.round(1 + (progress * 9));
+          onProgress(mappedProgress);
+        });
+      }
+
+      // Try multiple CDN sources with fallback
+      const cdnSources = [
+        'https://unpkg.com/@ffmpeg/core@0.12.6/dist/umd',
+        'https://cdn.jsdelivr.net/npm/@ffmpeg/core@0.12.6/dist/umd',
+        'https://unpkg.com/@ffmpeg/core@0.12.4/dist/umd'
+      ];
+
+      let lastError: Error | null = null;
+
+      for (let i = 0; i < cdnSources.length; i++) {
+        const baseURL = cdnSources[i];
+        
+        try {
+          console.log(`Attempting to load FFmpeg from CDN ${i + 1}/${cdnSources.length}: ${baseURL}`);
+          onProgress?.(2 + i);
+
+          const coreURL = await this.loadWithTimeout(
+            toBlobURL(`${baseURL}/ffmpeg-core.js`, 'text/javascript'),
+            30000,
+            'Timeout loading FFmpeg core JavaScript'
+          );
+          
+          const wasmURL = await this.loadWithTimeout(
+            toBlobURL(`${baseURL}/ffmpeg-core.wasm`, 'application/wasm'),
+            60000,
+            'Timeout loading FFmpeg WASM binary'
+          );
+          
+          console.log('Core files loaded successfully, initializing FFmpeg...');
+          onProgress?.(5);
+          
+          await this.loadWithTimeout(
+            this.ffmpeg.load({
+              coreURL,
+              wasmURL,
+            }),
+            90000,
+            'Timeout during FFmpeg initialization'
+          );
+          
+          this.isLoaded = true;
+          console.log('FFmpeg loaded successfully');
+          onProgress?.(10);
+          return;
+          
+        } catch (error) {
+          lastError = error as Error;
+          console.warn(`Failed to load from CDN ${i + 1}: ${error.message}`);
+          
+          if (i < cdnSources.length - 1) {
+            console.log('Trying next CDN source...');
+            continue;
+          }
+        }
+      }
+
+      throw lastError || new Error('Failed to load FFmpeg from all CDN sources');
+      
+    } catch (error) {
+      this.isLoaded = false;
+      console.error('FFmpeg initialization failed:', error);
+      throw new Error(`FFmpeg initialization failed: ${error.message}`);
+    }
+  }
+
+  private async loadWithTimeout<T>(promise: Promise<T>, timeoutMs: number, errorMessage: string): Promise<T> {
+    return Promise.race([
+      promise,
+      new Promise<never>((_, reject) => 
+        setTimeout(() => reject(new Error(errorMessage)), timeoutMs)
+      )
+    ]);
   }
 
   private getTextPosition(position: string): string {
@@ -275,5 +315,9 @@ export class VideoProcessor {
       case 'outline': return `${baseStyle}:bordercolor=black:borderw=2`;
       default: return baseStyle;
     }
+  }
+
+  getProcessingMode(): 'client' | 'server' {
+    return this.processingMode;
   }
 }
