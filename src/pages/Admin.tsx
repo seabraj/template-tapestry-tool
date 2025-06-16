@@ -6,16 +6,15 @@ import { Input } from '@/components/ui/input';
 import { Textarea } from '@/components/ui/textarea';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Badge } from '@/components/ui/badge';
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
-import { useToast } from '@/hooks/use-toast';
+import { Trash2, Upload, Play } from 'lucide-react';
 import { supabase } from '@/integrations/supabase/client';
-import { Upload, Play, Trash2, Edit, Plus } from 'lucide-react';
+import { useToast } from '@/hooks/use-toast';
 
 interface VideoCategory {
   id: string;
   name: string;
-  description: string;
   aspect_ratio: string;
+  description?: string;
 }
 
 interface VideoAsset {
@@ -24,31 +23,26 @@ interface VideoAsset {
   description: string;
   duration: number;
   file_url: string;
-  file_size: number;
   thumbnail_url: string;
   category_id: string;
   tags: string[];
   is_active: boolean;
-  created_at: string;
   video_categories?: VideoCategory;
 }
 
 const Admin = () => {
-  const [categories, setCategories] = useState<VideoCategory[]>([]);
   const [assets, setAssets] = useState<VideoAsset[]>([]);
-  const [isUploading, setIsUploading] = useState(false);
-  const [editingAsset, setEditingAsset] = useState<VideoAsset | null>(null);
-  const { toast } = useToast();
-
-  // Form state
-  const [formData, setFormData] = useState({
+  const [categories, setCategories] = useState<VideoCategory[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [uploading, setUploading] = useState(false);
+  const [newAsset, setNewAsset] = useState({
     name: '',
     description: '',
-    duration: '',
+    duration: 0,
     category_id: '',
-    tags: '',
-    file: null as File | null
+    tags: ''
   });
+  const { toast } = useToast();
 
   useEffect(() => {
     fetchCategories();
@@ -60,7 +54,7 @@ const Admin = () => {
       .from('video_categories')
       .select('*')
       .order('name');
-
+    
     if (error) {
       toast({
         title: "Error fetching categories",
@@ -73,182 +67,179 @@ const Admin = () => {
   };
 
   const fetchAssets = async () => {
-    const { data, error } = await supabase
-      .from('video_assets')
-      .select(`
-        *,
-        video_categories (
-          id,
-          name,
-          aspect_ratio
-        )
-      `)
-      .order('created_at', { ascending: false });
+    try {
+      const { data, error } = await supabase
+        .from('video_assets')
+        .select(`
+          *,
+          video_categories (
+            id,
+            name,
+            aspect_ratio
+          )
+        `)
+        .order('created_at', { ascending: false });
 
-    if (error) {
+      if (error) throw error;
+      
+      // Transform the data to match our interface
+      const transformedData = data?.map(item => ({
+        ...item,
+        video_categories: item.video_categories ? {
+          id: item.video_categories.id,
+          name: item.video_categories.name,
+          aspect_ratio: item.video_categories.aspect_ratio
+        } : undefined
+      })) || [];
+      
+      setAssets(transformedData);
+    } catch (err: any) {
       toast({
         title: "Error fetching assets",
-        description: error.message,
+        description: err.message,
         variant: "destructive"
       });
-    } else {
-      setAssets(data || []);
+    } finally {
+      setLoading(false);
     }
   };
 
   const handleFileUpload = async (event: React.ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0];
-    if (file) {
-      setFormData(prev => ({ ...prev, file }));
-      
-      // Auto-extract duration from video file if possible
-      const video = document.createElement('video');
-      video.preload = 'metadata';
-      video.onloadedmetadata = () => {
-        setFormData(prev => ({ 
-          ...prev, 
-          duration: Math.round(video.duration).toString() 
-        }));
-      };
-      video.src = URL.createObjectURL(file);
-    }
-  };
-
-  const uploadVideoFile = async (file: File): Promise<string> => {
-    const fileExt = file.name.split('.').pop();
-    const fileName = `${Date.now()}.${fileExt}`;
-    const filePath = `videos/${fileName}`;
-
-    const { error: uploadError } = await supabase.storage
-      .from('video-assets')
-      .upload(filePath, file);
-
-    if (uploadError) {
-      throw uploadError;
-    }
-
-    const { data } = supabase.storage
-      .from('video-assets')
-      .getPublicUrl(filePath);
-
-    return data.publicUrl;
-  };
-
-  const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!formData.file || !formData.name || !formData.category_id) {
+    if (!file || !newAsset.category_id) {
       toast({
-        title: "Missing required fields",
-        description: "Please fill in all required fields and select a video file.",
+        title: "Missing information",
+        description: "Please select a file and category first.",
         variant: "destructive"
       });
       return;
     }
 
-    setIsUploading(true);
-
+    setUploading(true);
     try {
       // Upload file to Supabase Storage
-      const fileUrl = await uploadVideoFile(formData.file);
+      const fileName = `${Date.now()}.${file.name.split('.').pop()}`;
+      const { data: uploadData, error: uploadError } = await supabase.storage
+        .from('video-assets')
+        .upload(`videos/${fileName}`, file);
 
-      // Insert video asset record
-      const { error } = await supabase
+      if (uploadError) throw uploadError;
+
+      // Get public URL
+      const { data: urlData } = supabase.storage
+        .from('video-assets')
+        .getPublicUrl(`videos/${fileName}`);
+
+      // Create video asset record
+      const { error: insertError } = await supabase
         .from('video_assets')
         .insert({
-          name: formData.name,
-          description: formData.description,
-          duration: parseInt(formData.duration) || 0,
-          file_url: fileUrl,
-          file_size: formData.file.size,
-          category_id: formData.category_id,
-          tags: formData.tags ? formData.tags.split(',').map(tag => tag.trim()) : []
+          name: newAsset.name,
+          description: newAsset.description,
+          duration: newAsset.duration,
+          file_url: urlData.publicUrl,
+          file_size: file.size,
+          category_id: newAsset.category_id,
+          tags: newAsset.tags.split(',').map(tag => tag.trim()).filter(Boolean)
         });
 
-      if (error) throw error;
+      if (insertError) throw insertError;
 
       toast({
         title: "Video uploaded successfully",
         description: "The video has been added to your library."
       });
 
-      // Reset form
-      setFormData({
+      // Reset form and refresh data
+      setNewAsset({
         name: '',
         description: '',
-        duration: '',
+        duration: 0,
         category_id: '',
-        tags: '',
-        file: null
+        tags: ''
       });
-
-      // Refresh assets list
       fetchAssets();
-
-    } catch (error: any) {
+    } catch (err: any) {
       toast({
         title: "Upload failed",
-        description: error.message,
+        description: err.message,
         variant: "destructive"
       });
     } finally {
-      setIsUploading(false);
+      setUploading(false);
     }
   };
 
-  const handleDelete = async (assetId: string) => {
-    if (!confirm('Are you sure you want to delete this video asset?')) return;
+  const deleteAsset = async (id: string) => {
+    try {
+      const { error } = await supabase
+        .from('video_assets')
+        .delete()
+        .eq('id', id);
 
-    const { error } = await supabase
-      .from('video_assets')
-      .delete()
-      .eq('id', assetId);
+      if (error) throw error;
 
-    if (error) {
       toast({
-        title: "Error deleting asset",
-        description: error.message,
-        variant: "destructive"
-      });
-    } else {
-      toast({
-        title: "Asset deleted",
-        description: "The video asset has been removed."
+        title: "Video deleted",
+        description: "The video has been removed from your library."
       });
       fetchAssets();
-    }
-  };
-
-  const toggleAssetStatus = async (assetId: string, currentStatus: boolean) => {
-    const { error } = await supabase
-      .from('video_assets')
-      .update({ is_active: !currentStatus })
-      .eq('id', assetId);
-
-    if (error) {
+    } catch (err: any) {
       toast({
-        title: "Error updating asset",
-        description: error.message,
+        title: "Delete failed",
+        description: err.message,
         variant: "destructive"
       });
-    } else {
-      fetchAssets();
     }
   };
+
+  const toggleActive = async (id: string, currentStatus: boolean) => {
+    try {
+      const { error } = await supabase
+        .from('video_assets')
+        .update({ is_active: !currentStatus })
+        .eq('id', id);
+
+      if (error) throw error;
+
+      toast({
+        title: `Video ${!currentStatus ? 'activated' : 'deactivated'}`,
+        description: `The video is now ${!currentStatus ? 'visible' : 'hidden'} in the library.`
+      });
+      fetchAssets();
+    } catch (err: any) {
+      toast({
+        title: "Update failed",
+        description: err.message,
+        variant: "destructive"
+      });
+    }
+  };
+
+  if (loading) {
+    return (
+      <div className="min-h-screen bg-gray-50 flex items-center justify-center">
+        <div className="text-center">
+          <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600 mx-auto"></div>
+          <p className="mt-4 text-gray-600">Loading admin panel...</p>
+        </div>
+      </div>
+    );
+  }
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-slate-50 to-blue-50">
-      {/* Header */}
+    <div className="min-h-screen bg-gray-50">
       <div className="bg-white border-b border-gray-200 shadow-sm">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
           <div className="flex items-center justify-between h-16">
             <div className="flex items-center space-x-4">
-              <div className="w-8 h-8 bg-gradient-to-r from-purple-600 to-blue-600 rounded-lg flex items-center justify-center">
+              <div className="w-8 h-8 bg-gradient-to-r from-red-600 to-orange-600 rounded-lg flex items-center justify-center">
                 <span className="text-white font-bold text-sm">VA</span>
               </div>
-              <h1 className="text-xl font-semibold text-gray-900">Video Assets Admin</h1>
+              <h1 className="text-xl font-semibold text-gray-900">Video Asset Admin</h1>
             </div>
-            <Button onClick={() => window.location.href = '/'} variant="outline">
-              Back to App
+            <Button onClick={() => window.open('/', '_blank')} variant="outline">
+              ← Back to App
             </Button>
           </div>
         </div>
@@ -256,155 +247,155 @@ const Admin = () => {
 
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
-          
           {/* Upload Form */}
           <div className="lg:col-span-1">
-            <Card className="shadow-lg">
+            <Card>
               <CardHeader>
-                <CardTitle className="flex items-center space-x-2">
-                  <Upload className="h-5 w-5" />
-                  <span>Upload New Video</span>
-                </CardTitle>
+                <CardTitle>Upload New Video</CardTitle>
               </CardHeader>
-              <CardContent>
-                <form onSubmit={handleSubmit} className="space-y-4">
-                  <div>
-                    <label className="block text-sm font-medium mb-1">Video File *</label>
-                    <Input 
-                      type="file" 
-                      accept="video/*"
-                      onChange={handleFileUpload}
-                      required
-                    />
-                  </div>
+              <CardContent className="space-y-4">
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">
+                    Video Name
+                  </label>
+                  <Input
+                    value={newAsset.name}
+                    onChange={(e) => setNewAsset({...newAsset, name: e.target.value})}
+                    placeholder="Enter video name"
+                  />
+                </div>
 
-                  <div>
-                    <label className="block text-sm font-medium mb-1">Name *</label>
-                    <Input 
-                      value={formData.name}
-                      onChange={(e) => setFormData(prev => ({ ...prev, name: e.target.value }))}
-                      placeholder="Enter video name"
-                      required
-                    />
-                  </div>
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">
+                    Description
+                  </label>
+                  <Textarea
+                    value={newAsset.description}
+                    onChange={(e) => setNewAsset({...newAsset, description: e.target.value})}
+                    placeholder="Enter description"
+                    rows={3}
+                  />
+                </div>
 
-                  <div>
-                    <label className="block text-sm font-medium mb-1">Category *</label>
-                    <Select 
-                      value={formData.category_id} 
-                      onValueChange={(value) => setFormData(prev => ({ ...prev, category_id: value }))}
-                    >
-                      <SelectTrigger>
-                        <SelectValue placeholder="Select category" />
-                      </SelectTrigger>
-                      <SelectContent>
-                        {categories.map((category) => (
-                          <SelectItem key={category.id} value={category.id}>
-                            {category.name} ({category.aspect_ratio})
-                          </SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
-                  </div>
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">
+                    Duration (seconds)
+                  </label>
+                  <Input
+                    type="number"
+                    value={newAsset.duration}
+                    onChange={(e) => setNewAsset({...newAsset, duration: parseInt(e.target.value) || 0})}
+                    placeholder="Duration in seconds"
+                  />
+                </div>
 
-                  <div>
-                    <label className="block text-sm font-medium mb-1">Duration (seconds)</label>
-                    <Input 
-                      type="number"
-                      value={formData.duration}
-                      onChange={(e) => setFormData(prev => ({ ...prev, duration: e.target.value }))}
-                      placeholder="Auto-detected or enter manually"
-                    />
-                  </div>
-
-                  <div>
-                    <label className="block text-sm font-medium mb-1">Description</label>
-                    <Textarea 
-                      value={formData.description}
-                      onChange={(e) => setFormData(prev => ({ ...prev, description: e.target.value }))}
-                      placeholder="Describe the video content"
-                    />
-                  </div>
-
-                  <div>
-                    <label className="block text-sm font-medium mb-1">Tags</label>
-                    <Input 
-                      value={formData.tags}
-                      onChange={(e) => setFormData(prev => ({ ...prev, tags: e.target.value }))}
-                      placeholder="intro, product, demo (comma separated)"
-                    />
-                  </div>
-
-                  <Button 
-                    type="submit" 
-                    className="w-full" 
-                    disabled={isUploading}
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">
+                    Category
+                  </label>
+                  <Select 
+                    value={newAsset.category_id} 
+                    onValueChange={(value) => setNewAsset({...newAsset, category_id: value})}
                   >
-                    {isUploading ? 'Uploading...' : 'Upload Video'}
-                  </Button>
-                </form>
+                    <SelectTrigger>
+                      <SelectValue placeholder="Select category" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {categories.map((category) => (
+                        <SelectItem key={category.id} value={category.id}>
+                          {category.name} ({category.aspect_ratio})
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">
+                    Tags (comma-separated)
+                  </label>
+                  <Input
+                    value={newAsset.tags}
+                    onChange={(e) => setNewAsset({...newAsset, tags: e.target.value})}
+                    placeholder="intro, outro, transition"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">
+                    Video File (MP4)
+                  </label>
+                  <Input
+                    type="file"
+                    accept=".mp4,video/mp4"
+                    onChange={handleFileUpload}
+                    disabled={uploading}
+                  />
+                </div>
+
+                {uploading && (
+                  <div className="flex items-center space-x-2 text-blue-600">
+                    <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-blue-600"></div>
+                    <span className="text-sm">Uploading...</span>
+                  </div>
+                )}
               </CardContent>
             </Card>
           </div>
 
-          {/* Assets List */}
+          {/* Video Library */}
           <div className="lg:col-span-2">
-            <Card className="shadow-lg">
+            <Card>
               <CardHeader>
-                <CardTitle>Video Library ({assets.length} assets)</CardTitle>
+                <CardTitle>Video Library ({assets.length} videos)</CardTitle>
               </CardHeader>
               <CardContent>
-                <div className="overflow-x-auto">
-                  <Table>
-                    <TableHeader>
-                      <TableRow>
-                        <TableHead>Name</TableHead>
-                        <TableHead>Category</TableHead>
-                        <TableHead>Duration</TableHead>
-                        <TableHead>Size</TableHead>
-                        <TableHead>Tags</TableHead>
-                        <TableHead>Status</TableHead>
-                        <TableHead>Actions</TableHead>
-                      </TableRow>
-                    </TableHeader>
-                    <TableBody>
-                      {assets.map((asset) => (
-                        <TableRow key={asset.id}>
-                          <TableCell className="font-medium">
-                            {asset.name}
-                            {asset.description && (
-                              <p className="text-xs text-gray-500 mt-1">{asset.description}</p>
-                            )}
-                          </TableCell>
-                          <TableCell>
-                            <Badge variant="outline">
-                              {asset.video_categories?.name} ({asset.video_categories?.aspect_ratio})
-                            </Badge>
-                          </TableCell>
-                          <TableCell>{asset.duration}s</TableCell>
-                          <TableCell>
-                            {asset.file_size ? `${(asset.file_size / 1024 / 1024).toFixed(1)}MB` : '-'}
-                          </TableCell>
-                          <TableCell>
-                            <div className="flex flex-wrap gap-1">
-                              {asset.tags?.map((tag, index) => (
-                                <Badge key={index} variant="secondary" className="text-xs">
-                                  {tag}
+                <div className="space-y-4">
+                  {assets.map((asset) => (
+                    <div key={asset.id} className="border rounded-lg p-4 bg-white shadow-sm">
+                      <div className="flex items-start space-x-4">
+                        {/* Video Preview */}
+                        <div className="w-32 h-24 bg-gray-200 rounded-lg flex items-center justify-center overflow-hidden">
+                          <video 
+                            src={asset.file_url} 
+                            className="w-full h-full object-cover"
+                            preload="metadata"
+                            muted
+                          />
+                        </div>
+
+                        {/* Details */}
+                        <div className="flex-1">
+                          <div className="flex items-start justify-between">
+                            <div>
+                              <h3 className="font-semibold text-gray-900">{asset.name}</h3>
+                              <p className="text-sm text-gray-600 mt-1">{asset.description}</p>
+                              <div className="flex items-center space-x-4 mt-2 text-sm text-gray-500">
+                                <span>Duration: {asset.duration}s</span>
+                                <span>Category: {asset.video_categories?.name}</span>
+                                <Badge variant={asset.is_active ? "default" : "secondary"}>
+                                  {asset.is_active ? "Active" : "Inactive"}
                                 </Badge>
-                              ))}
+                              </div>
+                              {asset.tags && asset.tags.length > 0 && (
+                                <div className="flex flex-wrap gap-1 mt-2">
+                                  {asset.tags.map((tag, index) => (
+                                    <Badge key={index} variant="outline" className="text-xs">
+                                      {tag}
+                                    </Badge>
+                                  ))}
+                                </div>
+                              )}
                             </div>
-                          </TableCell>
-                          <TableCell>
-                            <Badge 
-                              variant={asset.is_active ? "default" : "secondary"}
-                              className="cursor-pointer"
-                              onClick={() => toggleAssetStatus(asset.id, asset.is_active)}
-                            >
-                              {asset.is_active ? 'Active' : 'Inactive'}
-                            </Badge>
-                          </TableCell>
-                          <TableCell>
+
                             <div className="flex space-x-2">
+                              <Button
+                                size="sm"
+                                variant="outline"
+                                onClick={() => toggleActive(asset.id, asset.is_active)}
+                              >
+                                {asset.is_active ? 'Deactivate' : 'Activate'}
+                              </Button>
                               <Button
                                 size="sm"
                                 variant="outline"
@@ -414,17 +405,25 @@ const Admin = () => {
                               </Button>
                               <Button
                                 size="sm"
-                                variant="outline"
-                                onClick={() => handleDelete(asset.id)}
+                                variant="destructive"
+                                onClick={() => deleteAsset(asset.id)}
                               >
                                 <Trash2 className="h-4 w-4" />
                               </Button>
                             </div>
-                          </TableCell>
-                        </TableRow>
-                      ))}
-                    </TableBody>
-                  </Table>
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                  ))}
+
+                  {assets.length === 0 && (
+                    <div className="text-center py-12">
+                      <Upload className="h-12 w-12 text-gray-400 mx-auto mb-4" />
+                      <h3 className="text-lg font-medium text-gray-900 mb-2">No videos uploaded yet</h3>
+                      <p className="text-gray-600">Upload your first video to get started!</p>
+                    </div>
+                  )}
                 </div>
               </CardContent>
             </Card>

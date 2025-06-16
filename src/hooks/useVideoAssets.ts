@@ -73,7 +73,7 @@ export const useVideoAssets = (platformFilter?: string) => {
       id: asset.id,
       name: asset.name,
       duration: asset.duration,
-      thumbnail: asset.thumbnail_url || '/placeholder.svg',
+      thumbnail: asset.file_url, // Use the actual video URL as thumbnail for now
       selected: false
     }));
   };
