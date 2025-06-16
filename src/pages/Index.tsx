@@ -1,4 +1,3 @@
-
 import { useState } from 'react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -8,7 +7,7 @@ import LanguageDurationSelector from '@/components/LanguageDurationSelector';
 import SequenceManager from '@/components/SequenceManager';
 import CustomizationPanel from '@/components/CustomizationPanel';
 import ExportPanel from '@/components/ExportPanel';
-import { ArrowRight } from 'lucide-react';
+import { ArrowRight, Settings } from 'lucide-react';
 
 export type Platform = 'facebook' | 'instagram' | 'youtube';
 export type Language = 'en' | 'es' | 'fr' | 'de' | 'pt';
@@ -44,12 +43,7 @@ const Index = () => {
   const [platform, setPlatform] = useState<Platform>('youtube');
   const [language, setLanguage] = useState<Language>('en');
   const [duration, setDuration] = useState(30);
-  const [sequences, setSequences] = useState<VideoSequence[]>([
-    { id: '1', name: 'Opening Hook', duration: 5, thumbnail: '/placeholder.svg', selected: true },
-    { id: '2', name: 'Main Content', duration: 20, thumbnail: '/placeholder.svg', selected: true },
-    { id: '3', name: 'Call to Action', duration: 5, thumbnail: '/placeholder.svg', selected: false },
-    { id: '4', name: 'Brand Outro', duration: 3, thumbnail: '/placeholder.svg', selected: true },
-  ]);
+  const [sequences, setSequences] = useState<VideoSequence[]>([]);
   const [customization, setCustomization] = useState<CustomizationSettings>({
     supers: { text: 'Amazing Content', position: 'center', style: 'bold' },
     endFrame: { enabled: true, text: 'Thank You for Watching!', logoPosition: 'center' },
@@ -84,9 +78,19 @@ const Index = () => {
               </div>
               <h1 className="text-xl font-semibold text-gray-900">Video Template Generator</h1>
             </div>
-            <Badge variant="secondary" className="bg-blue-100 text-blue-800">
-              Step {step} of 5
-            </Badge>
+            <div className="flex items-center space-x-4">
+              <Badge variant="secondary" className="bg-blue-100 text-blue-800">
+                Step {step} of 5
+              </Badge>
+              <Button 
+                onClick={() => window.open('/admin', '_blank')} 
+                variant="outline"
+                size="sm"
+              >
+                <Settings className="h-4 w-4 mr-2" />
+                Admin Panel
+              </Button>
+            </div>
           </div>
         </div>
       </div>
@@ -157,6 +161,7 @@ const Index = () => {
                   <SequenceManager
                     sequences={sequences}
                     onSequencesChange={setSequences}
+                    platform={platform}
                   />
                 )}
                 {step === 4 && (

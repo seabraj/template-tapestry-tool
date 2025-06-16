@@ -9,7 +9,83 @@ export type Json =
 export type Database = {
   public: {
     Tables: {
-      [_ in never]: never
+      video_assets: {
+        Row: {
+          category_id: string | null
+          created_at: string
+          description: string | null
+          duration: number
+          file_size: number | null
+          file_url: string
+          id: string
+          is_active: boolean
+          name: string
+          tags: string[] | null
+          thumbnail_url: string | null
+          updated_at: string
+        }
+        Insert: {
+          category_id?: string | null
+          created_at?: string
+          description?: string | null
+          duration: number
+          file_size?: number | null
+          file_url: string
+          id?: string
+          is_active?: boolean
+          name: string
+          tags?: string[] | null
+          thumbnail_url?: string | null
+          updated_at?: string
+        }
+        Update: {
+          category_id?: string | null
+          created_at?: string
+          description?: string | null
+          duration?: number
+          file_size?: number | null
+          file_url?: string
+          id?: string
+          is_active?: boolean
+          name?: string
+          tags?: string[] | null
+          thumbnail_url?: string | null
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "video_assets_category_id_fkey"
+            columns: ["category_id"]
+            isOneToOne: false
+            referencedRelation: "video_categories"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      video_categories: {
+        Row: {
+          aspect_ratio: string
+          created_at: string
+          description: string | null
+          id: string
+          name: string
+        }
+        Insert: {
+          aspect_ratio: string
+          created_at?: string
+          description?: string | null
+          id?: string
+          name: string
+        }
+        Update: {
+          aspect_ratio?: string
+          created_at?: string
+          description?: string | null
+          id?: string
+          name?: string
+        }
+        Relationships: []
+      }
     }
     Views: {
       [_ in never]: never

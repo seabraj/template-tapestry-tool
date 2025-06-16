@@ -1,18 +1,41 @@
 
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { Card, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Checkbox } from '@/components/ui/checkbox';
-import { VideoSequence } from '@/pages/Index';
-import { ArrowUp, ArrowDown } from 'lucide-react';
+import { VideoSequence, Platform } from '@/pages/Index';
+import { ArrowUp, ArrowDown, RefreshCw } from 'lucide-react';
+import { useVideoAssets } from '@/hooks/useVideoAssets';
+import { useToast } from '@/hooks/use-toast';
 
 interface SequenceManagerProps {
   sequences: VideoSequence[];
   onSequencesChange: (sequences: VideoSequence[]) => void;
+  platform: Platform;
 }
 
-const SequenceManager = ({ sequences, onSequencesChange }: SequenceManagerProps) => {
+const SequenceManager = ({ sequences, onSequencesChange, platform }: SequenceManagerProps) => {
   const [draggedItem, setDraggedItem] = useState<string | null>(null);
+  const { assets, loading, error, refetch, convertToSequences } = useVideoAssets(platform);
+  const { toast } = useToast();
+
+  // Load sequences from Supabase when component mounts or platform changes
+  useEffect(() => {
+    if (assets.length > 0 && sequences.length === 0) {
+      const videoSequences = convertToSequences();
+      onSequencesChange(videoSequences);
+    }
+  }, [assets, platform]);
+
+  const handleRefreshLibrary = async () => {
+    await refetch();
+    const videoSequences = convertToSequences();
+    onSequencesChange(videoSequences);
+    toast({
+      title: "Library refreshed",
+      description: "Video library has been updated with the latest assets."
+    });
+  };
 
   const toggleSequence = (id: string) => {
     const updated = sequences.map(seq => 
@@ -42,11 +65,65 @@ const SequenceManager = ({ sequences, onSequencesChange }: SequenceManagerProps)
   const selectedSequences = sequences.filter(s => s.selected);
   const totalDuration = selectedSequences.reduce((sum, seq) => sum + seq.duration, 0);
 
+  if (loading) {
+    return (
+      <div className="text-center py-8">
+        <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600 mx-auto"></div>
+        <p className="mt-4 text-gray-600">Loading video library...</p>
+      </div>
+    );
+  }
+
+  if (error) {
+    return (
+      <div className="text-center py-8">
+        <div className="bg-red-50 border border-red-200 rounded-lg p-4">
+          <p className="text-red-800">Error loading video library: {error}</p>
+          <Button onClick={refetch} className="mt-2" variant="outline">
+            Try Again
+          </Button>
+        </div>
+      </div>
+    );
+  }
+
+  if (sequences.length === 0) {
+    return (
+      <div className="text-center py-8">
+        <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-6">
+          <h3 className="font-semibold text-yellow-800 mb-2">No Video Assets Found</h3>
+          <p className="text-yellow-700 mb-4">
+            No video assets were found for the {platform} platform. 
+            Please upload some videos to the admin panel first.
+          </p>
+          <div className="space-y-2">
+            <Button onClick={() => window.open('/admin', '_blank')} className="mr-2">
+              Open Admin Panel
+            </Button>
+            <Button onClick={handleRefreshLibrary} variant="outline">
+              <RefreshCw className="h-4 w-4 mr-2" />
+              Refresh Library
+            </Button>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="space-y-6">
       <div className="text-center">
         <h3 className="text-lg font-semibold mb-2">Select & Arrange Sequences</h3>
         <p className="text-gray-600">Choose which video clips to include and arrange them in order</p>
+        <Button 
+          onClick={handleRefreshLibrary} 
+          variant="outline" 
+          size="sm" 
+          className="mt-2"
+        >
+          <RefreshCw className="h-4 w-4 mr-2" />
+          Refresh Library
+        </Button>
       </div>
 
       {/* Summary */}
@@ -111,7 +188,15 @@ const SequenceManager = ({ sequences, onSequencesChange }: SequenceManagerProps)
 
                 {/* Thumbnail */}
                 <div className="w-16 h-12 bg-gray-300 rounded-lg flex items-center justify-center">
-                  <span className="text-xs text-gray-600">CLIP</span>
+                  {sequence.thumbnail !== '/placeholder.svg' ? (
+                    <img 
+                      src={sequence.thumbnail} 
+                      alt={sequence.name}
+                      className="w-full h-full object-cover rounded-lg"
+                    />
+                  ) : (
+                    <span className="text-xs text-gray-600">CLIP</span>
+                  )}
                 </div>
 
                 {/* Details */}
