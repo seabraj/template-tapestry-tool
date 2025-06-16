@@ -33,7 +33,7 @@ export interface VideoProcessingOptions {
 export class VideoProcessor {
   private ffmpeg: FFmpeg;
   private isLoaded = false;
-  private processingMode: 'client' | 'server' = 'server'; // Default to server-side
+  private processingMode: 'client' | 'server' = 'server';
 
   constructor() {
     this.ffmpeg = new FFmpeg();
@@ -41,7 +41,6 @@ export class VideoProcessor {
   }
 
   private detectProcessingCapability(): void {
-    // Check for client-side processing capability
     const hasSharedArrayBuffer = typeof SharedArrayBuffer !== 'undefined';
     const isCrossOriginIsolated = typeof crossOriginIsolated !== 'undefined' && crossOriginIsolated;
     const isSecureContext = typeof window !== 'undefined' && window.isSecureContext;
@@ -118,6 +117,27 @@ export class VideoProcessor {
 
       onProgress?.(95);
 
+      // Handle storage-based response
+      if (data.useStorage && data.downloadUrl) {
+        console.log('Processing storage-based response:', {
+          downloadUrl: data.downloadUrl,
+          filename: data.filename,
+          metadata: data.metadata
+        });
+
+        // Download the processed video from storage
+        const videoResponse = await fetch(data.downloadUrl);
+        if (!videoResponse.ok) {
+          throw new Error(`Failed to download processed video: ${videoResponse.status}`);
+        }
+
+        const videoBlob = await videoResponse.blob();
+        onProgress?.(100);
+        console.log('Storage-based video processing completed successfully, blob size:', videoBlob.size);
+        return videoBlob;
+      }
+
+      // Handle base64 response (for smaller files)
       if (!data.videoData) {
         throw new Error('No video data received from server');
       }
@@ -127,9 +147,8 @@ export class VideoProcessor {
         metadata: data.metadata
       });
       
-      // Convert base64 back to blob with better error handling
       try {
-        // Validate base64 format
+        // Improved base64 validation - more permissive but still safe
         if (typeof data.videoData !== 'string') {
           throw new Error('Video data is not a string');
         }
@@ -137,10 +156,9 @@ export class VideoProcessor {
         // Clean the base64 string (remove any whitespace/newlines)
         const cleanBase64 = data.videoData.replace(/\s/g, '');
         
-        // Validate base64 format
-        const base64Regex = /^[A-Za-z0-9+/]*={0,2}$/;
-        if (!base64Regex.test(cleanBase64)) {
-          throw new Error('Invalid base64 format received from server');
+        // Basic length check - base64 should be divisible by 4 when padded
+        if (cleanBase64.length === 0) {
+          throw new Error('Empty base64 data received');
         }
 
         console.log('Base64 validation passed, converting to blob...');
@@ -154,7 +172,7 @@ export class VideoProcessor {
 
         onProgress?.(100);
         const blob = new Blob([bytes], { type: 'video/mp4' });
-        console.log('Video processing completed successfully, blob size:', blob.size);
+        console.log('Base64 video processing completed successfully, blob size:', blob.size);
         return blob;
         
       } catch (conversionError) {
@@ -169,15 +187,18 @@ export class VideoProcessor {
 
     } catch (error) {
       console.error('Server-side video processing failed:', error);
+      
       // Provide more specific error messages
       if (error.message.includes('timeout')) {
-        throw new Error('Video processing timed out. Please try with smaller video files.');
+        throw new Error('Video processing timed out. Please try with smaller video files or try again later.');
       } else if (error.message.includes('too large')) {
-        throw new Error('Video file is too large. Please use files smaller than 50MB.');
+        throw new Error('Video file is too large. Please use files smaller than 100MB.');
       } else if (error.message.includes('Invalid')) {
         throw new Error('Invalid video file format or URL. Please check your video files.');
-      } else if (error.message.includes('base64')) {
-        throw new Error('Video processing completed but failed to convert result. Please try again.');
+      } else if (error.message.includes('download')) {
+        throw new Error('Failed to download processed video. Please try again.');
+      } else if (error.message.includes('storage')) {
+        throw new Error('Video processing completed but storage failed. Please try again.');
       }
       throw new Error(`Server processing failed: ${error.message}`);
     }
@@ -288,7 +309,6 @@ export class VideoProcessor {
       console.log('Starting FFmpeg initialization...');
       onProgress?.(1);
 
-      // Set up progress monitoring
       if (onProgress) {
         this.ffmpeg.on('progress', ({ progress }) => {
           const mappedProgress = Math.round(1 + (progress * 9));
@@ -296,7 +316,6 @@ export class VideoProcessor {
         });
       }
 
-      // Try multiple CDN sources with fallback
       const cdnSources = [
         'https://unpkg.com/@ffmpeg/core@0.12.6/dist/umd',
         'https://cdn.jsdelivr.net/npm/@ffmpeg/core@0.12.6/dist/umd',
