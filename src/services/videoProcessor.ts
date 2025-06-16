@@ -1,4 +1,3 @@
-
 import { FFmpeg } from '@ffmpeg/ffmpeg';
 import { toBlobURL } from '@ffmpeg/util';
 import { supabase } from '@/integrations/supabase/client';
@@ -45,7 +44,7 @@ export class VideoProcessor {
     // Check for client-side processing capability
     const hasSharedArrayBuffer = typeof SharedArrayBuffer !== 'undefined';
     const isCrossOriginIsolated = typeof crossOriginIsolated !== 'undefined' && crossOriginIsolated;
-    const isSecureContext = typeof isSecureContext !== 'undefined' && isSecureContext;
+    const isSecureContext = typeof window !== 'undefined' && window.isSecureContext;
 
     console.log('Browser capability check:', {
       hasSharedArrayBuffer,
