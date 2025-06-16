@@ -32,6 +32,8 @@ export const useVideoAssets = (platformFilter?: string) => {
   const fetchAssets = async () => {
     try {
       setLoading(true);
+      setError(null);
+      
       let query = supabase
         .from('video_assets')
         .select(`
@@ -59,9 +61,15 @@ export const useVideoAssets = (platformFilter?: string) => {
 
       const { data, error } = await query;
 
-      if (error) throw error;
+      if (error) {
+        console.error('Supabase query error:', error);
+        throw error;
+      }
+      
+      console.log('Fetched video assets:', data?.length || 0, 'assets');
       setAssets(data || []);
     } catch (err: any) {
+      console.error('Error fetching video assets:', err);
       setError(err.message);
     } finally {
       setLoading(false);
@@ -85,7 +93,11 @@ export const useVideoAssets = (platformFilter?: string) => {
 
   const getVideoUrlById = (id: string): string | null => {
     const asset = getAssetById(id);
-    return asset?.file_url || null;
+    if (!asset || !asset.file_url) {
+      console.warn(`No video URL found for asset ID: ${id}`);
+      return null;
+    }
+    return asset.file_url;
   };
 
   return {
