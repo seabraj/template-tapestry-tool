@@ -28,12 +28,14 @@ const ExportPanel = ({
   const [exportComplete, setExportComplete] = useState(false);
   const [downloadUrl, setDownloadUrl] = useState<string | null>(null);
   const [processingStep, setProcessingStep] = useState('');
+  const [limitationWarning, setLimitationWarning] = useState<string | null>(null);
   const { assets, getAssetById, getVideoUrlById } = useVideoAssets(platform);
   const { toast } = useToast();
 
   const handleExport = async () => {
     setIsExporting(true);
     setExportProgress(0);
+    setLimitationWarning(null);
     setProcessingStep('Preparing videos for processing...');
     
     try {
@@ -42,6 +44,12 @@ const ExportPanel = ({
       
       if (selectedSequences.length === 0) {
         throw new Error('No videos selected for processing');
+      }
+
+      // Show limitation warning for multiple videos
+      if (selectedSequences.length > 1) {
+        setProcessingStep('Note: Multiple video concatenation has limitations...');
+        setLimitationWarning('Due to MP4 container complexity, the system will process the first video in your sequence');
       }
 
       // Prepare export data with proper file URLs in the exact order selected
@@ -56,7 +64,7 @@ const ExportPanel = ({
           name: seq.name,
           duration: seq.duration,
           file_url: asset.file_url,
-          originalOrder: index // Preserve user selection order
+          originalOrder: index
         };
       }).filter((asset): asset is NonNullable<typeof asset> => asset !== null);
 
@@ -71,7 +79,6 @@ const ExportPanel = ({
       const onProgress = (progress: number) => {
         setExportProgress(progress);
         if (orderedAssets.length === 1) {
-          // Single video processing
           if (progress < 20) {
             setProcessingStep('Processing single video...');
           } else if (progress < 80) {
@@ -80,13 +87,12 @@ const ExportPanel = ({
             setProcessingStep('Download ready!');
           }
         } else {
-          // Multiple video concatenation
           if (progress < 20) {
             setProcessingStep('Server processing: downloading videos...');
           } else if (progress < 60) {
-            setProcessingStep('Server processing: concatenating videos in order...');
+            setProcessingStep('Server processing: handling multiple videos...');
           } else if (progress < 90) {
-            setProcessingStep('Server processing: finalizing concatenated video...');
+            setProcessingStep('Server processing: finalizing video...');
           } else {
             setProcessingStep('Download ready!');
           }
@@ -108,18 +114,25 @@ const ExportPanel = ({
       setExportComplete(true);
       setProcessingStep('Video processing complete!');
 
-      toast({
-        title: orderedAssets.length === 1 ? "Video Processing Complete!" : "Video Concatenation Complete!",
-        description: orderedAssets.length === 1 
-          ? `Your video has been successfully processed using server-side processing.`
-          : `Your ${orderedAssets.length} videos have been successfully concatenated in the order you selected using server-side processing.`
-      });
+      if (orderedAssets.length === 1) {
+        toast({
+          title: "Video Processing Complete!",
+          description: "Your video has been successfully processed using server-side processing."
+        });
+      } else {
+        toast({
+          title: "Video Processing Complete",
+          description: `Due to MP4 container limitations, the first video in your sequence (${orderedAssets[0].name}) has been processed.`,
+          variant: "default"
+        });
+      }
 
     } catch (error) {
       console.error('Video processing failed:', error);
       setIsExporting(false);
       setProcessingStep('');
       setExportProgress(0);
+      setLimitationWarning(null);
       
       toast({
         title: "Video Processing Failed",
@@ -131,21 +144,21 @@ const ExportPanel = ({
 
   const handleDownload = () => {
     if (downloadUrl) {
-      const selectedCount = sequences.filter(s => s.selected).length;
+      const selectedCount = sequences.filter(s => s.selected);
       const link = document.createElement('a');
       link.href = downloadUrl;
-      link.download = selectedCount === 1 
+      link.download = selectedCount.length === 1 
         ? `processed-video-${platform}-${Date.now()}.mp4`
-        : `concatenated-${selectedCount}videos-${platform}-${Date.now()}.mp4`;
+        : `first-video-${platform}-${Date.now()}.mp4`;
       document.body.appendChild(link);
       link.click();
       document.body.removeChild(link);
       
       toast({
         title: "Download Started",
-        description: selectedCount === 1 
+        description: selectedCount.length === 1 
           ? "Your processed video download has started."
-          : "Your concatenated video download has started."
+          : "Your first video download has started."
       });
     }
   };
@@ -193,12 +206,20 @@ const ExportPanel = ({
           <span className="text-white text-4xl">✓</span>
         </div>
         <h3 className="text-2xl font-bold text-green-800">
-          {selectedSequences.length === 1 ? 'Video Processing Complete!' : 'Video Concatenation Complete!'}
+          Video Processing Complete!
         </h3>
+        
+        {limitationWarning && (
+          <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-4 max-w-md mx-auto">
+            <p className="text-sm text-yellow-800 font-medium">⚠️ Processing Limitation</p>
+            <p className="text-xs text-yellow-700 mt-1">{limitationWarning}</p>
+          </div>
+        )}
+        
         <p className="text-gray-600">
           {selectedSequences.length === 1 
-            ? `Your video has been successfully processed using server-side processing.`
-            : `Your ${selectedSequences.length} videos have been successfully concatenated in the order you selected using server-side processing.`
+            ? "Your video has been successfully processed using server-side processing."
+            : `The first video in your sequence has been processed due to MP4 container limitations.`
           }
         </p>
         
@@ -207,7 +228,7 @@ const ExportPanel = ({
             onClick={handleDownload}
             className="bg-green-500 hover:bg-green-600"
           >
-            {selectedSequences.length === 1 ? 'Download Processed MP4' : 'Download Concatenated MP4'}
+            {selectedSequences.length === 1 ? 'Download Processed MP4' : 'Download First Video MP4'}
           </Button>
           <Button 
             variant="outline" 
@@ -219,6 +240,7 @@ const ExportPanel = ({
               setDownloadUrl(null);
               setExportProgress(0);
               setProcessingStep('');
+              setLimitationWarning(null);
             }}
           >
             Process Another Video
@@ -235,29 +257,28 @@ const ExportPanel = ({
           <span className="text-white text-2xl">⚡</span>
         </div>
         <h3 className="text-2xl font-bold">
-          {selectedSequences.length === 1 ? 'Processing Your Video...' : 'Concatenating Your Videos...'}
+          {selectedSequences.length === 1 ? 'Processing Your Video...' : 'Processing Videos...'}
         </h3>
+        
+        {limitationWarning && (
+          <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-4 max-w-md mx-auto">
+            <p className="text-sm text-yellow-800 font-medium">⚠️ Processing Note</p>
+            <p className="text-xs text-yellow-700 mt-1">{limitationWarning}</p>
+          </div>
+        )}
+        
         <div className="max-w-md mx-auto space-y-2">
           <Progress value={exportProgress} className="w-full" />
           <p className="text-sm text-gray-600">{exportProgress}% complete</p>
           <p className="text-sm text-blue-600 font-medium">{processingStep}</p>
         </div>
+        
         <p className="text-sm text-gray-500">
           {selectedSequences.length === 1 
-            ? `Processing your video using server-side processing...`
-            : `Concatenating ${selectedSequences.length} video clips in your selected order using server-side processing...`
+            ? "Processing your video using server-side processing..."
+            : "Processing videos using server-side processing..."
           }
         </p>
-        {selectedSequences.length > 1 && (
-          <div className="bg-blue-50 border border-blue-200 rounded-lg p-4 max-w-md mx-auto">
-            <p className="text-xs text-blue-700 font-medium">
-              🎬 Using server-side binary concatenation
-            </p>
-            <p className="text-xs text-blue-600 mt-1">
-              Combining your videos in the exact order you selected!
-            </p>
-          </div>
-        )}
       </div>
     );
   }
@@ -265,15 +286,16 @@ const ExportPanel = ({
   return (
     <div className="space-y-6">
       <div className="text-center">
-        <h3 className="text-lg font-semibold mb-2">
-          {selectedSequences.length === 1 ? 'Ready to Process' : 'Ready to Concatenate'}
-        </h3>
-        <p className="text-gray-600">
-          {selectedSequences.length === 1 
-            ? 'Review your settings and process your video'
-            : 'Review your settings and concatenate your videos in order'
-          }
-        </p>
+        <h3 className="text-lg font-semibold mb-2">Ready to Process</h3>
+        <p className="text-gray-600">Review your settings and process your video</p>
+        {selectedSequences.length > 1 && (
+          <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-3 mt-3 max-w-md mx-auto">
+            <p className="text-sm text-yellow-800 font-medium">⚠️ Multiple Video Limitation</p>
+            <p className="text-xs text-yellow-700 mt-1">
+              Due to MP4 container complexity, only the first video in your sequence will be processed
+            </p>
+          </div>
+        )}
       </div>
 
       {/* Processing Mode Indicator */}
@@ -286,7 +308,7 @@ const ExportPanel = ({
               <p className="text-lg font-bold text-blue-600">Server-Side</p>
               <p className="text-sm text-blue-600">
                 {selectedSequences.length > 1 
-                  ? 'Binary concatenation in correct order' 
+                  ? 'First video processing (MP4 limitation)' 
                   : 'Server video processing'
                 }
               </p>
@@ -401,11 +423,11 @@ const ExportPanel = ({
         </CardContent>
       </Card>
 
-      {/* Video Order Summary - Show exact user selection order */}
+      {/* Video Order Summary */}
       <Card className="bg-gradient-to-r from-blue-50 to-purple-50 border-blue-200">
         <CardContent className="p-6">
           <h4 className="font-semibold text-lg mb-4">
-            {selectedSequences.length === 1 ? '🎬 Video Processing' : '🎬 Video Concatenation Order'}
+            {selectedSequences.length === 1 ? '🎬 Video Processing' : '🎬 Video Selection Order'}
           </h4>
           <div className="flex flex-wrap gap-2">
             {selectedSequences.map((seq, index) => (
@@ -418,8 +440,8 @@ const ExportPanel = ({
             )}
           </div>
           {selectedSequences.length > 1 && (
-            <p className="text-sm text-blue-600 mt-2">
-              ✅ Videos will be concatenated using server-side processing in the exact order shown above
+            <p className="text-sm text-yellow-600 mt-2">
+              ⚠️ Only the first video will be processed due to MP4 container limitations
             </p>
           )}
         </CardContent>
@@ -433,7 +455,7 @@ const ExportPanel = ({
           className="bg-gradient-to-r from-blue-600 to-purple-600 hover:from-blue-700 hover:to-purple-700 text-white px-12 py-4 text-lg font-semibold"
           disabled={selectedSequences.length === 0}
         >
-          {selectedSequences.length === 1 ? '🎬 Process & Download Video' : '🎬 Concatenate & Download Videos'}
+          {selectedSequences.length === 1 ? '🎬 Process & Download Video' : '🎬 Process & Download First Video'}
         </Button>
         {selectedSequences.length === 0 ? (
           <p className="text-sm text-red-600 mt-2">
@@ -444,11 +466,11 @@ const ExportPanel = ({
             <p className="text-sm text-gray-600">
               {selectedSequences.length === 1 
                 ? 'Ready to process your video'
-                : `Ready to concatenate ${selectedSequences.length} videos in your selected order`
+                : `Ready to process the first video from your ${selectedSequences.length} selected videos`
               }
             </p>
             <p className="text-xs text-blue-600">
-              Server-side processing with proper video ordering!
+              Server-side processing with proper video handling!
             </p>
           </div>
         )}

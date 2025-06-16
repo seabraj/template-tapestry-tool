@@ -74,48 +74,29 @@ async function downloadVideoSafely(url: string, sequenceName: string): Promise<U
   }
 }
 
-// Simple binary concatenation for MP4 files
-async function concatenateMP4Videos(videoBuffers: Array<{ data: Uint8Array; name: string; order: number }>): Promise<Uint8Array> {
-  try {
-    console.log('🎬 Starting MP4 video concatenation...');
-    
-    const sortedVideos = videoBuffers.sort((a, b) => a.order - b.order);
-    console.log(`📋 Concatenation order: ${sortedVideos.map(v => `${v.order}. ${v.name}`).join(', ')}`);
-    
-    // If only one video, return it directly
-    if (sortedVideos.length === 1) {
-      console.log(`🎯 Single video: ${sortedVideos[0].name}`);
-      return sortedVideos[0].data;
-    }
+// For single video - just return as is
+function processSingleVideo(videoData: Uint8Array, name: string): Uint8Array {
+  console.log(`🎯 Processing single video: ${name}`);
+  return videoData;
+}
 
-    // For multiple videos, create a simple concatenation
-    console.log(`🔗 Concatenating ${sortedVideos.length} videos...`);
-    
-    // Calculate total size
-    let totalSize = 0;
-    for (const video of sortedVideos) {
-      totalSize += video.data.length;
-    }
-    
-    console.log(`📊 Total concatenated size: ${(totalSize / (1024 * 1024)).toFixed(2)} MB`);
-    
-    // Create concatenated buffer
-    const concatenatedBuffer = new Uint8Array(totalSize);
-    let offset = 0;
-    
-    for (const video of sortedVideos) {
-      concatenatedBuffer.set(video.data, offset);
-      offset += video.data.length;
-      console.log(`✅ Added ${video.name} at offset ${offset - video.data.length}`);
-    }
-    
-    console.log(`🎉 Concatenation complete: ${(concatenatedBuffer.length / (1024 * 1024)).toFixed(2)} MB`);
-    return concatenatedBuffer;
-    
-  } catch (error) {
-    console.error('❌ Video concatenation failed:', error);
-    throw new Error(`Video concatenation failed: ${error?.message}`);
+// For multiple videos - return the first video with a warning
+// Note: True MP4 concatenation requires complex container manipulation
+function processMultipleVideos(videoBuffers: Array<{ data: Uint8Array; name: string; order: number }>): Uint8Array {
+  console.log('⚠️ Multiple video processing: Returning first video in sequence due to MP4 concatenation limitations');
+  
+  const sortedVideos = videoBuffers.sort((a, b) => a.order - b.order);
+  console.log(`📋 Video order: ${sortedVideos.map(v => `${v.order + 1}. ${v.name}`).join(', ')}`);
+  
+  if (sortedVideos.length === 0) {
+    throw new Error('No videos to process');
   }
+  
+  // Return the first video in the user-defined sequence
+  const firstVideo = sortedVideos[0];
+  console.log(`🎬 Returning first video in sequence: ${firstVideo.name} (${(firstVideo.data.length / (1024 * 1024)).toFixed(2)} MB)`);
+  
+  return firstVideo.data;
 }
 
 // Process videos with proper ordering
@@ -152,11 +133,16 @@ async function processVideos(sequences: any[], platform: string): Promise<Uint8A
     
     console.log(`📊 Downloaded ${videoBuffers.length}/${sequences.length} videos`);
     
-    // Concatenate videos in correct order
-    const result = await concatenateMP4Videos(videoBuffers);
-    console.log(`🎉 Video processing completed: ${(result.length / (1024 * 1024)).toFixed(2)} MB`);
-    
-    return result;
+    // Process based on number of videos
+    if (videoBuffers.length === 1) {
+      const result = processSingleVideo(videoBuffers[0].data, videoBuffers[0].name);
+      console.log(`🎉 Single video processing completed: ${(result.length / (1024 * 1024)).toFixed(2)} MB`);
+      return result;
+    } else {
+      const result = processMultipleVideos(videoBuffers);
+      console.log(`🎉 Multiple video processing completed: ${(result.length / (1024 * 1024)).toFixed(2)} MB`);
+      return result;
+    }
     
   } catch (error) {
     console.error('❌ Video processing failed:', error);
@@ -229,7 +215,7 @@ serve(async (req) => {
     
     console.log(`✅ Validated ${validSequences.length}/${sequences.length} sequences`);
     
-    // Process videos with proper concatenation
+    // Process videos
     const processedVideo = await processVideos(validSequences, platform);
     const sizeInMB = processedVideo.length / (1024 * 1024);
     
@@ -251,7 +237,7 @@ serve(async (req) => {
       const timestamp = Date.now();
       const filename = validSequences.length === 1 
         ? `processed_${timestamp}_${platform}_single.mp4`
-        : `concatenated_${timestamp}_${platform}_${validSequences.length}videos.mp4`;
+        : `first-video_${timestamp}_${platform}_from-${validSequences.length}videos.mp4`;
       
       const { data: uploadData, error: uploadError } = await supabase.storage
         .from('processed-videos')
@@ -278,12 +264,13 @@ serve(async (req) => {
         filename: filename,
         message: validSequences.length === 1 
           ? `🎬 Video processing completed! Processed: ${validSequences[0].name}`
-          : `🎬 Video concatenation completed! Combined ${validSequences.length} videos in order.`,
+          : `⚠️ Multiple video limitation: Due to MP4 container complexity, returning first video in your sequence: ${validSequences.find(v => v.originalOrder === 0 || (v.originalOrder === undefined && validSequences.indexOf(v) === 0))?.name}`,
         metadata: {
           originalSize: processedVideo.length,
           platform,
           sequenceCount: validSequences.length,
-          processingMethod: validSequences.length === 1 ? 'single_video' : 'binary_concatenation',
+          processingMethod: validSequences.length === 1 ? 'single_video' : 'first_video_only',
+          limitation: validSequences.length > 1 ? 'MP4 concatenation requires complex container manipulation not available in edge functions' : null,
           videoOrder: validSequences.map((seq, idx) => ({ 
             position: (seq.originalOrder !== undefined ? seq.originalOrder : idx) + 1, 
             name: seq.name 
