@@ -73,9 +73,13 @@ export const useVideoAssets = (platformFilter?: string) => {
       id: asset.id,
       name: asset.name,
       duration: asset.duration,
-      thumbnail: asset.file_url, // Use the actual video URL as thumbnail for now
+      thumbnail: asset.file_url, // Use the video URL directly for preview
       selected: false
     }));
+  };
+
+  const getAssetById = (id: string): VideoAsset | undefined => {
+    return assets.find(asset => asset.id === id);
   };
 
   return {
@@ -83,6 +87,7 @@ export const useVideoAssets = (platformFilter?: string) => {
     loading,
     error,
     refetch: fetchAssets,
-    convertToSequences: () => convertToSequences(assets)
+    convertToSequences: () => convertToSequences(assets),
+    getAssetById
   };
 };

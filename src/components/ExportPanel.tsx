@@ -29,7 +29,7 @@ const ExportPanel = ({
   const [downloadUrl, setDownloadUrl] = useState<string | null>(null);
   const [processingStep, setProcessingStep] = useState('');
   const [processingMode, setProcessingMode] = useState<'client' | 'server'>('server');
-  const { assets } = useVideoAssets(platform);
+  const { assets, getAssetById } = useVideoAssets(platform);
   const { toast } = useToast();
 
   const handleExport = async () => {
@@ -38,19 +38,23 @@ const ExportPanel = ({
     setProcessingStep('Initializing video processor...');
     
     try {
-      // Prepare export data
+      // Prepare export data with proper file URLs
       const selectedAssets = sequences
         .filter(s => s.selected)
         .map(seq => {
-          const asset = assets.find(asset => asset.id === seq.id);
+          const asset = getAssetById ? getAssetById(seq.id) : assets.find(asset => asset.id === seq.id);
+          if (!asset || !asset.file_url) {
+            console.warn(`Asset not found or missing file_url for sequence ${seq.id}`);
+            return null;
+          }
           return {
             id: seq.id,
             name: seq.name,
             duration: seq.duration,
-            file_url: asset?.file_url || ''
+            file_url: asset.file_url
           };
         })
-        .filter(asset => asset.file_url);
+        .filter((asset): asset is NonNullable<typeof asset> => asset !== null);
 
       if (selectedAssets.length === 0) {
         throw new Error('No valid video assets found');
@@ -163,7 +167,7 @@ const ExportPanel = ({
     const selectedSequence = sequences.find(s => s.selected);
     if (!selectedSequence) return null;
     
-    const asset = assets.find(asset => asset.id === selectedSequence.id);
+    const asset = getAssetById ? getAssetById(selectedSequence.id) : assets.find(asset => asset.id === selectedSequence.id);
     return asset?.file_url || null;
   };
 
