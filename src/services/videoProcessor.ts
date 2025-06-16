@@ -70,19 +70,21 @@ export class VideoProcessor {
 
   private async processVideoServerSide(options: VideoProcessingOptions, onProgress?: (progress: number) => void): Promise<Blob> {
     try {
-      console.log('🚀 Starting enhanced server-side video processing...', {
+      console.log('🚀 Starting server-side video concatenation...', {
         sequences: options.sequences.length,
         platform: options.platform,
         duration: options.duration
       });
       onProgress?.(10);
 
-      // Validate sequences before sending
-      const validSequences = options.sequences.filter(seq => {
+      // Validate sequences before sending and preserve order
+      const validSequences = options.sequences.filter((seq, index) => {
         if (!seq.file_url || !seq.file_url.startsWith('http')) {
           console.warn(`❌ Invalid sequence URL: ${seq.id} - ${seq.file_url}`);
           return false;
         }
+        // Preserve original order
+        (seq as any).originalOrder = index;
         return true;
       });
 
@@ -90,10 +92,11 @@ export class VideoProcessor {
         throw new Error('No valid video sequences found');
       }
 
-      console.log(`✅ Validated ${validSequences.length} sequences for processing`);
+      console.log(`✅ Validated ${validSequences.length} sequences for concatenation in order:`, 
+        validSequences.map((seq, idx) => `${idx + 1}. ${seq.name}`).join(', '));
       onProgress?.(25);
 
-      // Call the enhanced edge function
+      // Call the concatenation edge function
       const { data, error } = await supabase.functions.invoke('process-video', {
         body: {
           sequences: validSequences,
@@ -105,22 +108,22 @@ export class VideoProcessor {
 
       if (error) {
         console.error('❌ Supabase function invocation error:', error);
-        throw new Error(`Enhanced processing failed: ${error.message}`);
+        throw new Error(`Video concatenation failed: ${error.message}`);
       }
 
       onProgress?.(75);
 
       if (!data || !data.success) {
-        const errorMsg = data?.error || 'Unknown processing error';
-        console.error('❌ Enhanced processing failed:', errorMsg);
-        throw new Error(`Enhanced processing failed: ${errorMsg}`);
+        const errorMsg = data?.error || 'Unknown concatenation error';
+        console.error('❌ Video concatenation failed:', errorMsg);
+        throw new Error(`Video concatenation failed: ${errorMsg}`);
       }
 
       onProgress?.(90);
 
       // Handle storage-based response
       if (data.useStorage && data.downloadUrl) {
-        console.log('📥 Processing storage-based response:', {
+        console.log('📥 Processing storage-based concatenated video:', {
           downloadUrl: data.downloadUrl,
           filename: data.filename,
           metadata: data.metadata
@@ -128,37 +131,37 @@ export class VideoProcessor {
 
         const videoResponse = await fetch(data.downloadUrl);
         if (!videoResponse.ok) {
-          throw new Error(`Failed to download enhanced video: ${videoResponse.status}`);
+          throw new Error(`Failed to download concatenated video: ${videoResponse.status}`);
         }
 
         const videoBlob = await videoResponse.blob();
         onProgress?.(100);
-        console.log('✅ Enhanced storage-based processing completed, blob size:', videoBlob.size);
+        console.log('✅ Video concatenation completed, blob size:', videoBlob.size);
         return videoBlob;
       }
 
       // Handle base64 response
       if (!data.videoData) {
-        throw new Error('No video data received from enhanced processing');
+        throw new Error('No concatenated video data received');
       }
 
-      console.log('🔄 Converting enhanced base64 response to blob...', {
+      console.log('🔄 Converting base64 concatenated video to blob...', {
         base64Length: data.videoData.length,
         metadata: data.metadata
       });
       
       try {
         if (typeof data.videoData !== 'string') {
-          throw new Error('Enhanced video data is not a string');
+          throw new Error('Concatenated video data is not a string');
         }
 
         const cleanBase64 = data.videoData.replace(/\s/g, '');
         
         if (cleanBase64.length === 0) {
-          throw new Error('Empty enhanced base64 data received');
+          throw new Error('Empty concatenated video data received');
         }
 
-        console.log('✅ Enhanced base64 validation passed, converting to blob...');
+        console.log('✅ Base64 validation passed, converting concatenated video to blob...');
         
         const binaryString = atob(cleanBase64);
         const bytes = new Uint8Array(binaryString.length);
@@ -169,52 +172,53 @@ export class VideoProcessor {
 
         onProgress?.(100);
         const blob = new Blob([bytes], { type: 'video/mp4' });
-        console.log('✅ Enhanced video processing completed successfully, blob size:', blob.size);
+        console.log('✅ Video concatenation completed successfully, blob size:', blob.size);
         return blob;
         
       } catch (conversionError) {
-        console.error('❌ Error converting enhanced base64 to blob:', conversionError);
-        throw new Error(`Failed to process enhanced video data: ${conversionError.message}`);
+        console.error('❌ Error converting concatenated video data:', conversionError);
+        throw new Error(`Failed to process concatenated video data: ${conversionError.message}`);
       }
 
     } catch (error) {
-      console.error('❌ Enhanced server-side video processing failed:', error);
+      console.error('❌ Server-side video concatenation failed:', error);
       
       // Enhanced error messages
       if (error.message.includes('timeout')) {
-        throw new Error('Enhanced video processing timed out. The new system should handle this better.');
+        throw new Error('Video concatenation timed out. Try with fewer or smaller videos.');
       } else if (error.message.includes('too large')) {
-        throw new Error('Video files too large for enhanced processing. Try smaller files.');
+        throw new Error('Video files too large for concatenation. Try smaller files.');
       } else if (error.message.includes('Invalid')) {
-        throw new Error('Invalid video files for enhanced processing. Check file formats.');
+        throw new Error('Invalid video files for concatenation. Check file formats.');
       }
       
-      throw new Error(`Enhanced processing failed: ${error.message}`);
+      throw new Error(`Video concatenation failed: ${error.message}`);
     }
   }
 
   private async processVideoClientSide(options: VideoProcessingOptions, onProgress?: (progress: number) => void): Promise<Blob> {
     try {
-      console.log('Starting client-side video processing...');
+      console.log('Starting client-side video concatenation...');
       await this.initializeFFmpeg(onProgress);
 
-      // Download all video files
+      // Download all video files in order
       onProgress?.(15);
-      const videoFiles: { name: string; data: Uint8Array }[] = [];
+      const videoFiles: { name: string; data: Uint8Array; order: number }[] = [];
       
       for (let i = 0; i < options.sequences.length; i++) {
         const sequence = options.sequences[i];
-        console.log(`Downloading video ${i + 1}/${options.sequences.length}: ${sequence.name}`);
+        console.log(`Downloading video ${i + 1}/${options.sequences.length}: ${sequence.name} (order: ${i + 1})`);
         
         const response = await fetch(sequence.file_url);
         if (!response.ok) throw new Error(`Failed to download ${sequence.name}`);
         
         const arrayBuffer = await response.arrayBuffer();
-        const fileName = `input_${i}.mp4`;
+        const fileName = `input_${i.toString().padStart(3, '0')}.mp4`; // Zero-padded for proper ordering
         
         videoFiles.push({
           name: fileName,
-          data: new Uint8Array(arrayBuffer)
+          data: new Uint8Array(arrayBuffer),
+          order: i
         });
 
         await this.ffmpeg.writeFile(fileName, new Uint8Array(arrayBuffer));
@@ -223,40 +227,27 @@ export class VideoProcessor {
 
       onProgress?.(40);
 
-      // Create concat list file
-      const concatList = videoFiles
+      // Create concat list file with proper ordering
+      const sortedFiles = videoFiles.sort((a, b) => a.order - b.order);
+      const concatList = sortedFiles
         .map(file => `file '${file.name}'`)
         .join('\n');
       
       await this.ffmpeg.writeFile('concat_list.txt', new TextEncoder().encode(concatList));
+      console.log('📋 Concatenation order:', sortedFiles.map(f => f.name).join(' -> '));
 
       onProgress?.(50);
 
-      // Build FFmpeg command for concatenation
-      let ffmpegArgs = [
+      // Build FFmpeg command for proper concatenation
+      const ffmpegArgs = [
         '-f', 'concat',
         '-safe', '0',
         '-i', 'concat_list.txt',
-        '-c', 'copy'
+        '-c', 'copy', // Copy streams without re-encoding for faster processing
+        'output.mp4'
       ];
 
-      // Add text overlay if specified
-      if (options.customization.supers.text) {
-        const textPosition = this.getTextPosition(options.customization.supers.position);
-        const textStyle = this.getTextStyle(options.customization.supers.style);
-        
-        ffmpegArgs = [
-          '-f', 'concat',
-          '-safe', '0',
-          '-i', 'concat_list.txt',
-          '-vf', `drawtext=text='${options.customization.supers.text}':${textPosition}:${textStyle}`,
-          '-c:a', 'copy'
-        ];
-      }
-
-      ffmpegArgs.push('output.mp4');
-
-      console.log('Running FFmpeg with args:', ffmpegArgs);
+      console.log('Running FFmpeg concatenation with args:', ffmpegArgs);
       onProgress?.(60);
 
       // Execute FFmpeg command
@@ -264,12 +255,12 @@ export class VideoProcessor {
 
       onProgress?.(90);
 
-      // Read the output file
+      // Read the concatenated output file
       const outputData = await this.ffmpeg.readFile('output.mp4');
       onProgress?.(100);
 
-      // Clean up input files
-      for (const file of videoFiles) {
+      // Clean up all input files
+      for (const file of sortedFiles) {
         try {
           await this.ffmpeg.deleteFile(file.name);
         } catch (e) {
@@ -284,10 +275,11 @@ export class VideoProcessor {
         console.warn('Failed to clean up temporary files:', e);
       }
 
+      console.log('✅ Client-side video concatenation completed');
       return new Blob([outputData], { type: 'video/mp4' });
     } catch (error) {
-      console.error('Client-side video processing failed:', error);
-      throw new Error(`Client-side processing failed: ${error.message}`);
+      console.error('Client-side video concatenation failed:', error);
+      throw new Error(`Client-side concatenation failed: ${error.message}`);
     }
   }
 
