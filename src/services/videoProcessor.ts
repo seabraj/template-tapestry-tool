@@ -1,3 +1,4 @@
+
 import { FFmpeg } from '@ffmpeg/ffmpeg';
 import { toBlobURL } from '@ffmpeg/util';
 import { supabase } from '@/integrations/supabase/client';
@@ -71,40 +72,86 @@ export class VideoProcessor {
 
   private async processVideoServerSide(options: VideoProcessingOptions, onProgress?: (progress: number) => void): Promise<Blob> {
     try {
-      console.log('Starting server-side video processing...');
+      console.log('Starting server-side video processing...', {
+        sequences: options.sequences.length,
+        platform: options.platform,
+        duration: options.duration
+      });
       onProgress?.(10);
 
+      // Validate sequences before sending
+      const validSequences = options.sequences.filter(seq => {
+        if (!seq.file_url || !seq.file_url.startsWith('http')) {
+          console.warn(`Invalid sequence URL: ${seq.id} - ${seq.file_url}`);
+          return false;
+        }
+        return true;
+      });
+
+      if (validSequences.length === 0) {
+        throw new Error('No valid video sequences found');
+      }
+
       onProgress?.(30);
-      console.log('Sending request to server...');
+      console.log('Sending request to server with validated sequences:', validSequences.length);
 
       const { data, error } = await supabase.functions.invoke('process-video', {
-        body: JSON.stringify(options)
+        body: {
+          sequences: validSequences,
+          customization: options.customization,
+          platform: options.platform,
+          duration: options.duration
+        }
       });
 
       if (error) {
+        console.error('Supabase function invocation error:', error);
         throw new Error(`Server processing failed: ${error.message}`);
       }
 
       onProgress?.(80);
 
-      if (!data.success) {
-        throw new Error(data.error || 'Server processing failed');
+      if (!data || !data.success) {
+        const errorMsg = data?.error || 'Unknown server error';
+        console.error('Server processing failed:', errorMsg);
+        throw new Error(`Server processing failed: ${errorMsg}`);
       }
 
       onProgress?.(95);
 
-      // Convert base64 back to blob
-      const binaryString = atob(data.videoData);
-      const bytes = new Uint8Array(binaryString.length);
-      for (let i = 0; i < binaryString.length; i++) {
-        bytes[i] = binaryString.charCodeAt(i);
+      if (!data.videoData) {
+        throw new Error('No video data received from server');
       }
 
-      onProgress?.(100);
-      return new Blob([bytes], { type: 'video/mp4' });
+      console.log('Converting base64 response to blob...');
+      
+      // Convert base64 back to blob
+      try {
+        const binaryString = atob(data.videoData);
+        const bytes = new Uint8Array(binaryString.length);
+        for (let i = 0; i < binaryString.length; i++) {
+          bytes[i] = binaryString.charCodeAt(i);
+        }
+
+        onProgress?.(100);
+        const blob = new Blob([bytes], { type: 'video/mp4' });
+        console.log('Video processing completed successfully, blob size:', blob.size);
+        return blob;
+      } catch (conversionError) {
+        console.error('Error converting base64 to blob:', conversionError);
+        throw new Error('Failed to process video data from server');
+      }
 
     } catch (error) {
       console.error('Server-side video processing failed:', error);
+      // Provide more specific error messages
+      if (error.message.includes('timeout')) {
+        throw new Error('Video processing timed out. Please try with smaller video files.');
+      } else if (error.message.includes('too large')) {
+        throw new Error('Video file is too large. Please use files smaller than 50MB.');
+      } else if (error.message.includes('Invalid')) {
+        throw new Error('Invalid video file format or URL. Please check your video files.');
+      }
       throw new Error(`Server processing failed: ${error.message}`);
     }
   }
