@@ -1,4 +1,3 @@
-
 import { FFmpeg } from '@ffmpeg/ffmpeg';
 import { toBlobURL } from '@ffmpeg/util';
 import { supabase } from '@/integrations/supabase/client';
@@ -62,6 +61,13 @@ export class VideoProcessor {
   }
 
   async processVideo(options: VideoProcessingOptions, onProgress?: (progress: number) => void): Promise<Blob> {
+    // FORCE client-side processing for multiple videos to ensure proper concatenation
+    if (options.sequences.length > 1) {
+      console.log('🎬 Multiple videos detected - forcing client-side concatenation for proper ordering');
+      return this.processVideoClientSide(options, onProgress);
+    }
+    
+    // Use server-side for single videos (no concatenation needed)
     if (this.processingMode === 'server') {
       return this.processVideoServerSide(options, onProgress);
     } else {
@@ -71,7 +77,7 @@ export class VideoProcessor {
 
   private async processVideoServerSide(options: VideoProcessingOptions, onProgress?: (progress: number) => void): Promise<Blob> {
     try {
-      console.log('🚀 Starting server-side video concatenation...', {
+      console.log('🚀 Starting server-side video processing...', {
         sequences: options.sequences.length,
         platform: options.platform,
         duration: options.duration
@@ -93,11 +99,11 @@ export class VideoProcessor {
         throw new Error('No valid video sequences found');
       }
 
-      console.log(`✅ Validated ${validSequences.length} sequences for concatenation in order:`, 
+      console.log(`✅ Processing ${validSequences.length} sequence(s):`, 
         validSequences.map((seq, idx) => `${idx + 1}. ${seq.name}`).join(', '));
       onProgress?.(25);
 
-      // Call the concatenation edge function
+      // Call the edge function
       const { data, error } = await supabase.functions.invoke('process-video', {
         body: {
           sequences: validSequences,
@@ -109,64 +115,51 @@ export class VideoProcessor {
 
       if (error) {
         console.error('❌ Supabase function invocation error:', error);
-        throw new Error(`Video concatenation failed: ${error.message}`);
+        throw new Error(`Video processing failed: ${error.message}`);
       }
 
       onProgress?.(75);
 
       if (!data || !data.success) {
-        const errorMsg = data?.error || 'Unknown concatenation error';
-        console.error('❌ Video concatenation failed:', errorMsg);
-        throw new Error(`Video concatenation failed: ${errorMsg}`);
+        const errorMsg = data?.error || 'Unknown processing error';
+        console.error('❌ Video processing failed:', errorMsg);
+        throw new Error(`Video processing failed: ${errorMsg}`);
       }
 
       onProgress?.(90);
 
-      // CRITICAL FIX: Always handle storage-based response first
+      // Handle storage-based response
       if (data.useStorage && data.downloadUrl) {
-        console.log('📥 Downloading concatenated video from storage:', {
+        console.log('📥 Downloading processed video from storage:', {
           downloadUrl: data.downloadUrl,
           filename: data.filename,
           metadata: data.metadata
         });
 
         try {
-          // Download the concatenated video with proper error handling
           const videoResponse = await fetch(data.downloadUrl);
           if (!videoResponse.ok) {
-            throw new Error(`Failed to download concatenated video: HTTP ${videoResponse.status} ${videoResponse.statusText}`);
-          }
-
-          const contentType = videoResponse.headers.get('content-type');
-          if (!contentType || !contentType.includes('video')) {
-            console.warn('⚠️ Downloaded content may not be a video:', contentType);
+            throw new Error(`Failed to download processed video: HTTP ${videoResponse.status} ${videoResponse.statusText}`);
           }
 
           const videoBlob = await videoResponse.blob();
-          
-          // Verify we got the concatenated video, not just the first source
-          if (videoBlob.size < 1000000) { // Less than 1MB might indicate an error
-            console.warn('⚠️ Downloaded video seems too small, might be an error response');
-          }
-
           onProgress?.(100);
-          console.log('✅ Successfully downloaded concatenated video:', {
+          console.log('✅ Successfully downloaded processed video:', {
             size: videoBlob.size,
-            type: videoBlob.type,
-            expectedSequences: validSequences.length
+            type: videoBlob.type
           });
           
           return videoBlob;
           
         } catch (downloadError) {
-          console.error('❌ Failed to download concatenated video:', downloadError);
-          throw new Error(`Failed to download concatenated video: ${downloadError.message}`);
+          console.error('❌ Failed to download processed video:', downloadError);
+          throw new Error(`Failed to download processed video: ${downloadError.message}`);
         }
       }
 
-      // Fallback to base64 handling (should rarely be used now)
+      // Fallback to base64 handling
       if (data.videoData) {
-        console.log('🔄 Handling base64 concatenated video fallback...');
+        console.log('🔄 Handling base64 video fallback...');
         
         try {
           const cleanBase64 = data.videoData.replace(/\s/g, '');
@@ -179,46 +172,35 @@ export class VideoProcessor {
 
           onProgress?.(100);
           const blob = new Blob([bytes], { type: 'video/mp4' });
-          console.log('✅ Base64 concatenated video processed:', blob.size);
+          console.log('✅ Base64 video processed:', blob.size);
           return blob;
           
         } catch (conversionError) {
-          console.error('❌ Error converting base64 concatenated video:', conversionError);
-          throw new Error(`Failed to process concatenated video data: ${conversionError.message}`);
+          console.error('❌ Error converting base64 video:', conversionError);
+          throw new Error(`Failed to process video data: ${conversionError.message}`);
         }
       }
 
-      // If we reach here, something went wrong
-      throw new Error('No valid concatenated video data received from server');
+      throw new Error('No valid video data received from server');
 
     } catch (error) {
-      console.error('❌ Server-side video concatenation failed:', error);
-      
-      // Enhanced error messages
-      if (error.message.includes('timeout')) {
-        throw new Error('Video concatenation timed out. Try with fewer or smaller videos.');
-      } else if (error.message.includes('too large')) {
-        throw new Error('Video files too large for concatenation. Try smaller files.');
-      } else if (error.message.includes('Invalid')) {
-        throw new Error('Invalid video files for concatenation. Check file formats.');
-      }
-      
-      throw new Error(`Video concatenation failed: ${error.message}`);
+      console.error('❌ Server-side video processing failed:', error);
+      throw new Error(`Video processing failed: ${error.message}`);
     }
   }
 
   private async processVideoClientSide(options: VideoProcessingOptions, onProgress?: (progress: number) => void): Promise<Blob> {
     try {
-      console.log('Starting client-side video concatenation...');
+      console.log('🎬 Starting client-side video concatenation for proper ordering...');
       await this.initializeFFmpeg(onProgress);
 
-      // Download all video files in order
+      // Download all video files in exact order
       onProgress?.(15);
       const videoFiles: { name: string; data: Uint8Array; order: number }[] = [];
       
       for (let i = 0; i < options.sequences.length; i++) {
         const sequence = options.sequences[i];
-        console.log(`Downloading video ${i + 1}/${options.sequences.length}: ${sequence.name} (order: ${i + 1})`);
+        console.log(`📥 Downloading video ${i + 1}/${options.sequences.length}: ${sequence.name} (position: ${i + 1})`);
         
         const response = await fetch(sequence.file_url);
         if (!response.ok) throw new Error(`Failed to download ${sequence.name}`);
@@ -238,18 +220,18 @@ export class VideoProcessor {
 
       onProgress?.(40);
 
-      // Create concat list file with proper ordering
+      // Create concat list file with exact ordering
       const sortedFiles = videoFiles.sort((a, b) => a.order - b.order);
       const concatList = sortedFiles
         .map(file => `file '${file.name}'`)
         .join('\n');
       
       await this.ffmpeg.writeFile('concat_list.txt', new TextEncoder().encode(concatList));
-      console.log('📋 Concatenation order:', sortedFiles.map(f => f.name).join(' -> '));
+      console.log('📋 FFmpeg concatenation order:', sortedFiles.map(f => f.name).join(' -> '));
 
       onProgress?.(50);
 
-      // Build FFmpeg command for proper concatenation
+      // Build FFmpeg command for proper video concatenation
       const ffmpegArgs = [
         '-f', 'concat',
         '-safe', '0',
@@ -258,7 +240,7 @@ export class VideoProcessor {
         'output.mp4'
       ];
 
-      console.log('Running FFmpeg concatenation with args:', ffmpegArgs);
+      console.log('⚡ Running FFmpeg concatenation with args:', ffmpegArgs);
       onProgress?.(60);
 
       // Execute FFmpeg command
@@ -286,10 +268,10 @@ export class VideoProcessor {
         console.warn('Failed to clean up temporary files:', e);
       }
 
-      console.log('✅ Client-side video concatenation completed');
+      console.log('✅ Client-side video concatenation completed successfully');
       return new Blob([outputData], { type: 'video/mp4' });
     } catch (error) {
-      console.error('Client-side video concatenation failed:', error);
+      console.error('❌ Client-side video concatenation failed:', error);
       throw new Error(`Client-side concatenation failed: ${error.message}`);
     }
   }
@@ -402,6 +384,10 @@ export class VideoProcessor {
   }
 
   getProcessingMode(): 'client' | 'server' {
-    return this.processingMode;
+    // Force client mode for multiple videos to ensure proper concatenation
+    if (this.processingMode === 'client') {
+      return 'client';
+    }
+    return 'server';
   }
 }
