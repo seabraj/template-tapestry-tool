@@ -42,7 +42,13 @@ async function downloadVideoSafely(url: string, sequenceName: string, maxSize = 
     console.log(`📥 Downloading: ${sequenceName} from ${url}`);
     
     const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 60000);
+    const timeoutId = setTimeout(() => {
+      try {
+        controller.abort();
+      } catch (e) {
+        console.warn('Timeout abort failed:', e);
+      }
+    }, 60000);
     
     const response = await fetch(url, { 
       signal: controller.signal,
@@ -77,81 +83,91 @@ async function downloadVideoSafely(url: string, sequenceName: string, maxSize = 
 
 // Simple binary concatenation
 async function concatenateMP4Videos(videoBuffers: Array<{ data: Uint8Array; name: string; order: number }>): Promise<Uint8Array> {
-  console.log('🎬 Starting MP4 concatenation...');
-  
-  const sortedVideos = videoBuffers.sort((a, b) => a.order - b.order);
-  console.log(`📋 Concatenation order: ${sortedVideos.map(v => `${v.order}. ${v.name}`).join(', ')}`);
-  
-  if (sortedVideos.length === 1) {
-    console.log(`🎯 Single video detected: ${sortedVideos[0].name}`);
-    return sortedVideos[0].data;
-  }
+  try {
+    console.log('🎬 Starting MP4 concatenation...');
+    
+    const sortedVideos = videoBuffers.sort((a, b) => a.order - b.order);
+    console.log(`📋 Concatenation order: ${sortedVideos.map(v => `${v.order}. ${v.name}`).join(', ')}`);
+    
+    if (sortedVideos.length === 1) {
+      console.log(`🎯 Single video detected: ${sortedVideos[0].name}`);
+      return sortedVideos[0].data;
+    }
 
-  console.log(`🔄 Concatenating ${sortedVideos.length} videos in order...`);
-  
-  const totalSize = sortedVideos.reduce((sum, video) => sum + video.data.length, 0);
-  console.log(`📊 Total concatenated size will be: ${(totalSize / (1024 * 1024)).toFixed(2)} MB`);
-  
-  const concatenatedBuffer = new Uint8Array(totalSize);
-  let offset = 0;
-  
-  for (const video of sortedVideos) {
-    console.log(`📝 Adding ${video.name} at offset ${offset} (${(video.data.length / (1024 * 1024)).toFixed(2)} MB)`);
-    concatenatedBuffer.set(video.data, offset);
-    offset += video.data.length;
+    console.log(`🔄 Concatenating ${sortedVideos.length} videos in order...`);
+    
+    const totalSize = sortedVideos.reduce((sum, video) => sum + video.data.length, 0);
+    console.log(`📊 Total concatenated size will be: ${(totalSize / (1024 * 1024)).toFixed(2)} MB`);
+    
+    const concatenatedBuffer = new Uint8Array(totalSize);
+    let offset = 0;
+    
+    for (const video of sortedVideos) {
+      console.log(`📝 Adding ${video.name} at offset ${offset} (${(video.data.length / (1024 * 1024)).toFixed(2)} MB)`);
+      concatenatedBuffer.set(video.data, offset);
+      offset += video.data.length;
+    }
+    
+    console.log(`✅ Video concatenation completed: ${(concatenatedBuffer.length / (1024 * 1024)).toFixed(2)} MB total`);
+    console.log(`📺 Result contains ${sortedVideos.length} videos in user-selected order`);
+    
+    return concatenatedBuffer;
+  } catch (error) {
+    console.error('❌ Concatenation failed:', error);
+    throw new Error(`Concatenation failed: ${error?.message || 'Unknown error'}`);
   }
-  
-  console.log(`✅ Video concatenation completed: ${(concatenatedBuffer.length / (1024 * 1024)).toFixed(2)} MB total`);
-  console.log(`📺 Result contains ${sortedVideos.length} videos in user-selected order`);
-  
-  return concatenatedBuffer;
 }
 
 // Process videos with proper error handling
 async function processVideosWithConcatenation(sequences: any[], platform: string): Promise<Uint8Array> {
-  console.log('🚀 Starting video concatenation processing...');
-  console.log(`📋 Processing ${sequences.length} sequences for ${platform} in user-selected order`);
-  
-  const videoBuffers: Array<{ data: Uint8Array; name: string; order: number }> = [];
-  const maxMemoryPerVideo = 30 * 1024 * 1024;
-  
-  for (let i = 0; i < sequences.length; i++) {
-    const sequence = sequences[i];
-    console.log(`⏳ Processing ${i + 1}/${sequences.length}: ${sequence.name} (position: ${i + 1})`);
+  try {
+    console.log('🚀 Starting video concatenation processing...');
+    console.log(`📋 Processing ${sequences.length} sequences for ${platform} in user-selected order`);
     
-    const videoData = await downloadVideoSafely(sequence.file_url, sequence.name, maxMemoryPerVideo);
+    const videoBuffers: Array<{ data: Uint8Array; name: string; order: number }> = [];
+    const maxMemoryPerVideo = 30 * 1024 * 1024;
     
-    if (videoData) {
-      videoBuffers.push({
-        data: videoData,
-        name: sequence.name,
-        order: i + 1
-      });
-      console.log(`✅ Added ${sequence.name} to concatenation queue (position: ${i + 1})`);
-    } else {
-      console.warn(`⚠️ Skipped ${sequence.name} due to download failure`);
-    }
-    
-    // Force garbage collection periodically
-    if (i % 2 === 0 && globalThis.gc) {
-      try {
-        globalThis.gc();
-      } catch (e) {
-        // Ignore gc errors
+    for (let i = 0; i < sequences.length; i++) {
+      const sequence = sequences[i];
+      console.log(`⏳ Processing ${i + 1}/${sequences.length}: ${sequence.name} (position: ${i + 1})`);
+      
+      const videoData = await downloadVideoSafely(sequence.file_url, sequence.name, maxMemoryPerVideo);
+      
+      if (videoData) {
+        videoBuffers.push({
+          data: videoData,
+          name: sequence.name,
+          order: i + 1
+        });
+        console.log(`✅ Added ${sequence.name} to concatenation queue (position: ${i + 1})`);
+      } else {
+        console.warn(`⚠️ Skipped ${sequence.name} due to download failure`);
+      }
+      
+      // Force garbage collection periodically
+      if (i % 2 === 0 && globalThis.gc) {
+        try {
+          globalThis.gc();
+        } catch (e) {
+          // Ignore gc errors
+        }
       }
     }
+    
+    if (videoBuffers.length === 0) {
+      throw new Error('No videos were successfully downloaded for concatenation');
+    }
+    
+    console.log(`📊 Successfully downloaded ${videoBuffers.length}/${sequences.length} videos for concatenation`);
+    
+    const concatenatedVideo = await concatenateMP4Videos(videoBuffers);
+    console.log(`🎉 Video concatenation completed: ${(concatenatedVideo.length / (1024 * 1024)).toFixed(2)} MB`);
+    
+    return concatenatedVideo;
+  } catch (error) {
+    console.error('❌ Video processing failed:', error);
+    throw error;
   }
-  
-  if (videoBuffers.length === 0) {
-    throw new Error('No videos were successfully downloaded for concatenation');
-  }
-  
-  console.log(`📊 Successfully downloaded ${videoBuffers.length}/${sequences.length} videos for concatenation`);
-  
-  const concatenatedVideo = await concatenateMP4Videos(videoBuffers);
-  console.log(`🎉 Video concatenation completed: ${(concatenatedVideo.length / (1024 * 1024)).toFixed(2)} MB`);
-  
-  return concatenatedVideo;
 }
 
 serve(async (req) => {
