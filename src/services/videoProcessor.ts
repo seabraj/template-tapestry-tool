@@ -70,7 +70,7 @@ export class VideoProcessor {
 
   private async processVideoServerSide(options: VideoProcessingOptions, onProgress?: (progress: number) => void): Promise<Blob> {
     try {
-      console.log('Starting server-side video processing...', {
+      console.log('🚀 Starting enhanced server-side video processing...', {
         sequences: options.sequences.length,
         platform: options.platform,
         duration: options.duration
@@ -80,7 +80,7 @@ export class VideoProcessor {
       // Validate sequences before sending
       const validSequences = options.sequences.filter(seq => {
         if (!seq.file_url || !seq.file_url.startsWith('http')) {
-          console.warn(`Invalid sequence URL: ${seq.id} - ${seq.file_url}`);
+          console.warn(`❌ Invalid sequence URL: ${seq.id} - ${seq.file_url}`);
           return false;
         }
         return true;
@@ -90,9 +90,10 @@ export class VideoProcessor {
         throw new Error('No valid video sequences found');
       }
 
-      onProgress?.(30);
-      console.log('Sending request to server with validated sequences:', validSequences.length);
+      console.log(`✅ Validated ${validSequences.length} sequences for processing`);
+      onProgress?.(25);
 
+      // Call the enhanced edge function
       const { data, error } = await supabase.functions.invoke('process-video', {
         body: {
           sequences: validSequences,
@@ -103,65 +104,61 @@ export class VideoProcessor {
       });
 
       if (error) {
-        console.error('Supabase function invocation error:', error);
-        throw new Error(`Server processing failed: ${error.message}`);
+        console.error('❌ Supabase function invocation error:', error);
+        throw new Error(`Enhanced processing failed: ${error.message}`);
       }
 
-      onProgress?.(80);
+      onProgress?.(75);
 
       if (!data || !data.success) {
-        const errorMsg = data?.error || 'Unknown server error';
-        console.error('Server processing failed:', errorMsg);
-        throw new Error(`Server processing failed: ${errorMsg}`);
+        const errorMsg = data?.error || 'Unknown processing error';
+        console.error('❌ Enhanced processing failed:', errorMsg);
+        throw new Error(`Enhanced processing failed: ${errorMsg}`);
       }
 
-      onProgress?.(95);
+      onProgress?.(90);
 
       // Handle storage-based response
       if (data.useStorage && data.downloadUrl) {
-        console.log('Processing storage-based response:', {
+        console.log('📥 Processing storage-based response:', {
           downloadUrl: data.downloadUrl,
           filename: data.filename,
           metadata: data.metadata
         });
 
-        // Download the processed video from storage
         const videoResponse = await fetch(data.downloadUrl);
         if (!videoResponse.ok) {
-          throw new Error(`Failed to download processed video: ${videoResponse.status}`);
+          throw new Error(`Failed to download enhanced video: ${videoResponse.status}`);
         }
 
         const videoBlob = await videoResponse.blob();
         onProgress?.(100);
-        console.log('Storage-based video processing completed successfully, blob size:', videoBlob.size);
+        console.log('✅ Enhanced storage-based processing completed, blob size:', videoBlob.size);
         return videoBlob;
       }
 
-      // Handle base64 response (for smaller files)
+      // Handle base64 response
       if (!data.videoData) {
-        throw new Error('No video data received from server');
+        throw new Error('No video data received from enhanced processing');
       }
 
-      console.log('Converting base64 response to blob...', {
+      console.log('🔄 Converting enhanced base64 response to blob...', {
         base64Length: data.videoData.length,
         metadata: data.metadata
       });
       
       try {
-        // Improved base64 validation - more permissive but still safe
         if (typeof data.videoData !== 'string') {
-          throw new Error('Video data is not a string');
+          throw new Error('Enhanced video data is not a string');
         }
 
-        // Clean the base64 string (remove any whitespace/newlines)
         const cleanBase64 = data.videoData.replace(/\s/g, '');
         
-        // Basic length check - base64 should be divisible by 4 when padded
         if (cleanBase64.length === 0) {
-          throw new Error('Empty base64 data received');
+          throw new Error('Empty enhanced base64 data received');
         }
 
-        console.log('Base64 validation passed, converting to blob...');
+        console.log('✅ Enhanced base64 validation passed, converting to blob...');
         
         const binaryString = atob(cleanBase64);
         const bytes = new Uint8Array(binaryString.length);
@@ -172,35 +169,27 @@ export class VideoProcessor {
 
         onProgress?.(100);
         const blob = new Blob([bytes], { type: 'video/mp4' });
-        console.log('Base64 video processing completed successfully, blob size:', blob.size);
+        console.log('✅ Enhanced video processing completed successfully, blob size:', blob.size);
         return blob;
         
       } catch (conversionError) {
-        console.error('Error converting base64 to blob:', conversionError);
-        console.error('Base64 data info:', {
-          type: typeof data.videoData,
-          length: data.videoData?.length,
-          preview: data.videoData?.substring(0, 100)
-        });
-        throw new Error(`Failed to process video data from server: ${conversionError.message}`);
+        console.error('❌ Error converting enhanced base64 to blob:', conversionError);
+        throw new Error(`Failed to process enhanced video data: ${conversionError.message}`);
       }
 
     } catch (error) {
-      console.error('Server-side video processing failed:', error);
+      console.error('❌ Enhanced server-side video processing failed:', error);
       
-      // Provide more specific error messages
+      // Enhanced error messages
       if (error.message.includes('timeout')) {
-        throw new Error('Video processing timed out. Please try with smaller video files or try again later.');
+        throw new Error('Enhanced video processing timed out. The new system should handle this better.');
       } else if (error.message.includes('too large')) {
-        throw new Error('Video file is too large. Please use files smaller than 100MB.');
+        throw new Error('Video files too large for enhanced processing. Try smaller files.');
       } else if (error.message.includes('Invalid')) {
-        throw new Error('Invalid video file format or URL. Please check your video files.');
-      } else if (error.message.includes('download')) {
-        throw new Error('Failed to download processed video. Please try again.');
-      } else if (error.message.includes('storage')) {
-        throw new Error('Video processing completed but storage failed. Please try again.');
+        throw new Error('Invalid video files for enhanced processing. Check file formats.');
       }
-      throw new Error(`Server processing failed: ${error.message}`);
+      
+      throw new Error(`Enhanced processing failed: ${error.message}`);
     }
   }
 
