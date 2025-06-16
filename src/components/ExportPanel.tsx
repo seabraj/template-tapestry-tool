@@ -28,13 +28,15 @@ const ExportPanel = ({
   const [exportComplete, setExportComplete] = useState(false);
   const [downloadUrl, setDownloadUrl] = useState<string | null>(null);
   const [processingStep, setProcessingStep] = useState('');
+  const [initializationFailed, setInitializationFailed] = useState(false);
   const { assets } = useVideoAssets(platform);
   const { toast } = useToast();
 
   const handleExport = async () => {
     setIsExporting(true);
     setExportProgress(0);
-    setProcessingStep('Initializing video processor...');
+    setInitializationFailed(false);
+    setProcessingStep('Checking browser compatibility...');
     
     try {
       // Prepare export data
@@ -57,17 +59,18 @@ const ExportPanel = ({
 
       console.log('Starting video processing with assets:', selectedAssets);
 
-      setProcessingStep('Loading FFmpeg...');
       const processor = new VideoProcessor();
       
       const onProgress = (progress: number) => {
         setExportProgress(progress);
         if (progress < 10) {
-          setProcessingStep('Loading FFmpeg...');
-        } else if (progress < 30) {
+          setProcessingStep('Initializing FFmpeg (this may take 1-2 minutes)...');
+        } else if (progress < 15) {
+          setProcessingStep('FFmpeg ready, starting video processing...');
+        } else if (progress < 40) {
           setProcessingStep('Downloading video files...');
-        } else if (progress < 50) {
-          setProcessingStep('Preparing video processing...');
+        } else if (progress < 60) {
+          setProcessingStep('Preparing video merge...');
         } else if (progress < 90) {
           setProcessingStep('Processing and merging videos...');
         } else {
@@ -100,6 +103,14 @@ const ExportPanel = ({
       setIsExporting(false);
       setProcessingStep('');
       setExportProgress(0);
+      
+      // Check if it's an initialization error
+      if (error.message.includes('SharedArrayBuffer') || 
+          error.message.includes('Cross-Origin') ||
+          error.message.includes('FFmpeg initialization failed')) {
+        setInitializationFailed(true);
+      }
+      
       toast({
         title: "Export Failed",
         description: error.message || "There was an error processing your video. Please try again.",
@@ -209,11 +220,55 @@ const ExportPanel = ({
         <p className="text-sm text-gray-500">
           Processing {sequences.filter(s => s.selected).length} video clips using FFmpeg...
         </p>
-        {exportProgress === 0 && (
-          <p className="text-xs text-orange-600">
-            Loading FFmpeg for the first time may take 30-60 seconds...
-          </p>
+        {exportProgress < 10 && (
+          <div className="bg-orange-50 border border-orange-200 rounded-lg p-4 max-w-md mx-auto">
+            <p className="text-xs text-orange-700 font-medium">
+              🚀 First-time setup: Loading FFmpeg (1-2 minutes)
+            </p>
+            <p className="text-xs text-orange-600 mt-1">
+              This only happens once. Future exports will be much faster!
+            </p>
+          </div>
         )}
+      </div>
+    );
+  }
+
+  if (initializationFailed) {
+    return (
+      <div className="text-center space-y-6">
+        <div className="w-24 h-24 bg-red-500 rounded-full flex items-center justify-center mx-auto">
+          <span className="text-white text-4xl">⚠️</span>
+        </div>
+        <h3 className="text-2xl font-bold text-red-800">Browser Compatibility Issue</h3>
+        <div className="bg-red-50 border border-red-200 rounded-lg p-6 max-w-md mx-auto text-left">
+          <h4 className="font-semibold text-red-800 mb-3">To use video processing, you need:</h4>
+          <ul className="text-sm text-red-700 space-y-2">
+            <li>• Modern browser (Chrome 88+, Firefox 79+, Safari 15.2+)</li>
+            <li>• Secure HTTPS connection</li>
+            <li>• Cross-Origin Isolation enabled</li>
+          </ul>
+          <p className="text-xs text-red-600 mt-3">
+            If you're seeing this on localhost, try restarting the development server.
+          </p>
+        </div>
+        <div className="flex justify-center space-x-4">
+          <Button 
+            onClick={() => {
+              setInitializationFailed(false);
+              handleExport();
+            }}
+            variant="outline"
+          >
+            Try Again
+          </Button>
+          <Button 
+            onClick={() => setInitializationFailed(false)}
+            variant="outline"
+          >
+            Go Back
+          </Button>
+        </div>
       </div>
     );
   }
@@ -372,9 +427,14 @@ const ExportPanel = ({
             Please select at least one video clip to export
           </p>
         ) : (
-          <p className="text-sm text-gray-600 mt-2">
-            Real video processing using FFmpeg - may take 1-3 minutes depending on video length
-          </p>
+          <div className="mt-2 space-y-1">
+            <p className="text-sm text-gray-600">
+              Real video processing using FFmpeg
+            </p>
+            <p className="text-xs text-orange-600">
+              First-time setup may take 1-2 minutes. Subsequent exports will be faster.
+            </p>
+          </div>
         )}
       </div>
     </div>
