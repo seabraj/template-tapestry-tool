@@ -1,4 +1,3 @@
-
 import { Card, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
@@ -7,7 +6,7 @@ import { Platform, Language, VideoSequence, CustomizationSettings } from '@/page
 import { useState } from 'react';
 import { useVideoAssets } from '@/hooks/useVideoAssets';
 import { useToast } from '@/hooks/use-toast';
-import { supabase } from '@/integrations/supabase/client';
+import { VideoProcessor } from '@/services/videoProcessor';
 
 interface ExportPanelProps {
   platform: Platform;
@@ -28,68 +27,79 @@ const ExportPanel = ({
   const [exportProgress, setExportProgress] = useState(0);
   const [exportComplete, setExportComplete] = useState(false);
   const [downloadUrl, setDownloadUrl] = useState<string | null>(null);
+  const [processingStep, setProcessingStep] = useState('');
   const { assets } = useVideoAssets(platform);
   const { toast } = useToast();
 
   const handleExport = async () => {
     setIsExporting(true);
     setExportProgress(0);
+    setProcessingStep('Initializing video processor...');
     
     try {
       // Prepare export data
       const selectedAssets = sequences
         .filter(s => s.selected)
-        .map(seq => assets.find(asset => asset.id === seq.id))
-        .filter(Boolean);
+        .map(seq => {
+          const asset = assets.find(asset => asset.id === seq.id);
+          return {
+            id: seq.id,
+            name: seq.name,
+            duration: seq.duration,
+            file_url: asset?.file_url || ''
+          };
+        })
+        .filter(asset => asset.file_url);
 
-      const exportData = {
-        platform,
-        language,
-        duration,
-        sequences: selectedAssets,
-        customization,
-        settings: {
-          aspectRatio: getAspectRatio(),
-          resolution: getResolution()
+      if (selectedAssets.length === 0) {
+        throw new Error('No valid video assets found');
+      }
+
+      console.log('Starting video processing with assets:', selectedAssets);
+
+      setProcessingStep('Loading FFmpeg...');
+      const processor = new VideoProcessor();
+      
+      const onProgress = (progress: number) => {
+        setExportProgress(progress);
+        if (progress < 30) {
+          setProcessingStep('Downloading video files...');
+        } else if (progress < 50) {
+          setProcessingStep('Preparing video processing...');
+        } else if (progress < 90) {
+          setProcessingStep('Processing and merging videos...');
+        } else {
+          setProcessingStep('Finalizing export...');
         }
       };
 
-      console.log('Starting video export with data:', exportData);
+      const videoBlob = await processor.processVideo({
+        sequences: selectedAssets,
+        customization,
+        platform,
+        duration
+      }, onProgress);
 
-      // Simulate export process with progress updates
-      const steps = [
-        { label: 'Preparing video clips...', duration: 1000, progress: 20 },
-        { label: 'Applying platform optimization...', duration: 1500, progress: 40 },
-        { label: 'Adding text overlays and effects...', duration: 1000, progress: 60 },
-        { label: 'Rendering final video...', duration: 2000, progress: 85 },
-        { label: 'Finalizing export...', duration: 500, progress: 100 },
-      ];
-
-      for (let i = 0; i < steps.length; i++) {
-        await new Promise(resolve => setTimeout(resolve, steps[i].duration));
-        setExportProgress(steps[i].progress);
-      }
-
-      // For demonstration, create a mock download URL
-      // In a real implementation, this would be the actual rendered video URL
-      const mockVideoBlob = new Blob(['mock video data'], { type: 'video/mp4' });
-      const mockUrl = URL.createObjectURL(mockVideoBlob);
-      setDownloadUrl(mockUrl);
+      // Create download URL
+      const url = URL.createObjectURL(videoBlob);
+      setDownloadUrl(url);
 
       setIsExporting(false);
       setExportComplete(true);
+      setProcessingStep('Export complete!');
 
       toast({
         title: "Export Complete!",
-        description: "Your video has been successfully generated and is ready for download."
+        description: "Your video has been successfully processed and is ready for download."
       });
 
     } catch (error) {
       console.error('Export failed:', error);
       setIsExporting(false);
+      setProcessingStep('');
       toast({
         title: "Export Failed",
-        description: "There was an error generating your video. Please try again.",
+        description: error.message || "There was an error processing your video. Please try again.",
         variant: "destructive"
       });
     }
@@ -106,7 +116,7 @@ const ExportPanel = ({
       
       toast({
         title: "Download Started",
-        description: "Your video download has started."
+        description: "Your processed video download has started."
       });
     }
   };
@@ -153,21 +163,25 @@ const ExportPanel = ({
           <span className="text-white text-4xl">✓</span>
         </div>
         <h3 className="text-2xl font-bold text-green-800">Export Complete!</h3>
-        <p className="text-gray-600">Your video has been successfully generated.</p>
+        <p className="text-gray-600">Your video has been successfully processed and merged.</p>
         
         <div className="flex justify-center space-x-4">
           <Button 
             onClick={handleDownload}
             className="bg-green-500 hover:bg-green-600"
           >
-            Download MP4
+            Download Processed MP4
           </Button>
           <Button 
             variant="outline" 
             onClick={() => {
               setExportComplete(false);
+              if (downloadUrl) {
+                URL.revokeObjectURL(downloadUrl);
+              }
               setDownloadUrl(null);
               setExportProgress(0);
+              setProcessingStep('');
             }}
           >
             Create Another Video
@@ -183,13 +197,14 @@ const ExportPanel = ({
         <div className="w-24 h-24 bg-blue-500 rounded-full flex items-center justify-center mx-auto animate-spin">
           <span className="text-white text-2xl">⚡</span>
         </div>
-        <h3 className="text-2xl font-bold">Generating Your Video...</h3>
+        <h3 className="text-2xl font-bold">Processing Your Video...</h3>
         <div className="max-w-md mx-auto space-y-2">
           <Progress value={exportProgress} className="w-full" />
           <p className="text-sm text-gray-600">{exportProgress}% complete</p>
+          <p className="text-sm text-blue-600 font-medium">{processingStep}</p>
         </div>
         <p className="text-sm text-gray-500">
-          Processing {sequences.filter(s => s.selected).length} video clips...
+          Processing {sequences.filter(s => s.selected).length} video clips using FFmpeg...
         </p>
       </div>
     );
@@ -199,7 +214,7 @@ const ExportPanel = ({
     <div className="space-y-6">
       <div className="text-center">
         <h3 className="text-lg font-semibold mb-2">Ready to Export</h3>
-        <p className="text-gray-600">Review your settings and generate your video</p>
+        <p className="text-gray-600">Review your settings and process your video</p>
       </div>
 
       {/* Summary Cards */}
@@ -342,7 +357,7 @@ const ExportPanel = ({
           className="bg-gradient-to-r from-blue-600 to-purple-600 hover:from-blue-700 hover:to-purple-700 text-white px-12 py-4 text-lg font-semibold"
           disabled={sequences.filter(s => s.selected).length === 0}
         >
-          🚀 Generate MP4 Video
+          🚀 Process & Export MP4 Video
         </Button>
         {sequences.filter(s => s.selected).length === 0 ? (
           <p className="text-sm text-red-600 mt-2">
@@ -350,7 +365,7 @@ const ExportPanel = ({
           </p>
         ) : (
           <p className="text-sm text-gray-600 mt-2">
-            Export will take approximately 30-60 seconds
+            Real video processing using FFmpeg - may take 1-3 minutes depending on video length
           </p>
         )}
       </div>
