@@ -1,3 +1,4 @@
+
 import { FFmpeg } from '@ffmpeg/ffmpeg';
 import { toBlobURL } from '@ffmpeg/util';
 import { supabase } from '@/integrations/supabase/client';
@@ -34,6 +35,7 @@ export class VideoProcessor {
   private ffmpeg: FFmpeg;
   private isLoaded = false;
   private processingMode: 'client' | 'server' = 'server';
+  private ffmpegSupported = false;
 
   constructor() {
     this.ffmpeg = new FFmpeg();
@@ -51,28 +53,38 @@ export class VideoProcessor {
       isSecureContext
     });
 
-    if (hasSharedArrayBuffer && isCrossOriginIsolated && isSecureContext) {
+    this.ffmpegSupported = hasSharedArrayBuffer && isCrossOriginIsolated && isSecureContext;
+    
+    if (this.ffmpegSupported) {
       this.processingMode = 'client';
-      console.log('Client-side processing available');
+      console.log('Client-side FFmpeg appears supported');
     } else {
       this.processingMode = 'server';
-      console.log('Using server-side processing fallback');
+      console.log('Client-side FFmpeg not supported, using server-side processing');
     }
   }
 
   async processVideo(options: VideoProcessingOptions, onProgress?: (progress: number) => void): Promise<Blob> {
-    // FORCE client-side processing for multiple videos to ensure proper concatenation
+    // For multiple videos, try client-side first with fallback to server-side
     if (options.sequences.length > 1) {
-      console.log('🎬 Multiple videos detected - forcing client-side concatenation for proper ordering');
-      return this.processVideoClientSide(options, onProgress);
+      console.log('🎬 Multiple videos detected - attempting client-side concatenation');
+      
+      if (this.ffmpegSupported) {
+        try {
+          return await this.processVideoClientSide(options, onProgress);
+        } catch (error) {
+          console.warn('❌ Client-side concatenation failed, falling back to server-side:', error);
+          console.log('🌐 Falling back to server-side processing (largest video)');
+          return this.processVideoServerSide(options, onProgress);
+        }
+      } else {
+        console.log('🌐 Browser doesn\'t support FFmpeg, using server-side fallback');
+        return this.processVideoServerSide(options, onProgress);
+      }
     }
     
-    // Use server-side for single videos (no concatenation needed)
-    if (this.processingMode === 'server') {
-      return this.processVideoServerSide(options, onProgress);
-    } else {
-      return this.processVideoClientSide(options, onProgress);
-    }
+    // For single videos, use server-side processing
+    return this.processVideoServerSide(options, onProgress);
   }
 
   private async processVideoServerSide(options: VideoProcessingOptions, onProgress?: (progress: number) => void): Promise<Blob> {
@@ -191,8 +203,15 @@ export class VideoProcessor {
 
   private async processVideoClientSide(options: VideoProcessingOptions, onProgress?: (progress: number) => void): Promise<Blob> {
     try {
-      console.log('🎬 Starting client-side video concatenation for proper ordering...');
-      await this.initializeFFmpeg(onProgress);
+      console.log('🎬 Starting client-side video concatenation...');
+      
+      // Try to initialize FFmpeg with better error handling
+      try {
+        await this.initializeFFmpeg(onProgress);
+      } catch (initError) {
+        console.error('❌ FFmpeg initialization failed:', initError);
+        throw new Error(`FFmpeg initialization failed: ${initError.message || 'Browser environment not supported'}`);
+      }
 
       // Download all video files in exact order
       onProgress?.(15);
@@ -202,20 +221,25 @@ export class VideoProcessor {
         const sequence = options.sequences[i];
         console.log(`📥 Downloading video ${i + 1}/${options.sequences.length}: ${sequence.name} (position: ${i + 1})`);
         
-        const response = await fetch(sequence.file_url);
-        if (!response.ok) throw new Error(`Failed to download ${sequence.name}`);
-        
-        const arrayBuffer = await response.arrayBuffer();
-        const fileName = `input_${i.toString().padStart(3, '0')}.mp4`; // Zero-padded for proper ordering
-        
-        videoFiles.push({
-          name: fileName,
-          data: new Uint8Array(arrayBuffer),
-          order: i
-        });
+        try {
+          const response = await fetch(sequence.file_url);
+          if (!response.ok) throw new Error(`Failed to download ${sequence.name}: HTTP ${response.status}`);
+          
+          const arrayBuffer = await response.arrayBuffer();
+          const fileName = `input_${i.toString().padStart(3, '0')}.mp4`; // Zero-padded for proper ordering
+          
+          videoFiles.push({
+            name: fileName,
+            data: new Uint8Array(arrayBuffer),
+            order: i
+          });
 
-        await this.ffmpeg.writeFile(fileName, new Uint8Array(arrayBuffer));
-        onProgress?.(15 + (i + 1) * 25 / options.sequences.length);
+          await this.ffmpeg.writeFile(fileName, new Uint8Array(arrayBuffer));
+          onProgress?.(15 + (i + 1) * 25 / options.sequences.length);
+        } catch (downloadError) {
+          console.error(`❌ Failed to download video ${sequence.name}:`, downloadError);
+          throw new Error(`Failed to download video ${sequence.name}: ${downloadError.message}`);
+        }
       }
 
       onProgress?.(40);
@@ -272,12 +296,17 @@ export class VideoProcessor {
       return new Blob([outputData], { type: 'video/mp4' });
     } catch (error) {
       console.error('❌ Client-side video concatenation failed:', error);
-      throw new Error(`Client-side concatenation failed: ${error.message}`);
+      throw error; // Re-throw to allow fallback to server-side
     }
   }
 
   private async initializeFFmpeg(onProgress?: (progress: number) => void): Promise<void> {
     if (this.isLoaded) return;
+
+    // Check if browser environment supports FFmpeg
+    if (!this.ffmpegSupported) {
+      throw new Error('Browser environment does not support FFmpeg (requires SharedArrayBuffer and Cross-Origin isolation)');
+    }
 
     try {
       console.log('Starting FFmpeg initialization...');
@@ -350,7 +379,7 @@ export class VideoProcessor {
     } catch (error) {
       this.isLoaded = false;
       console.error('FFmpeg initialization failed:', error);
-      throw new Error(`FFmpeg initialization failed: ${error.message}`);
+      throw new Error(`FFmpeg initialization failed: ${error.message || 'Unknown error'}`);
     }
   }
 
@@ -384,10 +413,10 @@ export class VideoProcessor {
   }
 
   getProcessingMode(): 'client' | 'server' {
-    // Force client mode for multiple videos to ensure proper concatenation
-    if (this.processingMode === 'client') {
-      return 'client';
-    }
-    return 'server';
+    return this.processingMode;
+  }
+
+  isFFmpegSupported(): boolean {
+    return this.ffmpegSupported;
   }
 }
