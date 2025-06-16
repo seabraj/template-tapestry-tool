@@ -1,6 +1,5 @@
 
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
-import { encode } from "https://deno.land/std@0.168.0/encoding/base64.ts";
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.50.0';
 
 const corsHeaders = {
@@ -258,100 +257,60 @@ serve(async (req) => {
       throw new Error('Failed to initialize Supabase client');
     }
     
-    // Use storage for files > 8MB, base64 for smaller ones
-    if (sizeInMB > 8) {
-      console.log('📤 Using storage upload for large concatenated file...');
+    // Always use storage upload to avoid CPU time limits with base64 encoding
+    console.log('📤 Using storage upload for concatenated file...');
+    
+    try {
+      const timestamp = Date.now();
+      const filename = `concatenated_${timestamp}_${platform}_${validSequences.length}videos.mp4`;
       
-      try {
-        const timestamp = Date.now();
-        const filename = `concatenated_${timestamp}_${platform}_${validSequences.length}videos.mp4`;
-        
-        const { data: uploadData, error: uploadError } = await supabase.storage
-          .from('processed-videos')
-          .upload(filename, concatenatedVideo, {
-            contentType: 'video/mp4',
-            upsert: false
-          });
+      const { data: uploadData, error: uploadError } = await supabase.storage
+        .from('processed-videos')
+        .upload(filename, concatenatedVideo, {
+          contentType: 'video/mp4',
+          upsert: false
+        });
 
-        if (uploadError) {
-          console.error('❌ Storage upload failed:', uploadError);
-          throw new Error(`Storage upload failed: ${uploadError.message}`);
+      if (uploadError) {
+        console.error('❌ Storage upload failed:', uploadError);
+        throw new Error(`Storage upload failed: ${uploadError.message}`);
+      }
+
+      const { data: urlData } = supabase.storage
+        .from('processed-videos')
+        .getPublicUrl(filename);
+
+      console.log('✅ Concatenated video uploaded to storage successfully');
+
+      const response = {
+        success: true,
+        useStorage: true,
+        downloadUrl: urlData.publicUrl,
+        filename: filename,
+        message: `🎬 Video concatenation completed! Combined ${validSequences.length} videos in your selected order.`,
+        metadata: {
+          originalSize: concatenatedVideo.length,
+          platform,
+          sequenceCount: validSequences.length,
+          processingMethod: 'server_side_binary_concatenation',
+          videoOrder: validSequences.map((seq, idx) => ({ 
+            position: idx + 1, 
+            name: seq.name,
+            originalOrder: seq.originalOrder 
+          }))
         }
+      };
 
-        const { data: urlData } = supabase.storage
-          .from('processed-videos')
-          .getPublicUrl(filename);
-
-        console.log('✅ Concatenated video uploaded to storage successfully');
-
-        const response = {
-          success: true,
-          useStorage: true,
-          downloadUrl: urlData.publicUrl,
-          filename: filename,
-          message: `🎬 Video concatenation completed! Combined ${validSequences.length} videos in your selected order.`,
-          metadata: {
-            originalSize: concatenatedVideo.length,
-            platform,
-            sequenceCount: validSequences.length,
-            processingMethod: 'server_side_binary_concatenation',
-            videoOrder: validSequences.map((seq, idx) => ({ 
-              position: idx + 1, 
-              name: seq.name,
-              originalOrder: seq.originalOrder 
-            }))
-          }
-        };
-
-        return new Response(
-          JSON.stringify(response),
-          {
-            status: 200,
-            headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-          }
-        );
-      } catch (storageError) {
-        console.error('❌ Storage operation failed:', storageError);
-        throw new Error(`Storage operation failed: ${storageError.message}`);
-      }
-      
-    } else {
-      console.log('📤 Using base64 transfer for smaller concatenated file...');
-      
-      try {
-        const videoBase64 = encode(concatenatedVideo);
-        console.log(`✅ Base64 encoding completed: ${videoBase64.length} characters`);
-        
-        const response = {
-          success: true,
-          useStorage: false,
-          videoData: videoBase64,
-          message: `🎬 Video concatenation completed! Combined ${validSequences.length} videos in your selected order.`,
-          metadata: {
-            originalSize: concatenatedVideo.length,
-            base64Size: videoBase64.length,
-            platform,
-            sequenceCount: validSequences.length,
-            processingMethod: 'server_side_binary_concatenation',
-            videoOrder: validSequences.map((seq, idx) => ({ 
-              position: idx + 1, 
-              name: seq.name,
-              originalOrder: seq.originalOrder 
-            }))
-          }
-        };
-        
-        return new Response(
-          JSON.stringify(response),
-          {
-            status: 200,
-            headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-          }
-        );
-      } catch (encodingError) {
-        console.error('❌ Base64 encoding failed:', encodingError);
-        throw new Error(`Base64 encoding failed: ${encodingError.message}`);
-      }
+      return new Response(
+        JSON.stringify(response),
+        {
+          status: 200,
+          headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+        }
+      );
+    } catch (storageError) {
+      console.error('❌ Storage operation failed:', storageError);
+      throw new Error(`Storage operation failed: ${storageError.message}`);
     }
 
   } catch (error) {
