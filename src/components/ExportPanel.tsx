@@ -28,21 +28,20 @@ const ExportPanel = ({
   const [exportComplete, setExportComplete] = useState(false);
   const [downloadUrl, setDownloadUrl] = useState<string | null>(null);
   const [processingStep, setProcessingStep] = useState('');
-  const [processingMode, setProcessingMode] = useState<'client' | 'server'>('server');
   const { assets, getAssetById, getVideoUrlById } = useVideoAssets(platform);
   const { toast } = useToast();
 
   const handleExport = async () => {
     setIsExporting(true);
     setExportProgress(0);
-    setProcessingStep('Preparing videos for concatenation...');
+    setProcessingStep('Preparing videos for processing...');
     
     try {
       // Get selected sequences in their original order
       const selectedSequences = sequences.filter(s => s.selected);
       
       if (selectedSequences.length === 0) {
-        throw new Error('No videos selected for concatenation');
+        throw new Error('No videos selected for processing');
       }
 
       // Prepare export data with proper file URLs in the exact order selected
@@ -65,13 +64,9 @@ const ExportPanel = ({
         throw new Error('No valid video assets found');
       }
 
-      console.log('🎬 Starting video concatenation with assets in order:', orderedAssets.map((a, i) => `${i+1}. ${a.name}`));
+      console.log('🎬 Starting server-side video processing with assets in order:', orderedAssets.map((a, i) => `${i+1}. ${a.name}`));
 
       const processor = new VideoProcessor();
-      
-      // Determine processing mode based on video count
-      const mode = orderedAssets.length > 1 ? 'client' : processor.getProcessingMode();
-      setProcessingMode(mode);
       
       const onProgress = (progress: number) => {
         setExportProgress(progress);
@@ -86,28 +81,14 @@ const ExportPanel = ({
           }
         } else {
           // Multiple video concatenation
-          if (mode === 'client') {
-            if (progress < 10) {
-              setProcessingStep('Loading FFmpeg for video concatenation...');
-            } else if (progress < 15) {
-              setProcessingStep('FFmpeg ready, preparing concatenation...');
-            } else if (progress < 40) {
-              setProcessingStep('Downloading videos in your selected order...');
-            } else if (progress < 60) {
-              setProcessingStep('Setting up video concatenation...');
-            } else if (progress < 90) {
-              setProcessingStep('Concatenating videos in sequence...');
-            } else {
-              setProcessingStep('Finalizing concatenated video...');
-            }
+          if (progress < 20) {
+            setProcessingStep('Server processing: downloading videos...');
+          } else if (progress < 60) {
+            setProcessingStep('Server processing: concatenating videos in order...');
+          } else if (progress < 90) {
+            setProcessingStep('Server processing: finalizing concatenated video...');
           } else {
-            if (progress < 20) {
-              setProcessingStep('Server processing (single video fallback)...');
-            } else if (progress < 80) {
-              setProcessingStep('Processing video...');
-            } else {
-              setProcessingStep('Download ready!');
-            }
+            setProcessingStep('Download ready!');
           }
         }
       };
@@ -130,8 +111,8 @@ const ExportPanel = ({
       toast({
         title: orderedAssets.length === 1 ? "Video Processing Complete!" : "Video Concatenation Complete!",
         description: orderedAssets.length === 1 
-          ? `Your video has been successfully processed using ${mode === 'server' ? 'server-side' : 'client-side'} processing.`
-          : `Your ${orderedAssets.length} videos have been successfully concatenated in order using ${mode === 'client' ? 'client-side FFmpeg' : 'server-side'} processing.`
+          ? `Your video has been successfully processed using server-side processing.`
+          : `Your ${orderedAssets.length} videos have been successfully concatenated in the order you selected using server-side processing.`
       });
 
     } catch (error) {
@@ -216,8 +197,8 @@ const ExportPanel = ({
         </h3>
         <p className="text-gray-600">
           {selectedSequences.length === 1 
-            ? `Your video has been successfully processed using ${processingMode === 'server' ? 'server-side' : 'client-side'} processing.`
-            : `Your ${selectedSequences.length} videos have been successfully concatenated in the order you selected using ${processingMode === 'client' ? 'client-side FFmpeg' : 'server-side'} processing.`
+            ? `Your video has been successfully processed using server-side processing.`
+            : `Your ${selectedSequences.length} videos have been successfully concatenated in the order you selected using server-side processing.`
           }
         </p>
         
@@ -263,20 +244,17 @@ const ExportPanel = ({
         </div>
         <p className="text-sm text-gray-500">
           {selectedSequences.length === 1 
-            ? `Processing your video using ${processingMode === 'server' ? 'server-side' : 'client-side'} processing...`
-            : `Concatenating ${selectedSequences.length} video clips in your selected order using ${processingMode === 'client' ? 'client-side FFmpeg' : 'server-side'} processing...`
+            ? `Processing your video using server-side processing...`
+            : `Concatenating ${selectedSequences.length} video clips in your selected order using server-side processing...`
           }
         </p>
         {selectedSequences.length > 1 && (
           <div className="bg-blue-50 border border-blue-200 rounded-lg p-4 max-w-md mx-auto">
             <p className="text-xs text-blue-700 font-medium">
-              🎬 {processingMode === 'client' ? 'Using FFmpeg for proper video concatenation' : 'Using server-side processing'}
+              🎬 Using server-side binary concatenation
             </p>
             <p className="text-xs text-blue-600 mt-1">
-              {processingMode === 'client' 
-                ? 'Combining your videos in the exact order you selected!'
-                : 'Processing your videos with server fallback'
-              }
+              Combining your videos in the exact order you selected!
             </p>
           </div>
         )}
@@ -303,23 +281,13 @@ const ExportPanel = ({
         <CardContent className="p-4 text-center">
           <h4 className="font-semibold text-blue-800 mb-2">Processing Method</h4>
           <div className="flex items-center justify-center space-x-2">
-            <span className="text-2xl">
-              {selectedSequences.length > 1 ? '🎬' : (processingMode === 'server' ? '🌐' : '💻')}
-            </span>
+            <span className="text-2xl">🌐</span>
             <div>
-              <p className="text-lg font-bold text-blue-600 capitalize">
-                {selectedSequences.length > 1 
-                  ? 'Client-Side FFmpeg' 
-                  : (processingMode === 'server' ? 'Server-Side' : 'Client-Side')
-                }
-              </p>
+              <p className="text-lg font-bold text-blue-600">Server-Side</p>
               <p className="text-sm text-blue-600">
                 {selectedSequences.length > 1 
-                  ? 'Proper video concatenation with FFmpeg' 
-                  : (processingMode === 'server' 
-                    ? 'Server video processing' 
-                    : 'In-browser video processing'
-                  )
+                  ? 'Binary concatenation in correct order' 
+                  : 'Server video processing'
                 }
               </p>
             </div>
@@ -451,7 +419,7 @@ const ExportPanel = ({
           </div>
           {selectedSequences.length > 1 && (
             <p className="text-sm text-blue-600 mt-2">
-              ✅ Videos will be concatenated using FFmpeg in the exact order shown above
+              ✅ Videos will be concatenated using server-side processing in the exact order shown above
             </p>
           )}
         </CardContent>
@@ -480,10 +448,7 @@ const ExportPanel = ({
               }
             </p>
             <p className="text-xs text-blue-600">
-              {selectedSequences.length === 1 
-                ? `${processingMode === 'server' ? 'Server-side' : 'Client-side'} video processing`
-                : 'Client-side FFmpeg concatenation for proper video ordering!'
-              }
+              Server-side processing with proper video ordering!
             </p>
           </div>
         )}
