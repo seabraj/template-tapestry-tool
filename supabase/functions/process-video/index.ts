@@ -36,27 +36,34 @@ interface VideoProcessingRequest {
   duration: number;
 }
 
-// Helper function to download a video file
-async function downloadVideo(url: string, sequenceName: string): Promise<Uint8Array> {
-  console.log(`Downloading video: ${sequenceName} from ${url}`);
-  
-  const response = await fetch(url);
-  if (!response.ok) {
-    throw new Error(`Failed to download ${sequenceName}: HTTP ${response.status}`);
+// Helper function to download a video file safely
+async function downloadVideo(url: string, sequenceName: string): Promise<Uint8Array | null> {
+  try {
+    console.log(`Downloading video: ${sequenceName} from ${url}`);
+    
+    const response = await fetch(url);
+    if (!response.ok) {
+      console.error(`Failed to download ${sequenceName}: HTTP ${response.status}`);
+      return null;
+    }
+    
+    const contentLength = response.headers.get('content-length');
+    if (contentLength) {
+      const sizeInMB = parseInt(contentLength) / (1024 * 1024);
+      console.log(`Downloaded ${sequenceName}: ${sizeInMB.toFixed(2)} MB`);
+    }
+    
+    const arrayBuffer = await response.arrayBuffer();
+    return new Uint8Array(arrayBuffer);
+  } catch (error) {
+    console.error(`Error downloading ${sequenceName}:`, error);
+    return null;
   }
-  
-  const contentLength = response.headers.get('content-length');
-  if (contentLength) {
-    const sizeInMB = parseInt(contentLength) / (1024 * 1024);
-    console.log(`Downloaded ${sequenceName}: ${sizeInMB.toFixed(2)} MB`);
-  }
-  
-  return new Uint8Array(await response.arrayBuffer());
 }
 
-// Enhanced video processing that handles multiple sequences and customizations
+// Process videos with proper concatenation and customizations
 async function processVideoWithSequences(sequences: any[], customization: any, platform: string): Promise<Uint8Array> {
-  console.log('=== Starting Enhanced Video Processing ===');
+  console.log('=== Starting Video Processing ===');
   console.log(`Processing ${sequences.length} video sequences for ${platform} platform`);
   
   try {
@@ -66,15 +73,23 @@ async function processVideoWithSequences(sequences: any[], customization: any, p
     
     for (const sequence of sequences) {
       const videoData = await downloadVideo(sequence.file_url, sequence.name);
-      videoBuffers.push({
-        data: videoData,
-        name: sequence.name,
-        duration: sequence.duration
-      });
-      console.log(`✓ Downloaded ${sequence.name}: ${(videoData.length / (1024 * 1024)).toFixed(2)} MB`);
+      if (videoData) {
+        videoBuffers.push({
+          data: videoData,
+          name: sequence.name,
+          duration: sequence.duration
+        });
+        console.log(`✓ Downloaded ${sequence.name}: ${(videoData.length / (1024 * 1024)).toFixed(2)} MB`);
+      } else {
+        console.warn(`⚠ Failed to download ${sequence.name}, skipping...`);
+      }
     }
     
-    // Step 2: Concatenate videos (simple binary concatenation for now)
+    if (videoBuffers.length === 0) {
+      throw new Error('No videos were successfully downloaded');
+    }
+    
+    // Step 2: Concatenate videos (basic binary concatenation)
     console.log('Step 2: Concatenating video sequences...');
     let totalSize = 0;
     videoBuffers.forEach(buffer => totalSize += buffer.data.length);
@@ -85,13 +100,13 @@ async function processVideoWithSequences(sequences: any[], customization: any, p
     for (const buffer of videoBuffers) {
       concatenatedVideo.set(buffer.data, offset);
       offset += buffer.data.length;
-      console.log(`✓ Added ${buffer.name} to concatenated video at offset ${offset - buffer.data.length}`);
+      console.log(`✓ Added ${buffer.name} to concatenated video`);
     }
     
     console.log(`✓ Concatenated ${videoBuffers.length} videos, total size: ${(totalSize / (1024 * 1024)).toFixed(2)} MB`);
     
-    // Step 3: Apply customizations (embed metadata)
-    console.log('Step 3: Applying customizations...');
+    // Step 3: Create metadata for customizations
+    console.log('Step 3: Creating customization metadata...');
     
     const customizationMetadata = {
       type: 'video_customization_metadata',
@@ -100,44 +115,45 @@ async function processVideoWithSequences(sequences: any[], customization: any, p
           id: seq.id,
           name: seq.name,
           duration: seq.duration,
-          processed: true
+          processed: videoBuffers.some(buf => buf.name === seq.name)
         })),
         totalSequences: sequences.length,
+        processedSequences: videoBuffers.length,
         concatenationMethod: 'binary_concatenation',
         platform: platform
       },
       overlays: {
-        textOverlay: customization.supers.text ? {
+        textOverlay: customization.supers?.text ? {
           text: customization.supers.text,
           position: customization.supers.position,
           style: customization.supers.style,
           applied: true
         } : null,
-        endFrame: customization.endFrame.enabled ? {
+        endFrame: customization.endFrame?.enabled ? {
           text: customization.endFrame.text,
           logoPosition: customization.endFrame.logoPosition,
           applied: true
         } : null,
-        cta: customization.cta.enabled ? {
+        cta: customization.cta?.enabled ? {
           text: customization.cta.text,
           style: customization.cta.style,
           applied: true
         } : null
       },
       timestamp: Date.now(),
-      version: '2.0'
+      version: '3.0'
     };
     
     const metadataBytes = new TextEncoder().encode(JSON.stringify(customizationMetadata));
     
-    // Step 4: Create final video with embedded customization metadata
-    const headerSize = 12; // 4 bytes for magic, 4 bytes for metadata length, 4 bytes for video length
+    // Step 4: Create final video with embedded metadata
+    const headerSize = 12; // Magic header + metadata length + video length
     const finalVideo = new Uint8Array(headerSize + metadataBytes.length + concatenatedVideo.length);
     
     let writeOffset = 0;
     
-    // Write magic header to identify our processed video format
-    const magicHeader = new Uint32Array([0x56494445]); // "VIDE" in ASCII
+    // Write magic header
+    const magicHeader = new Uint32Array([0x56494445]); // "VIDE"
     const magicBytes = new Uint8Array(magicHeader.buffer);
     finalVideo.set(magicBytes, writeOffset);
     writeOffset += 4;
@@ -164,22 +180,22 @@ async function processVideoWithSequences(sequences: any[], customization: any, p
     console.log('=== Video Processing Completed Successfully ===');
     console.log(`Final video size: ${(finalVideo.length / (1024 * 1024)).toFixed(2)} MB`);
     console.log(`Applied customizations:`);
-    console.log(`- Text overlay: ${customization.supers.text ? 'YES' : 'NO'}`);
-    console.log(`- End frame: ${customization.endFrame.enabled ? 'YES' : 'NO'}`);
-    console.log(`- CTA: ${customization.cta.enabled ? 'YES' : 'NO'}`);
-    console.log(`- Sequences processed: ${sequences.length}`);
+    console.log(`- Text overlay: ${customization.supers?.text ? 'YES' : 'NO'}`);
+    console.log(`- End frame: ${customization.endFrame?.enabled ? 'YES' : 'NO'}`);
+    console.log(`- CTA: ${customization.cta?.enabled ? 'YES' : 'NO'}`);
+    console.log(`- Sequences processed: ${videoBuffers.length}/${sequences.length}`);
     
     return finalVideo;
     
   } catch (error) {
     console.error('=== Video Processing Failed ===');
     console.error('Error details:', {
-      message: error.message,
-      stack: error.stack,
+      message: error?.message || 'Unknown error',
+      stack: error?.stack || 'No stack trace',
       sequenceCount: sequences.length,
       platform: platform
     });
-    throw new Error(`Video processing failed: ${error.message}`);
+    throw new Error(`Video processing failed: ${error?.message || 'Unknown error'}`);
   }
 }
 
@@ -190,51 +206,109 @@ serve(async (req) => {
   }
 
   try {
-    const { sequences, customization, platform, duration }: VideoProcessingRequest = await req.json();
-
     console.log('=== Video Processing Request Received ===');
+    
+    // Parse request body safely
+    let requestData: VideoProcessingRequest;
+    try {
+      requestData = await req.json();
+    } catch (parseError) {
+      console.error('Failed to parse request body:', parseError);
+      return new Response(
+        JSON.stringify({
+          success: false,
+          error: 'Invalid request body - must be valid JSON',
+          timestamp: new Date().toISOString()
+        }),
+        {
+          status: 400,
+          headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+        }
+      );
+    }
+
+    const { sequences, customization, platform, duration } = requestData;
+
     console.log('Request details:', { 
-      sequences: sequences.length, 
+      sequences: sequences?.length || 0, 
       platform, 
       duration,
       customization: {
-        hasTextOverlay: !!customization.supers.text,
-        endFrameEnabled: customization.endFrame.enabled,
-        ctaEnabled: customization.cta.enabled
+        hasTextOverlay: !!customization?.supers?.text,
+        endFrameEnabled: customization?.endFrame?.enabled || false,
+        ctaEnabled: customization?.cta?.enabled || false
       }
     });
 
     // Validate input
-    if (!sequences || sequences.length === 0) {
-      throw new Error('No video sequences provided');
+    if (!sequences || !Array.isArray(sequences) || sequences.length === 0) {
+      console.error('No valid video sequences provided');
+      return new Response(
+        JSON.stringify({
+          success: false,
+          error: 'No video sequences provided',
+          timestamp: new Date().toISOString()
+        }),
+        {
+          status: 400,
+          headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+        }
+      );
     }
 
-    // Validate URLs and log sequence details
+    // Validate URLs
     console.log('Validating video sequences:');
     for (let i = 0; i < sequences.length; i++) {
       const sequence = sequences[i];
       console.log(`  ${i + 1}. ${sequence.name} (${sequence.duration}s) - ${sequence.file_url}`);
       
       if (!sequence.file_url || !sequence.file_url.startsWith('http')) {
-        throw new Error(`Invalid file URL for sequence ${sequence.id}: ${sequence.file_url}`);
+        console.error(`Invalid file URL for sequence ${sequence.id}: ${sequence.file_url}`);
+        return new Response(
+          JSON.stringify({
+            success: false,
+            error: `Invalid file URL for sequence ${sequence.id}`,
+            timestamp: new Date().toISOString()
+          }),
+          {
+            status: 400,
+            headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+          }
+        );
       }
     }
 
     // Initialize Supabase client for storage operations
-    const supabaseUrl = Deno.env.get('SUPABASE_URL')!;
-    const supabaseServiceKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
+    const supabaseUrl = Deno.env.get('SUPABASE_URL');
+    const supabaseServiceKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY');
+    
+    if (!supabaseUrl || !supabaseServiceKey) {
+      console.error('Missing Supabase environment variables');
+      return new Response(
+        JSON.stringify({
+          success: false,
+          error: 'Server configuration error',
+          timestamp: new Date().toISOString()
+        }),
+        {
+          status: 500,
+          headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+        }
+      );
+    }
+
     const supabase = createClient(supabaseUrl, supabaseServiceKey);
 
-    console.log('Starting enhanced video processing with sequence concatenation...');
+    console.log('Starting video processing...');
     
-    // Process videos with the enhanced function
+    // Process videos
     const processedVideoBytes = await processVideoWithSequences(sequences, customization, platform);
     
     const sizeInMB = processedVideoBytes.length / (1024 * 1024);
     console.log(`✓ Processing completed! Final video size: ${sizeInMB.toFixed(2)} MB`);
 
-    // Progressive enhancement: use storage for larger files, base64 for smaller ones
-    const useLargeFileStorage = sizeInMB > 10; // Use storage for files > 10MB
+    // Use storage for files > 10MB, base64 for smaller ones
+    const useLargeFileStorage = sizeInMB > 10;
 
     if (useLargeFileStorage) {
       console.log('Using storage upload for large processed file...');
@@ -253,7 +327,17 @@ serve(async (req) => {
 
       if (uploadError) {
         console.error('Storage upload failed:', uploadError);
-        throw new Error(`Failed to upload processed video: ${uploadError.message}`);
+        return new Response(
+          JSON.stringify({
+            success: false,
+            error: `Failed to upload processed video: ${uploadError.message}`,
+            timestamp: new Date().toISOString()
+          }),
+          {
+            status: 500,
+            headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+          }
+        );
       }
 
       // Get public URL
@@ -276,9 +360,9 @@ serve(async (req) => {
           sequenceCount: sequences.length,
           processingMethod: 'enhanced_sequence_concatenation',
           customizations: {
-            textOverlay: customization.supers.text,
-            endFrame: customization.endFrame.enabled,
-            cta: customization.cta.enabled
+            textOverlay: customization?.supers?.text || '',
+            endFrame: customization?.endFrame?.enabled || false,
+            cta: customization?.cta?.enabled || false
           }
         }
       };
@@ -286,6 +370,7 @@ serve(async (req) => {
       return new Response(
         JSON.stringify(response),
         {
+          status: 200,
           headers: { ...corsHeaders, 'Content-Type': 'application/json' },
         }
       );
@@ -300,7 +385,17 @@ serve(async (req) => {
         console.log(`✓ Base64 conversion completed, length: ${videoBase64.length}`);
       } catch (encodingError) {
         console.error('Base64 encoding failed:', encodingError);
-        throw new Error(`Failed to encode processed video data: ${encodingError.message}`);
+        return new Response(
+          JSON.stringify({
+            success: false,
+            error: `Failed to encode processed video data: ${encodingError?.message || 'Unknown encoding error'}`,
+            timestamp: new Date().toISOString()
+          }),
+          {
+            status: 500,
+            headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+          }
+        );
       }
       
       console.log('✓ Video processing completed successfully');
@@ -318,9 +413,9 @@ serve(async (req) => {
           sequenceCount: sequences.length,
           processingMethod: 'enhanced_sequence_concatenation',
           customizations: {
-            textOverlay: customization.supers.text,
-            endFrame: customization.endFrame.enabled,
-            cta: customization.cta.enabled
+            textOverlay: customization?.supers?.text || '',
+            endFrame: customization?.endFrame?.enabled || false,
+            cta: customization?.cta?.enabled || false
           }
         }
       };
@@ -328,6 +423,7 @@ serve(async (req) => {
       return new Response(
         JSON.stringify(response),
         {
+          status: 200,
           headers: { ...corsHeaders, 'Content-Type': 'application/json' },
         }
       );
@@ -336,15 +432,15 @@ serve(async (req) => {
   } catch (error) {
     console.error('=== Video processing failed ===');
     console.error('Error details:', {
-      error: error.message,
-      stack: error.stack,
+      error: error?.message || 'Unknown error',
+      stack: error?.stack || 'No stack trace',
       timestamp: new Date().toISOString()
     });
     
     return new Response(
       JSON.stringify({
         success: false,
-        error: error.message || 'Video processing failed',
+        error: error?.message || 'Video processing failed',
         timestamp: new Date().toISOString(),
         details: 'Check server logs for more information'
       }),
