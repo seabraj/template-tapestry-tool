@@ -1,5 +1,6 @@
 
-import FFmpeg from '@ffmpeg/ffmpeg';
+import { FFmpeg } from '@ffmpeg/ffmpeg';
+import { toBlobURL } from '@ffmpeg/util';
 
 export interface VideoProcessingOptions {
   sequences: Array<{
@@ -46,7 +47,13 @@ export class VideoProcessor {
       });
     }
 
-    await this.ffmpeg.load();
+    // Load FFmpeg with CDN URLs
+    const baseURL = 'https://unpkg.com/@ffmpeg/core@0.12.6/dist/umd';
+    await this.ffmpeg.load({
+      coreURL: await toBlobURL(`${baseURL}/ffmpeg-core.js`, 'text/javascript'),
+      wasmURL: await toBlobURL(`${baseURL}/ffmpeg-core.wasm`, 'application/wasm'),
+    });
+    
     this.isLoaded = true;
   }
 
