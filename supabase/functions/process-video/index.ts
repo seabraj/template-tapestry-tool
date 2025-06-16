@@ -36,13 +36,40 @@ interface VideoProcessingRequest {
   duration: number;
 }
 
+// Import FFmpeg for server-side video processing
+const FFmpegWasm = await import('https://esm.sh/@ffmpeg/ffmpeg@0.12.15');
+const FFmpegUtil = await import('https://esm.sh/@ffmpeg/util@0.12.2');
+
+let ffmpeg: any = null;
+
+async function initializeFFmpeg() {
+  if (ffmpeg) return ffmpeg;
+  
+  try {
+    console.log('🔧 Initializing FFmpeg...');
+    ffmpeg = new FFmpegWasm.FFmpeg();
+    
+    // Load FFmpeg core
+    await ffmpeg.load({
+      coreURL: 'https://unpkg.com/@ffmpeg/core@0.12.6/dist/umd/ffmpeg-core.js',
+      wasmURL: 'https://unpkg.com/@ffmpeg/core@0.12.6/dist/umd/ffmpeg-core.wasm',
+    });
+    
+    console.log('✅ FFmpeg initialized successfully');
+    return ffmpeg;
+  } catch (error) {
+    console.error('❌ FFmpeg initialization failed:', error);
+    throw new Error(`FFmpeg initialization failed: ${error.message}`);
+  }
+}
+
 // Download video with validation
 async function downloadVideoSafely(url: string, sequenceName: string): Promise<Uint8Array | null> {
   try {
     console.log(`📥 Downloading: ${sequenceName} from ${url}`);
     
     const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 30000);
+    const timeoutId = setTimeout(() => controller.abort(), 60000); // Increased timeout
     
     const response = await fetch(url, { 
       signal: controller.signal,
@@ -57,7 +84,7 @@ async function downloadVideoSafely(url: string, sequenceName: string): Promise<U
     }
     
     const contentLength = response.headers.get('content-length');
-    const maxSize = 15 * 1024 * 1024; // 15MB limit
+    const maxSize = 50 * 1024 * 1024; // Increased to 50MB limit
     if (contentLength && parseInt(contentLength) > maxSize) {
       console.warn(`⚠️ File too large: ${sequenceName} (${parseInt(contentLength)} bytes)`);
       return null;
@@ -74,32 +101,70 @@ async function downloadVideoSafely(url: string, sequenceName: string): Promise<U
   }
 }
 
-// For single video - just return as is
-function processSingleVideo(videoData: Uint8Array, name: string): Uint8Array {
-  console.log(`🎯 Processing single video: ${name}`);
-  return videoData;
-}
-
-// For multiple videos - return the first video with a warning
-// Note: True MP4 concatenation requires complex container manipulation
-function processMultipleVideos(videoBuffers: Array<{ data: Uint8Array; name: string; order: number }>): Uint8Array {
-  console.log('⚠️ Multiple video processing: Returning first video in sequence due to MP4 concatenation limitations');
-  
-  const sortedVideos = videoBuffers.sort((a, b) => a.order - b.order);
-  console.log(`📋 Video order: ${sortedVideos.map(v => `${v.order + 1}. ${v.name}`).join(', ')}`);
-  
-  if (sortedVideos.length === 0) {
-    throw new Error('No videos to process');
+// Process multiple videos using FFmpeg
+async function concatenateVideos(videoBuffers: Array<{ data: Uint8Array; name: string; order: number }>): Promise<Uint8Array> {
+  try {
+    console.log('🎬 Starting FFmpeg video concatenation...');
+    
+    const ffmpegInstance = await initializeFFmpeg();
+    const sortedVideos = videoBuffers.sort((a, b) => a.order - b.order);
+    
+    console.log(`📋 Processing ${sortedVideos.length} videos in order: ${sortedVideos.map(v => `${v.order + 1}. ${v.name}`).join(', ')}`);
+    
+    // Write input videos to FFmpeg filesystem
+    const inputFiles: string[] = [];
+    for (let i = 0; i < sortedVideos.length; i++) {
+      const filename = `input${i}.mp4`;
+      inputFiles.push(filename);
+      await ffmpegInstance.writeFile(filename, sortedVideos[i].data);
+      console.log(`📝 Written ${filename} to FFmpeg filesystem`);
+    }
+    
+    // Create concat demuxer input file
+    const concatList = inputFiles.map(file => `file '${file}'`).join('\n');
+    await ffmpegInstance.writeFile('concat_list.txt', new TextEncoder().encode(concatList));
+    console.log('📝 Created concat list file');
+    
+    // Run FFmpeg concatenation
+    console.log('⚡ Running FFmpeg concatenation...');
+    await ffmpegInstance.exec([
+      '-f', 'concat',
+      '-safe', '0',
+      '-i', 'concat_list.txt',
+      '-c', 'copy',
+      '-avoid_negative_ts', 'make_zero',
+      'output.mp4'
+    ]);
+    
+    // Read the output file
+    const outputData = await ffmpegInstance.readFile('output.mp4');
+    console.log(`✅ Concatenation completed: ${(outputData.length / (1024 * 1024)).toFixed(2)} MB`);
+    
+    // Cleanup FFmpeg filesystem
+    for (const file of inputFiles) {
+      try {
+        await ffmpegInstance.deleteFile(file);
+      } catch (e) {
+        console.warn(`⚠️ Could not delete ${file}:`, e.message);
+      }
+    }
+    
+    try {
+      await ffmpegInstance.deleteFile('concat_list.txt');
+      await ffmpegInstance.deleteFile('output.mp4');
+    } catch (e) {
+      console.warn('⚠️ Could not cleanup some files:', e.message);
+    }
+    
+    return new Uint8Array(outputData);
+    
+  } catch (error) {
+    console.error('❌ FFmpeg concatenation failed:', error);
+    throw new Error(`Video concatenation failed: ${error.message}`);
   }
-  
-  // Return the first video in the user-defined sequence
-  const firstVideo = sortedVideos[0];
-  console.log(`🎬 Returning first video in sequence: ${firstVideo.name} (${(firstVideo.data.length / (1024 * 1024)).toFixed(2)} MB)`);
-  
-  return firstVideo.data;
 }
 
-// Process videos with proper ordering
+// Process videos with proper ordering and FFmpeg concatenation
 async function processVideos(sequences: any[], platform: string): Promise<Uint8Array> {
   try {
     console.log('🚀 Starting video processing...');
@@ -135,13 +200,11 @@ async function processVideos(sequences: any[], platform: string): Promise<Uint8A
     
     // Process based on number of videos
     if (videoBuffers.length === 1) {
-      const result = processSingleVideo(videoBuffers[0].data, videoBuffers[0].name);
-      console.log(`🎉 Single video processing completed: ${(result.length / (1024 * 1024)).toFixed(2)} MB`);
-      return result;
+      console.log(`🎯 Single video processing: ${videoBuffers[0].name}`);
+      return videoBuffers[0].data;
     } else {
-      const result = processMultipleVideos(videoBuffers);
-      console.log(`🎉 Multiple video processing completed: ${(result.length / (1024 * 1024)).toFixed(2)} MB`);
-      return result;
+      console.log(`🔧 Multiple video concatenation: ${videoBuffers.length} videos`);
+      return await concatenateVideos(videoBuffers);
     }
     
   } catch (error) {
@@ -215,7 +278,7 @@ serve(async (req) => {
     
     console.log(`✅ Validated ${validSequences.length}/${sequences.length} sequences`);
     
-    // Process videos
+    // Process videos with FFmpeg
     const processedVideo = await processVideos(validSequences, platform);
     const sizeInMB = processedVideo.length / (1024 * 1024);
     
@@ -237,7 +300,7 @@ serve(async (req) => {
       const timestamp = Date.now();
       const filename = validSequences.length === 1 
         ? `processed_${timestamp}_${platform}_single.mp4`
-        : `first-video_${timestamp}_${platform}_from-${validSequences.length}videos.mp4`;
+        : `concatenated_${validSequences.length}videos_${platform}_${timestamp}.mp4`;
       
       const { data: uploadData, error: uploadError } = await supabase.storage
         .from('processed-videos')
@@ -263,14 +326,13 @@ serve(async (req) => {
         downloadUrl: urlData.publicUrl,
         filename: filename,
         message: validSequences.length === 1 
-          ? `🎬 Video processing completed! Processed: ${validSequences[0].name}`
-          : `⚠️ Multiple video limitation: Due to MP4 container complexity, returning first video in your sequence: ${validSequences.find(v => v.originalOrder === 0 || (v.originalOrder === undefined && validSequences.indexOf(v) === 0))?.name}`,
+          ? `🎬 Single video processed successfully: ${validSequences[0].name}`
+          : `🎬 Successfully concatenated ${validSequences.length} videos using FFmpeg in your defined order!`,
         metadata: {
           originalSize: processedVideo.length,
           platform,
           sequenceCount: validSequences.length,
-          processingMethod: validSequences.length === 1 ? 'single_video' : 'first_video_only',
-          limitation: validSequences.length > 1 ? 'MP4 concatenation requires complex container manipulation not available in edge functions' : null,
+          processingMethod: validSequences.length === 1 ? 'single_video' : 'ffmpeg_concatenation',
           videoOrder: validSequences.map((seq, idx) => ({ 
             position: (seq.originalOrder !== undefined ? seq.originalOrder : idx) + 1, 
             name: seq.name 
