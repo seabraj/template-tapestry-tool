@@ -62,7 +62,9 @@ const ExportPanel = ({
       
       const onProgress = (progress: number) => {
         setExportProgress(progress);
-        if (progress < 30) {
+        if (progress < 10) {
+          setProcessingStep('Loading FFmpeg...');
+        } else if (progress < 30) {
           setProcessingStep('Downloading video files...');
         } else if (progress < 50) {
           setProcessingStep('Preparing video processing...');
@@ -97,6 +99,7 @@ const ExportPanel = ({
       console.error('Export failed:', error);
       setIsExporting(false);
       setProcessingStep('');
+      setExportProgress(0);
       toast({
         title: "Export Failed",
         description: error.message || "There was an error processing your video. Please try again.",
@@ -206,6 +209,11 @@ const ExportPanel = ({
         <p className="text-sm text-gray-500">
           Processing {sequences.filter(s => s.selected).length} video clips using FFmpeg...
         </p>
+        {exportProgress === 0 && (
+          <p className="text-xs text-orange-600">
+            Loading FFmpeg for the first time may take 30-60 seconds...
+          </p>
+        )}
       </div>
     );
   }

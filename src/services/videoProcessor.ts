@@ -41,26 +41,43 @@ export class VideoProcessor {
   async initialize(onProgress?: (progress: number) => void): Promise<void> {
     if (this.isLoaded) return;
 
-    if (onProgress) {
-      this.ffmpeg.on('progress', ({ progress }) => {
-        onProgress(Math.round(progress * 100));
-      });
-    }
+    try {
+      console.log('Starting FFmpeg initialization...');
+      
+      if (onProgress) {
+        this.ffmpeg.on('progress', ({ progress }) => {
+          onProgress(Math.round(progress * 100));
+        });
+      }
 
-    // Load FFmpeg with CDN URLs
-    const baseURL = 'https://unpkg.com/@ffmpeg/core@0.12.6/dist/umd';
-    await this.ffmpeg.load({
-      coreURL: await toBlobURL(`${baseURL}/ffmpeg-core.js`, 'text/javascript'),
-      wasmURL: await toBlobURL(`${baseURL}/ffmpeg-core.wasm`, 'application/wasm'),
-    });
-    
-    this.isLoaded = true;
+      // Load FFmpeg with CDN URLs
+      console.log('Loading FFmpeg core files...');
+      const baseURL = 'https://unpkg.com/@ffmpeg/core@0.12.6/dist/umd';
+      
+      const coreURL = await toBlobURL(`${baseURL}/ffmpeg-core.js`, 'text/javascript');
+      const wasmURL = await toBlobURL(`${baseURL}/ffmpeg-core.wasm`, 'application/wasm');
+      
+      console.log('Core files loaded, initializing FFmpeg...');
+      
+      await this.ffmpeg.load({
+        coreURL,
+        wasmURL,
+      });
+      
+      this.isLoaded = true;
+      console.log('FFmpeg loaded successfully');
+    } catch (error) {
+      console.error('Failed to load FFmpeg:', error);
+      throw new Error(`FFmpeg initialization failed: ${error.message}`);
+    }
   }
 
   async processVideo(options: VideoProcessingOptions, onProgress?: (progress: number) => void): Promise<Blob> {
-    await this.initialize(onProgress);
-
     try {
+      console.log('Starting video processing...');
+      await this.initialize(onProgress);
+      onProgress?.(5);
+
       // Download all video files
       onProgress?.(10);
       const videoFiles: { name: string; data: Uint8Array }[] = [];
