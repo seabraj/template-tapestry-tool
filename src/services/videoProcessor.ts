@@ -1,4 +1,3 @@
-
 import { FFmpeg } from '@ffmpeg/ffmpeg';
 import { toBlobURL } from '@ffmpeg/util';
 import { supabase } from '@/integrations/supabase/client';
@@ -123,12 +122,32 @@ export class VideoProcessor {
         throw new Error('No video data received from server');
       }
 
-      console.log('Converting base64 response to blob...');
+      console.log('Converting base64 response to blob...', {
+        base64Length: data.videoData.length,
+        metadata: data.metadata
+      });
       
-      // Convert base64 back to blob
+      // Convert base64 back to blob with better error handling
       try {
-        const binaryString = atob(data.videoData);
+        // Validate base64 format
+        if (typeof data.videoData !== 'string') {
+          throw new Error('Video data is not a string');
+        }
+
+        // Clean the base64 string (remove any whitespace/newlines)
+        const cleanBase64 = data.videoData.replace(/\s/g, '');
+        
+        // Validate base64 format
+        const base64Regex = /^[A-Za-z0-9+/]*={0,2}$/;
+        if (!base64Regex.test(cleanBase64)) {
+          throw new Error('Invalid base64 format received from server');
+        }
+
+        console.log('Base64 validation passed, converting to blob...');
+        
+        const binaryString = atob(cleanBase64);
         const bytes = new Uint8Array(binaryString.length);
+        
         for (let i = 0; i < binaryString.length; i++) {
           bytes[i] = binaryString.charCodeAt(i);
         }
@@ -137,9 +156,15 @@ export class VideoProcessor {
         const blob = new Blob([bytes], { type: 'video/mp4' });
         console.log('Video processing completed successfully, blob size:', blob.size);
         return blob;
+        
       } catch (conversionError) {
         console.error('Error converting base64 to blob:', conversionError);
-        throw new Error('Failed to process video data from server');
+        console.error('Base64 data info:', {
+          type: typeof data.videoData,
+          length: data.videoData?.length,
+          preview: data.videoData?.substring(0, 100)
+        });
+        throw new Error(`Failed to process video data from server: ${conversionError.message}`);
       }
 
     } catch (error) {
@@ -151,6 +176,8 @@ export class VideoProcessor {
         throw new Error('Video file is too large. Please use files smaller than 50MB.');
       } else if (error.message.includes('Invalid')) {
         throw new Error('Invalid video file format or URL. Please check your video files.');
+      } else if (error.message.includes('base64')) {
+        throw new Error('Video processing completed but failed to convert result. Please try again.');
       }
       throw new Error(`Server processing failed: ${error.message}`);
     }

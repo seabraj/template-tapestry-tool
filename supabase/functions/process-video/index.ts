@@ -1,5 +1,6 @@
 
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
+import { encode } from "https://deno.land/std@0.168.0/encoding/base64.ts";
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -32,21 +33,6 @@ interface VideoProcessingRequest {
   };
   platform: string;
   duration: number;
-}
-
-// Efficient chunk-based base64 conversion for large files
-function arrayBufferToBase64(buffer: ArrayBuffer): string {
-  const bytes = new Uint8Array(buffer);
-  const chunkSize = 8192; // Process in 8KB chunks to avoid stack overflow
-  let base64 = '';
-  
-  for (let i = 0; i < bytes.length; i += chunkSize) {
-    const chunk = bytes.slice(i, i + chunkSize);
-    const chunkString = Array.from(chunk, byte => String.fromCharCode(byte)).join('');
-    base64 += btoa(chunkString);
-  }
-  
-  return base64;
 }
 
 serve(async (req) => {
@@ -117,23 +103,34 @@ serve(async (req) => {
       
       console.log(`Processing ${videoArrayBuffer.byteLength} bytes of video data`);
       
-      // Use the efficient base64 conversion
-      const videoBase64 = arrayBufferToBase64(videoArrayBuffer);
+      // Use Deno's built-in base64 encoding
+      let videoBase64: string;
+      try {
+        const uint8Array = new Uint8Array(videoArrayBuffer);
+        videoBase64 = encode(uint8Array);
+        console.log(`Base64 conversion completed, length: ${videoBase64.length}`);
+      } catch (encodingError) {
+        console.error('Base64 encoding failed:', encodingError);
+        throw new Error(`Failed to encode video data: ${encodingError.message}`);
+      }
       
       console.log('Video processing completed successfully');
 
+      const response = {
+        success: true,
+        videoData: videoBase64,
+        message: `Video processed successfully. Size: ${(videoArrayBuffer.byteLength / (1024 * 1024)).toFixed(2)} MB`,
+        metadata: {
+          originalSize: videoArrayBuffer.byteLength,
+          base64Size: videoBase64.length,
+          platform,
+          duration,
+          sequenceCount: sequences.length
+        }
+      };
+
       return new Response(
-        JSON.stringify({
-          success: true,
-          videoData: videoBase64,
-          message: `Video processed successfully. Size: ${(videoArrayBuffer.byteLength / (1024 * 1024)).toFixed(2)} MB`,
-          metadata: {
-            originalSize: videoArrayBuffer.byteLength,
-            platform,
-            duration,
-            sequenceCount: sequences.length
-          }
-        }),
+        JSON.stringify(response),
         {
           headers: { ...corsHeaders, 'Content-Type': 'application/json' },
         }
