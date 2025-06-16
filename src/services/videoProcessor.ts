@@ -1,3 +1,4 @@
+
 import { FFmpeg } from '@ffmpeg/ffmpeg';
 import { toBlobURL } from '@ffmpeg/util';
 import { supabase } from '@/integrations/supabase/client';
@@ -121,64 +122,74 @@ export class VideoProcessor {
 
       onProgress?.(90);
 
-      // Handle storage-based response
+      // CRITICAL FIX: Always handle storage-based response first
       if (data.useStorage && data.downloadUrl) {
-        console.log('📥 Processing storage-based concatenated video:', {
+        console.log('📥 Downloading concatenated video from storage:', {
           downloadUrl: data.downloadUrl,
           filename: data.filename,
           metadata: data.metadata
         });
 
-        const videoResponse = await fetch(data.downloadUrl);
-        if (!videoResponse.ok) {
-          throw new Error(`Failed to download concatenated video: ${videoResponse.status}`);
-        }
+        try {
+          // Download the concatenated video with proper error handling
+          const videoResponse = await fetch(data.downloadUrl);
+          if (!videoResponse.ok) {
+            throw new Error(`Failed to download concatenated video: HTTP ${videoResponse.status} ${videoResponse.statusText}`);
+          }
 
-        const videoBlob = await videoResponse.blob();
-        onProgress?.(100);
-        console.log('✅ Video concatenation completed, blob size:', videoBlob.size);
-        return videoBlob;
+          const contentType = videoResponse.headers.get('content-type');
+          if (!contentType || !contentType.includes('video')) {
+            console.warn('⚠️ Downloaded content may not be a video:', contentType);
+          }
+
+          const videoBlob = await videoResponse.blob();
+          
+          // Verify we got the concatenated video, not just the first source
+          if (videoBlob.size < 1000000) { // Less than 1MB might indicate an error
+            console.warn('⚠️ Downloaded video seems too small, might be an error response');
+          }
+
+          onProgress?.(100);
+          console.log('✅ Successfully downloaded concatenated video:', {
+            size: videoBlob.size,
+            type: videoBlob.type,
+            expectedSequences: validSequences.length
+          });
+          
+          return videoBlob;
+          
+        } catch (downloadError) {
+          console.error('❌ Failed to download concatenated video:', downloadError);
+          throw new Error(`Failed to download concatenated video: ${downloadError.message}`);
+        }
       }
 
-      // Handle base64 response
-      if (!data.videoData) {
-        throw new Error('No concatenated video data received');
+      // Fallback to base64 handling (should rarely be used now)
+      if (data.videoData) {
+        console.log('🔄 Handling base64 concatenated video fallback...');
+        
+        try {
+          const cleanBase64 = data.videoData.replace(/\s/g, '');
+          const binaryString = atob(cleanBase64);
+          const bytes = new Uint8Array(binaryString.length);
+          
+          for (let i = 0; i < binaryString.length; i++) {
+            bytes[i] = binaryString.charCodeAt(i);
+          }
+
+          onProgress?.(100);
+          const blob = new Blob([bytes], { type: 'video/mp4' });
+          console.log('✅ Base64 concatenated video processed:', blob.size);
+          return blob;
+          
+        } catch (conversionError) {
+          console.error('❌ Error converting base64 concatenated video:', conversionError);
+          throw new Error(`Failed to process concatenated video data: ${conversionError.message}`);
+        }
       }
 
-      console.log('🔄 Converting base64 concatenated video to blob...', {
-        base64Length: data.videoData.length,
-        metadata: data.metadata
-      });
-      
-      try {
-        if (typeof data.videoData !== 'string') {
-          throw new Error('Concatenated video data is not a string');
-        }
-
-        const cleanBase64 = data.videoData.replace(/\s/g, '');
-        
-        if (cleanBase64.length === 0) {
-          throw new Error('Empty concatenated video data received');
-        }
-
-        console.log('✅ Base64 validation passed, converting concatenated video to blob...');
-        
-        const binaryString = atob(cleanBase64);
-        const bytes = new Uint8Array(binaryString.length);
-        
-        for (let i = 0; i < binaryString.length; i++) {
-          bytes[i] = binaryString.charCodeAt(i);
-        }
-
-        onProgress?.(100);
-        const blob = new Blob([bytes], { type: 'video/mp4' });
-        console.log('✅ Video concatenation completed successfully, blob size:', blob.size);
-        return blob;
-        
-      } catch (conversionError) {
-        console.error('❌ Error converting concatenated video data:', conversionError);
-        throw new Error(`Failed to process concatenated video data: ${conversionError.message}`);
-      }
+      // If we reach here, something went wrong
+      throw new Error('No valid concatenated video data received from server');
 
     } catch (error) {
       console.error('❌ Server-side video concatenation failed:', error);
