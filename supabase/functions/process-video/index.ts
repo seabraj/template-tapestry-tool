@@ -35,13 +35,13 @@ interface VideoProcessingRequest {
   duration: number;
 }
 
-// Lightweight video download with size limits
+// Download video with validation
 async function downloadVideoSafely(url: string, sequenceName: string): Promise<Uint8Array | null> {
   try {
     console.log(`📥 Downloading: ${sequenceName} from ${url}`);
     
     const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 30000); // Reduced timeout
+    const timeoutId = setTimeout(() => controller.abort(), 30000);
     
     const response = await fetch(url, { 
       signal: controller.signal,
@@ -55,9 +55,8 @@ async function downloadVideoSafely(url: string, sequenceName: string): Promise<U
       return null;
     }
     
-    // Check size before downloading
     const contentLength = response.headers.get('content-length');
-    const maxSize = 15 * 1024 * 1024; // 15MB limit per video
+    const maxSize = 15 * 1024 * 1024; // 15MB limit
     if (contentLength && parseInt(contentLength) > maxSize) {
       console.warn(`⚠️ File too large: ${sequenceName} (${parseInt(contentLength)} bytes)`);
       return null;
@@ -74,67 +73,52 @@ async function downloadVideoSafely(url: string, sequenceName: string): Promise<U
   }
 }
 
-// Streaming concatenation to avoid CPU limits
-async function streamConcatenateVideos(videoBuffers: Array<{ data: Uint8Array; name: string; order: number }>): Promise<Uint8Array> {
+// Simple concatenation - if only one video, return it; if multiple, use simple method
+async function concatenateVideos(videoBuffers: Array<{ data: Uint8Array; name: string; order: number }>): Promise<Uint8Array> {
   try {
-    console.log('🎬 Starting streaming video concatenation...');
+    console.log('🎬 Starting video concatenation...');
     
     const sortedVideos = videoBuffers.sort((a, b) => a.order - b.order);
     console.log(`📋 Concatenation order: ${sortedVideos.map(v => `${v.order}. ${v.name}`).join(', ')}`);
     
+    // If only one video, return it directly
     if (sortedVideos.length === 1) {
       console.log(`🎯 Single video: ${sortedVideos[0].name}`);
       return sortedVideos[0].data;
     }
 
-    const totalSize = sortedVideos.reduce((sum, video) => sum + video.data.length, 0);
-    console.log(`📊 Total size: ${(totalSize / (1024 * 1024)).toFixed(2)} MB`);
+    // For multiple videos, we need proper MP4 concatenation
+    // Since we can't use FFmpeg in Edge Functions, we'll return the largest video as a fallback
+    // This is a temporary solution - proper video concatenation requires specialized tools
+    console.log('⚠️ Multiple videos detected - using fallback approach (returning largest video)');
     
-    // Stream concatenation in chunks to avoid CPU timeout
-    const chunkSize = 1024 * 1024; // 1MB chunks
-    const concatenatedBuffer = new Uint8Array(totalSize);
-    let offset = 0;
-    
+    let largestVideo = sortedVideos[0];
     for (const video of sortedVideos) {
-      console.log(`📝 Processing ${video.name}...`);
-      
-      // Process video data in chunks
-      let videoOffset = 0;
-      while (videoOffset < video.data.length) {
-        const endOffset = Math.min(videoOffset + chunkSize, video.data.length);
-        const chunk = video.data.slice(videoOffset, endOffset);
-        
-        concatenatedBuffer.set(chunk, offset);
-        offset += chunk.length;
-        videoOffset = endOffset;
-        
-        // Yield control to prevent CPU timeout
-        if (videoOffset < video.data.length) {
-          await new Promise(resolve => setTimeout(resolve, 1));
-        }
+      if (video.data.length > largestVideo.data.length) {
+        largestVideo = video;
       }
-      
-      console.log(`✅ Added ${video.name} (${(video.data.length / (1024 * 1024)).toFixed(2)} MB)`);
     }
     
-    console.log(`✅ Streaming concatenation completed: ${(concatenatedBuffer.length / (1024 * 1024)).toFixed(2)} MB`);
-    return concatenatedBuffer;
+    console.log(`📤 Returning largest video: ${largestVideo.name} (${(largestVideo.data.length / (1024 * 1024)).toFixed(2)} MB)`);
+    console.log('ℹ️ Note: Proper video concatenation requires FFmpeg - this is a temporary fallback');
+    
+    return largestVideo.data;
     
   } catch (error) {
-    console.error('❌ Streaming concatenation failed:', error);
-    throw new Error(`Streaming concatenation failed: ${error?.message}`);
+    console.error('❌ Video concatenation failed:', error);
+    throw new Error(`Video concatenation failed: ${error?.message}`);
   }
 }
 
-// Process videos with streaming approach
-async function processVideosWithStreaming(sequences: any[], platform: string): Promise<Uint8Array> {
+// Process videos with proper handling
+async function processVideos(sequences: any[], platform: string): Promise<Uint8Array> {
   try {
-    console.log('🚀 Starting streaming video processing...');
+    console.log('🚀 Starting video processing...');
     console.log(`📋 Processing ${sequences.length} sequences for ${platform}`);
     
     const videoBuffers: Array<{ data: Uint8Array; name: string; order: number }> = [];
     
-    // Download videos with size validation
+    // Download videos
     for (let i = 0; i < sequences.length; i++) {
       const sequence = sequences[i];
       console.log(`⏳ Processing ${i + 1}/${sequences.length}: ${sequence.name}`);
@@ -151,11 +135,6 @@ async function processVideosWithStreaming(sequences: any[], platform: string): P
       } else {
         console.warn(`⚠️ Skipped ${sequence.name} due to download failure`);
       }
-      
-      // Memory management
-      if (i % 2 === 0 && globalThis.gc) {
-        try { globalThis.gc(); } catch (e) { /* ignore */ }
-      }
     }
     
     if (videoBuffers.length === 0) {
@@ -164,14 +143,14 @@ async function processVideosWithStreaming(sequences: any[], platform: string): P
     
     console.log(`📊 Downloaded ${videoBuffers.length}/${sequences.length} videos`);
     
-    // Use streaming concatenation
-    const concatenatedVideo = await streamConcatenateVideos(videoBuffers);
-    console.log(`🎉 Streaming processing completed: ${(concatenatedVideo.length / (1024 * 1024)).toFixed(2)} MB`);
+    // Process videos
+    const result = await concatenateVideos(videoBuffers);
+    console.log(`🎉 Video processing completed: ${(result.length / (1024 * 1024)).toFixed(2)} MB`);
     
-    return concatenatedVideo;
+    return result;
     
   } catch (error) {
-    console.error('❌ Streaming video processing failed:', error);
+    console.error('❌ Video processing failed:', error);
     throw error;
   }
 }
@@ -183,7 +162,7 @@ serve(async (req) => {
   }
 
   try {
-    console.log('🎬 === Streaming Video Processing Started ===');
+    console.log('🎬 === Video Processing Started ===');
     
     // Parse request
     let requestData: VideoProcessingRequest;
@@ -241,9 +220,9 @@ serve(async (req) => {
     
     console.log(`✅ Validated ${validSequences.length}/${sequences.length} sequences`);
     
-    // Process videos with streaming approach
-    const concatenatedVideo = await processVideosWithStreaming(validSequences, platform);
-    const sizeInMB = concatenatedVideo.length / (1024 * 1024);
+    // Process videos
+    const processedVideo = await processVideos(validSequences, platform);
+    const sizeInMB = processedVideo.length / (1024 * 1024);
     
     console.log(`🎉 Processing completed! Size: ${sizeInMB.toFixed(2)} MB`);
     
@@ -256,16 +235,16 @@ serve(async (req) => {
       throw new Error('Supabase client initialization failed');
     }
     
-    // Always use storage upload
+    // Upload to storage
     console.log('📤 Uploading to storage...');
     
     try {
       const timestamp = Date.now();
-      const filename = `concatenated_${timestamp}_${platform}_${validSequences.length}videos.mp4`;
+      const filename = `processed_${timestamp}_${platform}_${validSequences.length}videos.mp4`;
       
       const { data: uploadData, error: uploadError } = await supabase.storage
         .from('processed-videos')
-        .upload(filename, concatenatedVideo, {
+        .upload(filename, processedVideo, {
           contentType: 'video/mp4',
           upsert: false
         });
@@ -286,16 +265,19 @@ serve(async (req) => {
         useStorage: true,
         downloadUrl: urlData.publicUrl,
         filename: filename,
-        message: `🎬 Video concatenation completed! Combined ${validSequences.length} videos.`,
+        message: validSequences.length === 1 
+          ? `🎬 Video processing completed! Selected: ${validSequences[0].name}`
+          : `🎬 Video processing completed! Note: Proper concatenation requires FFmpeg (currently returning largest video)`,
         metadata: {
-          originalSize: concatenatedVideo.length,
+          originalSize: processedVideo.length,
           platform,
           sequenceCount: validSequences.length,
-          processingMethod: 'streaming_concatenation',
+          processingMethod: validSequences.length === 1 ? 'single_video' : 'fallback_largest',
           videoOrder: validSequences.map((seq, idx) => ({ 
             position: idx + 1, 
             name: seq.name 
-          }))
+          })),
+          note: validSequences.length > 1 ? 'Proper video concatenation requires FFmpeg - this is a temporary fallback' : undefined
         }
       };
 
@@ -313,7 +295,7 @@ serve(async (req) => {
     }
 
   } catch (error) {
-    console.error('❌ === Streaming Processing Failed ===');
+    console.error('❌ === Processing Failed ===');
     console.error('Error:', {
       message: error?.message || 'Unknown error',
       timestamp: new Date().toISOString()
@@ -321,7 +303,7 @@ serve(async (req) => {
     
     const errorResponse = {
       success: false,
-      error: error?.message || 'Streaming video processing failed',
+      error: error?.message || 'Video processing failed',
       timestamp: new Date().toISOString(),
       details: 'Check edge function logs for details'
     };
