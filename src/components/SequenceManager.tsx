@@ -16,7 +16,7 @@ interface SequenceManagerProps {
 
 const SequenceManager = ({ sequences, onSequencesChange, platform }: SequenceManagerProps) => {
   const [draggedItem, setDraggedItem] = useState<string | null>(null);
-  const { assets, loading, error, refetch, convertToSequences } = useVideoAssets(platform);
+  const { assets, loading, error, refetch, convertToSequences, getVideoUrlById } = useVideoAssets(platform);
   const { toast } = useToast();
 
   // Load sequences from Supabase when component mounts or platform changes
@@ -60,11 +60,6 @@ const SequenceManager = ({ sequences, onSequencesChange, platform }: SequenceMan
     [newSequences[targetIndex], newSequences[currentIndex]];
     
     onSequencesChange(newSequences);
-  };
-
-  const getVideoUrl = (sequenceId: string) => {
-    const asset = assets.find(asset => asset.id === sequenceId);
-    return asset?.file_url;
   };
 
   const selectedSequences = sequences.filter(s => s.selected);
@@ -161,7 +156,7 @@ const SequenceManager = ({ sequences, onSequencesChange, platform }: SequenceMan
       {/* Sequence List */}
       <div className="space-y-3">
         {sequences.map((sequence, index) => {
-          const videoUrl = getVideoUrl(sequence.id);
+          const videoUrl = getVideoUrlById(sequence.id);
           return (
             <Card 
               key={sequence.id}
@@ -202,6 +197,11 @@ const SequenceManager = ({ sequences, onSequencesChange, platform }: SequenceMan
                           className="w-full h-full object-cover rounded-lg"
                           preload="metadata"
                           muted
+                          onError={(e) => {
+                            console.error('Video preview error:', e);
+                            // Fallback to placeholder
+                            (e.target as HTMLVideoElement).style.display = 'none';
+                          }}
                         />
                         <div className="absolute inset-0 bg-black bg-opacity-0 group-hover:bg-opacity-30 transition-all duration-200 flex items-center justify-center">
                           <Play className="h-4 w-4 text-white opacity-0 group-hover:opacity-100 transition-opacity duration-200" />

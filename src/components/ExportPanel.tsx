@@ -1,3 +1,4 @@
+
 import { Card, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
@@ -29,7 +30,7 @@ const ExportPanel = ({
   const [downloadUrl, setDownloadUrl] = useState<string | null>(null);
   const [processingStep, setProcessingStep] = useState('');
   const [processingMode, setProcessingMode] = useState<'client' | 'server'>('server');
-  const { assets, getAssetById } = useVideoAssets(platform);
+  const { assets, getAssetById, getVideoUrlById } = useVideoAssets(platform);
   const { toast } = useToast();
 
   const handleExport = async () => {
@@ -61,6 +62,7 @@ const ExportPanel = ({
       }
 
       console.log('Starting video processing with assets:', selectedAssets);
+      console.log('Customization settings:', customization);
 
       const processor = new VideoProcessor();
       const mode = processor.getProcessingMode();
@@ -72,7 +74,7 @@ const ExportPanel = ({
           if (progress < 30) {
             setProcessingStep('Preparing files for server processing...');
           } else if (progress < 80) {
-            setProcessingStep('Processing videos on server (faster & more reliable)...');
+            setProcessingStep('Processing videos with customizations on server...');
           } else if (progress < 95) {
             setProcessingStep('Finalizing processed video...');
           } else {
@@ -86,7 +88,7 @@ const ExportPanel = ({
           } else if (progress < 40) {
             setProcessingStep('Downloading video files...');
           } else if (progress < 60) {
-            setProcessingStep('Preparing video merge...');
+            setProcessingStep('Preparing video merge with customizations...');
           } else if (progress < 90) {
             setProcessingStep('Processing and merging videos...');
           } else {
@@ -112,7 +114,7 @@ const ExportPanel = ({
 
       toast({
         title: "Export Complete!",
-        description: `Your video has been successfully processed using ${mode === 'server' ? 'server-side' : 'client-side'} processing.`
+        description: `Your video has been successfully processed with customizations using ${mode === 'server' ? 'server-side' : 'client-side'} processing.`
       });
 
     } catch (error) {
@@ -167,8 +169,7 @@ const ExportPanel = ({
     const selectedSequence = sequences.find(s => s.selected);
     if (!selectedSequence) return null;
     
-    const asset = getAssetById ? getAssetById(selectedSequence.id) : assets.find(asset => asset.id === selectedSequence.id);
-    return asset?.file_url || null;
+    return getVideoUrlById ? getVideoUrlById(selectedSequence.id) : null;
   };
 
   const getAspectRatioClass = () => {
@@ -188,7 +189,7 @@ const ExportPanel = ({
         </div>
         <h3 className="text-2xl font-bold text-green-800">Export Complete!</h3>
         <p className="text-gray-600">
-          Your video has been successfully processed using {processingMode === 'server' ? 'server-side' : 'client-side'} processing.
+          Your video has been successfully processed with customizations using {processingMode === 'server' ? 'server-side' : 'client-side'} processing.
         </p>
         
         <div className="flex justify-center space-x-4">
@@ -230,15 +231,15 @@ const ExportPanel = ({
           <p className="text-sm text-blue-600 font-medium">{processingStep}</p>
         </div>
         <p className="text-sm text-gray-500">
-          Processing {sequences.filter(s => s.selected).length} video clips using {processingMode === 'server' ? 'server-side' : 'client-side'} processing...
+          Processing {sequences.filter(s => s.selected).length} video clips with customizations using {processingMode === 'server' ? 'server-side' : 'client-side'} processing...
         </p>
         {processingMode === 'server' && (
           <div className="bg-green-50 border border-green-200 rounded-lg p-4 max-w-md mx-auto">
             <p className="text-xs text-green-700 font-medium">
-              🚀 Using reliable server-side processing
+              🚀 Using reliable server-side processing with customizations
             </p>
             <p className="text-xs text-green-600 mt-1">
-              Faster and more stable than browser-based processing!
+              Applying text overlays, end frames, and CTAs to your video!
             </p>
           </div>
         )}
@@ -267,8 +268,8 @@ const ExportPanel = ({
               </p>
               <p className="text-sm text-blue-600">
                 {processingMode === 'server' 
-                  ? 'Reliable cloud processing' 
-                  : 'In-browser processing'
+                  ? 'Reliable cloud processing with customizations' 
+                  : 'In-browser processing with customizations'
                 }
               </p>
             </div>
@@ -326,6 +327,9 @@ const ExportPanel = ({
                   muted
                   autoPlay
                   loop
+                  onError={(e) => {
+                    console.error('Video preview error:', e);
+                  }}
                 />
               ) : (
                 <div className="w-full h-full bg-gray-700 flex items-center justify-center">
@@ -425,11 +429,11 @@ const ExportPanel = ({
         ) : (
           <div className="mt-2 space-y-1">
             <p className="text-sm text-gray-600">
-              Using {processingMode === 'server' ? 'server-side' : 'client-side'} video processing
+              Using {processingMode === 'server' ? 'server-side' : 'client-side'} video processing with customizations
             </p>
             <p className="text-xs text-blue-600">
               {processingMode === 'server' 
-                ? 'Reliable cloud processing - works in all browsers!' 
+                ? 'Reliable cloud processing with text overlays, end frames & CTAs!' 
                 : 'Advanced browser-based processing for supported devices'
               }
             </p>

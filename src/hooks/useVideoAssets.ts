@@ -73,7 +73,8 @@ export const useVideoAssets = (platformFilter?: string) => {
       id: asset.id,
       name: asset.name,
       duration: asset.duration,
-      thumbnail: asset.file_url, // Use the video URL directly for preview
+      thumbnail: asset.file_url, // Use the video URL for preview
+      file_url: asset.file_url, // Add file_url for processing
       selected: false
     }));
   };
@@ -82,12 +83,18 @@ export const useVideoAssets = (platformFilter?: string) => {
     return assets.find(asset => asset.id === id);
   };
 
+  const getVideoUrlById = (id: string): string | null => {
+    const asset = getAssetById(id);
+    return asset?.file_url || null;
+  };
+
   return {
     assets,
     loading,
     error,
     refetch: fetchAssets,
     convertToSequences: () => convertToSequences(assets),
-    getAssetById
+    getAssetById,
+    getVideoUrlById
   };
 };
