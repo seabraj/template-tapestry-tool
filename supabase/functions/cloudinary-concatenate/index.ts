@@ -43,7 +43,7 @@ serve(async (req) => {
   }
 
   try {
-    console.log('🎬 === PHASE 1: Video Trimming Started ===');
+    console.log('🎬 === SERVER-SIDE VIDEO CONCATENATION STARTED ===');
     
     const { videos, targetDuration } = await req.json() as ConcatenationRequest;
     
@@ -57,271 +57,241 @@ serve(async (req) => {
     if (totalOriginalDuration <= 0) throw new Error('Total duration of source videos is zero.');
     console.log(`⏱️ Total original duration: ${totalOriginalDuration.toFixed(2)}s`);
     
-    // PHASE 1: Create proportionally trimmed videos
+    // PHASE 1: Create proportionally trimmed videos (PROVEN TO WORK)
     const timestamp = Date.now();
     const trimmedVideos: TrimmedVideo[] = [];
     
-    console.log('✂️ Creating proportionally trimmed videos...');
+    console.log('✂️ === PHASE 1: Creating trimmed videos ===');
     
     for (let i = 0; i < videos.length; i++) {
       const video = videos[i];
       const proportionalDuration = (video.duration / totalOriginalDuration) * targetDuration;
       const trimmedId = `temp_processing/trimmed_${i}_${timestamp}`;
       
-      console.log(`📹 Video ${i + 1}/${videos.length}: ${video.publicId}`);
-      console.log(`   Original duration: ${video.duration}s`);
-      console.log(`   Proportional duration: ${proportionalDuration.toFixed(2)}s`);
-      console.log(`   Temp ID: ${trimmedId}`);
+      console.log(`📹 Video ${i + 1}/${videos.length}: ${video.publicId} → ${proportionalDuration.toFixed(2)}s`);
       
-      try {
-        // Create the trimmed video URL
-        const trimmedUrl = cloudinary.url(video.publicId, {
-          resource_type: 'video',
-          transformation: [
-            { duration: proportionalDuration.toFixed(2) },
-            { quality: 'auto:good' }
-          ],
-          format: 'mp4'
-        });
-        
-        console.log(`🔗 Trimmed URL for video ${i + 1}: ${trimmedUrl}`);
-        
-        // Upload the trimmed video to temp folder
-        console.log(`⬆️ Uploading trimmed video ${i + 1} to Cloudinary...`);
-        const uploadResult = await cloudinary.uploader.upload(trimmedUrl, {
-          resource_type: 'video',
-          public_id: trimmedId,
-          overwrite: true,
-          use_filename: false,
-          unique_filename: false
-        });
-        
-        console.log(`✅ Upload successful for video ${i + 1}:`, {
-          public_id: uploadResult.public_id,
-          secure_url: uploadResult.secure_url,
-          duration: uploadResult.duration,
-          format: uploadResult.format
-        });
-        
-        // Verify the trimmed video exists and get its details
-        console.log(`🔍 Verifying trimmed video ${i + 1}...`);
-        
-        const verification = await cloudinary.api.resource(trimmedId, { 
-          resource_type: 'video'
-        });
-        
-        if (!verification) {
-          throw new Error(`Verification failed for trimmed video: ${trimmedId}`);
-        }
-        
-        console.log(`✅ Verification successful for video ${i + 1}:`, {
-          public_id: verification.public_id,
-          duration: verification.duration,
-          format: verification.format,
-          bytes: verification.bytes
-        });
-        
-        // Store the verified trimmed video info
-        trimmedVideos.push({
-          publicId: trimmedId,
-          originalId: video.publicId,
-          duration: proportionalDuration,
-          order: i,
-          verified: true
-        });
-        
-        console.log(`🎯 Video ${i + 1} successfully processed and verified`);
-        
-      } catch (videoError) {
-        console.error(`❌ Failed to process video ${i + 1} (${video.publicId}):`, videoError);
-        
-        // Clean up any successfully created videos if one fails
-        console.log('🧹 Cleaning up due to error...');
-        for (const cleanupVideo of trimmedVideos) {
-          try {
-            await cloudinary.uploader.destroy(cleanupVideo.publicId, { resource_type: 'video' });
-            console.log(`🗑️ Cleaned up: ${cleanupVideo.publicId}`);
-          } catch (cleanupError) {
-            console.warn(`⚠️ Cleanup warning for ${cleanupVideo.publicId}:`, cleanupError.message);
-          }
-        }
-        
-        throw new Error(`Video processing failed at video ${i + 1}: ${videoError.message}`);
-      }
+      // Create trimmed video
+      const trimmedUrl = cloudinary.url(video.publicId, {
+        resource_type: 'video',
+        transformation: [
+          { duration: proportionalDuration.toFixed(2) },
+          { quality: 'auto:good' }
+        ],
+        format: 'mp4'
+      });
+      
+      const uploadResult = await cloudinary.uploader.upload(trimmedUrl, {
+        resource_type: 'video',
+        public_id: trimmedId,
+        overwrite: true
+      });
+      
+      // Verify
+      const verification = await cloudinary.api.resource(trimmedId, { resource_type: 'video' });
+      
+      trimmedVideos.push({
+        publicId: trimmedId,
+        originalId: video.publicId,
+        duration: proportionalDuration,
+        order: i,
+        verified: true
+      });
+      
+      console.log(`✅ Video ${i + 1} trimmed and verified: ${trimmedId}`);
     }
     
-    // PHASE 1 COMPLETE - All videos trimmed and verified
-    console.log('🎉 === PHASE 1 COMPLETE ===');
-    console.log(`✅ Successfully created ${trimmedVideos.length} trimmed videos:`);
+    console.log('✅ === PHASE 1 COMPLETE ===');
     
-    trimmedVideos.forEach((video, index) => {
-      console.log(`   ${index + 1}. ${video.publicId} (${video.duration.toFixed(2)}s) ✓`);
-    });
-    
-    const totalTrimmedDuration = trimmedVideos.reduce((sum, v) => sum + v.duration, 0);
-    console.log(`⏱️ Total trimmed duration: ${totalTrimmedDuration.toFixed(2)}s (target: ${targetDuration}s)`);
-    
-    // PHASE 2: Concatenate the verified trimmed videos
-    console.log('🔗 === PHASE 2: Concatenation Started ===');
+    // PHASE 2: True Cloudinary concatenation using official fl_splice syntax
+    console.log('🔗 === PHASE 2: Cloudinary concatenation with fl_splice ===');
     
     try {
-      const finalVideoId = `final_concatenated_${timestamp}`;
-      let concatenatedUrl: string;
-      
-      // Sort trimmed videos by order to ensure correct sequence
+      // Sort videos by order for correct sequence
       const sortedVideos = trimmedVideos.sort((a, b) => a.order - b.order);
       console.log('📋 Video sequence for concatenation:', 
         sortedVideos.map(v => `${v.order + 1}. ${v.publicId} (${v.duration.toFixed(2)}s)`)
       );
       
-      // Method 1: Try Cloudinary's create_slideshow API
-      console.log('🎬 Attempting slideshow concatenation...');
+      // Method 1: Use proper Cloudinary fl_splice concatenation
+      console.log('🎬 Attempting Cloudinary fl_splice concatenation...');
       
-      try {
-        const slideshowParams = {
-          manifest_transformation: {
-            width: 1280,
-            height: 720,
-            crop: 'pad'
-          },
-          transformation: [
-            { audio_codec: 'aac' },
-            { quality: 'auto:good' }
-          ],
-          public_id: finalVideoId,
-          notification_url: null, // Synchronous processing
-          resource_type: 'video'
-        };
+      const baseVideo = sortedVideos[0];
+      const overlayVideos = sortedVideos.slice(1);
+      
+      console.log(`🎯 Base video: ${baseVideo.publicId} (${baseVideo.duration.toFixed(2)}s)`);
+      console.log(`➕ Overlay videos: ${overlayVideos.length}`);
+      
+      // Convert public IDs: replace / with : for Cloudinary syntax
+      const baseVideoId = baseVideo.publicId.replace(/\//g, ':');
+      console.log(`🔄 Base video ID converted: ${baseVideo.publicId} → ${baseVideoId}`);
+      
+      // Build concatenation transformation using official Cloudinary syntax
+      const transformations = [];
+      
+      // 1. Set base video duration and ensure consistent dimensions
+      transformations.push(`du_${baseVideo.duration.toFixed(2)}`);
+      transformations.push('w_1280,h_720,c_pad'); // Ensure consistent dimensions
+      
+      // 2. Add each overlay video with proper fl_splice syntax
+      for (let i = 0; i < overlayVideos.length; i++) {
+        const overlayVideo = overlayVideos[i];
+        const overlayVideoId = overlayVideo.publicId.replace(/\//g, ':');
         
-        console.log('📝 Slideshow parameters:', JSON.stringify(slideshowParams, null, 2));
-        console.log('📹 Video sequence:', sortedVideos.map(v => v.publicId));
+        console.log(`🔗 Adding overlay ${i + 1}: ${overlayVideo.publicId} → ${overlayVideoId} (${overlayVideo.duration.toFixed(2)}s)`);
         
-        const slideshowResult = await cloudinary.uploader.create_slideshow(
-          slideshowParams,
-          sortedVideos.map(v => v.publicId)
-        );
+        // According to Cloudinary docs: l_video:public_id/du_duration/fl_layer_apply/fl_splice
+        transformations.push(`l_video:${overlayVideoId}`);
+        transformations.push(`du_${overlayVideo.duration.toFixed(2)}`);
+        transformations.push('w_1280,h_720,c_pad'); // Ensure same dimensions
+        transformations.push('fl_layer_apply');
+        transformations.push('fl_splice');
+      }
+      
+      // 3. Add final formatting
+      transformations.push('ac_aac'); // Audio codec
+      transformations.push('q_auto:good'); // Quality
+      
+      const transformationString = transformations.join('/');
+      const concatenatedUrl = `https://res.cloudinary.com/dsxrmo3kt/video/upload/${transformationString}/${baseVideo.publicId}.mp4`;
+      
+      console.log('🎯 Cloudinary concatenation URL:', concatenatedUrl);
+      console.log('📋 Transformation string:', transformationString);
+      
+      // Test the concatenation URL
+      console.log('🔍 Testing Cloudinary concatenation URL...');
+      const testResponse = await fetch(concatenatedUrl, { method: 'HEAD' });
+      console.log(`📡 Concatenation URL test: ${testResponse.status} ${testResponse.statusText}`);
+      
+      if (testResponse.ok) {
+        console.log('✅ Cloudinary fl_splice concatenation successful!');
         
-        if (slideshowResult?.secure_url) {
-          concatenatedUrl = slideshowResult.secure_url;
-          console.log('✅ Slideshow concatenation successful!');
-          console.log('🎯 Final video URL:', concatenatedUrl);
-        } else {
-          throw new Error('Slideshow result did not contain secure_url');
+        // PHASE 3: Cleanup temp videos
+        console.log('🧹 === PHASE 3: Cleanup ===');
+        for (const video of trimmedVideos) {
+          try {
+            await cloudinary.uploader.destroy(video.publicId, { resource_type: 'video' });
+            console.log(`🗑️ Cleaned up: ${video.publicId}`);
+          } catch (cleanupError) {
+            console.warn(`⚠️ Cleanup warning: ${cleanupError.message}`);
+          }
         }
         
-      } catch (slideshowError) {
-        console.warn('⚠️ Slideshow method failed:', slideshowError.message);
+        console.log('🎉 === ALL PHASES COMPLETE ===');
+        console.log(`✅ Successfully concatenated ${videos.length} videos using Cloudinary fl_splice`);
         
-        // Method 2: Try direct transformation concatenation
-        console.log('🔧 Attempting direct transformation concatenation...');
-        
+        return new Response(
+          JSON.stringify({ 
+            success: true,
+            url: concatenatedUrl,
+            message: `Successfully concatenated ${videos.length} videos to ${targetDuration}s using Cloudinary fl_splice`,
+            method: 'cloudinary_fl_splice',
+            totalDuration: targetDuration,
+            videosProcessed: videos.length,
+            transformationUsed: transformationString,
+            phases: {
+              phase1: 'Trimming - Complete ✅',
+              phase2: 'Cloudinary fl_splice concatenation - Complete ✅', 
+              phase3: 'Cleanup - Complete ✅'
+            }
+          }),
+          { status: 200, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+        );
+      } else {
+        throw new Error(`Cloudinary fl_splice test failed: ${testResponse.status} ${testResponse.statusText}`);
+      }
+      
+    } catch (cloudinaryError) {
+      console.warn('⚠️ Cloudinary fl_splice concatenation failed:', cloudinaryError.message);
+      
+      // Method 2: Alternative Cloudinary approach using SDK
+      console.log('🔧 Attempting SDK-based concatenation...');
+      
+      try {
+        const sortedVideos = trimmedVideos.sort((a, b) => a.order - b.order);
         const baseVideo = sortedVideos[0];
         const overlayVideos = sortedVideos.slice(1);
         
-        // Build sequential overlay transformations
-        const transformations = [
-          { duration: baseVideo.duration.toFixed(2) }
+        // Build SDK transformation
+        const sdkTransformations = [
+          { duration: baseVideo.duration.toFixed(2) },
+          { width: 1280, height: 720, crop: 'pad' }
         ];
         
-        let currentOffset = baseVideo.duration;
+        // Add overlays with splice flags
         for (const overlayVideo of overlayVideos) {
-          transformations.push({
+          sdkTransformations.push({
             overlay: {
               resource_type: 'video',
               public_id: overlayVideo.publicId
             },
-            start_offset: currentOffset.toFixed(2),
-            duration: overlayVideo.duration.toFixed(2)
+            duration: overlayVideo.duration.toFixed(2),
+            width: 1280,
+            height: 720,
+            crop: 'pad',
+            flags: ['layer_apply', 'splice']
           });
-          currentOffset += overlayVideo.duration;
         }
         
         // Add final formatting
-        transformations.push(
-          { width: 1280, height: 720, crop: 'pad' },
+        sdkTransformations.push(
           { audio_codec: 'aac' },
           { quality: 'auto:good' }
         );
         
-        concatenatedUrl = cloudinary.url(baseVideo.publicId, {
+        const sdkUrl = cloudinary.url(baseVideo.publicId, {
           resource_type: 'video',
-          transformation: transformations,
+          transformation: sdkTransformations,
           format: 'mp4'
         });
         
-        console.log('🎯 Direct transformation URL:', concatenatedUrl);
+        console.log('🎯 SDK concatenation URL:', sdkUrl);
         
-        // Test the transformation URL
-        const testResponse = await fetch(concatenatedUrl, { method: 'HEAD' });
-        console.log(`📡 Transformation URL test: ${testResponse.status} ${testResponse.statusText}`);
+        // Test SDK URL
+        const sdkTest = await fetch(sdkUrl, { method: 'HEAD' });
+        console.log(`📡 SDK URL test: ${sdkTest.status} ${sdkTest.statusText}`);
         
-        if (!testResponse.ok) {
-          throw new Error(`Transformation URL test failed: ${testResponse.status}`);
-        }
-        
-        console.log('✅ Direct transformation concatenation successful!');
-      }
-      
-      // PHASE 3: Cleanup temp videos
-      console.log('🧹 === PHASE 3: Cleanup Started ===');
-      
-      for (const trimmedVideo of trimmedVideos) {
-        try {
-          await cloudinary.uploader.destroy(trimmedVideo.publicId, { resource_type: 'video' });
-          console.log(`🗑️ Cleaned up: ${trimmedVideo.publicId}`);
-        } catch (cleanupError) {
-          console.warn(`⚠️ Cleanup warning for ${trimmedVideo.publicId}:`, cleanupError.message);
-        }
-      }
-      
-      console.log('✅ === ALL PHASES COMPLETE ===');
-      console.log(`🎉 Successfully created concatenated video: ${finalVideoId}`);
-      console.log(`⏱️ Final duration: ${targetDuration}s`);
-      console.log(`📹 Videos concatenated: ${videos.length}`);
-      
-      return new Response(
-        JSON.stringify({ 
-          success: true,
-          url: concatenatedUrl,
-          message: `Successfully concatenated ${videos.length} videos to ${targetDuration}s duration`,
-          method: 'two_phase_concatenation',
-          finalVideoId: finalVideoId,
-          totalDuration: targetDuration,
-          videosProcessed: videos.length,
-          phases: {
-            phase1: 'Trimming - Complete ✅',
-            phase2: 'Concatenation - Complete ✅', 
-            phase3: 'Cleanup - Complete ✅'
+        if (sdkTest.ok) {
+          console.log('✅ SDK concatenation successful!');
+          
+          // Cleanup
+          for (const video of trimmedVideos) {
+            try {
+              await cloudinary.uploader.destroy(video.publicId, { resource_type: 'video' });
+            } catch (cleanupError) {
+              console.warn(`⚠️ Cleanup warning: ${cleanupError.message}`);
+            }
           }
-        }),
-        { status: 200, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-      );
-      
-    } catch (concatenationError) {
-      console.error('❌ Phase 2 concatenation failed:', concatenationError.message);
-      
-      // If concatenation fails, at least clean up the temp videos
-      console.log('🧹 Cleaning up temp videos after concatenation failure...');
-      for (const trimmedVideo of trimmedVideos) {
-        try {
-          await cloudinary.uploader.destroy(trimmedVideo.publicId, { resource_type: 'video' });
-        } catch (cleanupError) {
-          console.warn(`⚠️ Cleanup error: ${cleanupError.message}`);
+          
+          return new Response(
+            JSON.stringify({ 
+              success: true,
+              url: sdkUrl,
+              message: `Successfully concatenated ${videos.length} videos using SDK method`,
+              method: 'cloudinary_sdk',
+              totalDuration: targetDuration,
+              videosProcessed: videos.length
+            }),
+            { status: 200, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+          );
+        } else {
+          throw new Error(`SDK concatenation test failed: ${sdkTest.status}`);
         }
+        
+      } catch (sdkError) {
+        console.error('❌ SDK concatenation also failed:', sdkError.message);
+        throw new Error(`Both fl_splice and SDK concatenation methods failed`);
       }
-      
-      throw new Error(`Phase 2 failed: ${concatenationError.message}`);
     }
 
   } catch (error) {
-    console.error('❌ === PHASE 1 FAILED ===');
+    console.error('❌ === VIDEO PROCESSING FAILED ===');
     console.error('Error details:', error);
     
     return new Response(
       JSON.stringify({ 
         success: false, 
-        phase: 'phase_1_failed',
-        error: error.message
+        error: error.message,
+        phase: 'processing_failed'
       }),
       { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
     );
