@@ -1,11 +1,9 @@
-
 import { supabase } from '@/integrations/supabase/client';
 import { Cloudinary } from '@cloudinary/url-gen';
-import { VideoTransformation } from '@cloudinary/url-gen/actions/videoEdit';
 import { trim } from '@cloudinary/url-gen/actions/videoEdit';
 import { concatenate } from '@cloudinary/url-gen/actions/videoEdit';
 import { auto } from '@cloudinary/url-gen/qualifiers/quality';
-import { mp4 } from '@cloudinary/url-gen/qualifiers/format';
+import { format } from '@cloudinary/url-gen/actions/delivery';
 
 export interface VideoProcessingOptions {
   sequences: Array<{
@@ -178,7 +176,7 @@ export class VideoProcessor {
         const video = videoData[0];
         const videoUrl = this.cloudinary.video(video.publicId)
           .quality(auto())
-          .format(mp4())
+          .delivery(format('mp4'))
           .videoEdit(trim().startOffset(0).endOffset(video.trimData.trimmedDuration))
           .toURL();
 
