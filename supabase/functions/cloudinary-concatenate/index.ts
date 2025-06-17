@@ -125,22 +125,22 @@ serve(async (req) => {
       const baseVideoId = baseVideo.publicId.replace(/\//g, ':');
       console.log(`🔄 Base video ID converted: ${baseVideo.publicId} → ${baseVideoId}`);
       
-      // Build concatenation transformation with CORRECTED Cloudinary syntax
+      // Build concatenation transformation with CORRECT Cloudinary fl_splice syntax
       const transformations = [];
       
-      // 1. Set base video with consistent dimensions first
-      transformations.push('w_1280,h_720,c_pad'); // Set dimensions first
-      transformations.push(`du_${baseVideo.duration.toFixed(2)}`); // Then duration
+      // 1. Set consistent dimensions for the base video (no duration needed - trimmed video already has correct duration)
+      transformations.push('w_1280,h_720,c_pad');
       
-      // 2. Add each overlay video with CORRECTED parameter order
+      // 2. Add each overlay video with CORRECT fl_splice syntax from Cloudinary docs
       for (let i = 0; i < overlayVideos.length; i++) {
         const overlayVideo = overlayVideos[i];
         const overlayVideoId = overlayVideo.publicId.replace(/\//g, ':');
         
         console.log(`🔗 Adding overlay ${i + 1}: ${overlayVideo.publicId} → ${overlayVideoId} (${overlayVideo.duration.toFixed(2)}s)`);
         
-        // CORRECTED: l_video:public_id,du_duration,w_width,h_height/fl_layer_apply/fl_splice
-        transformations.push(`l_video:${overlayVideoId},du_${overlayVideo.duration.toFixed(2)},w_1280,h_720,c_pad`);
+        // CORRECT syntax per Cloudinary docs: l_video:public_id,w_width,h_height/fl_layer_apply/fl_splice
+        // No duration needed because trimmed videos already have correct duration
+        transformations.push(`l_video:${overlayVideoId},w_1280,h_720,c_pad`);
         transformations.push('fl_layer_apply');
         transformations.push('fl_splice');
       }
@@ -150,6 +150,7 @@ serve(async (req) => {
       transformations.push('q_auto:good'); // Quality
       
       const transformationString = transformations.join('/');
+      // FIX: Use the trimmed base video, not the original
       const concatenatedUrl = `https://res.cloudinary.com/dsxrmo3kt/video/upload/${transformationString}/${baseVideo.publicId}.mp4`;
       
       console.log('🎯 Cloudinary concatenation URL:', concatenatedUrl);
