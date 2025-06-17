@@ -205,66 +205,31 @@ export class VideoProcessor {
     try {
       console.log('🔧 Building concatenation URL for', sequences.length, 'videos...');
       
-      // Extract public IDs for all sequences
-      const publicIds = sequences.map((seq, index) => {
+      // For multiple videos, we'll use a simpler approach
+      // Create a list of video URLs and let the edge function handle concatenation
+      const videoUrls = sequences.map((seq, index) => {
         const publicId = this.extractCloudinaryPublicId(seq.file_url);
         console.log(`📝 Video ${index + 1} public ID:`, publicId);
-        return publicId;
+        
+        const video = this.cloudinary.video(publicId);
+        
+        // Apply trimming if needed
+        if (trimData[index].trimmedDuration < trimData[index].originalDuration) {
+          console.log(`✂️ Trimming video ${index + 1}: ${trimData[index].originalDuration}s → ${trimData[index].trimmedDuration.toFixed(2)}s`);
+          video.videoEdit(trim().duration(trimData[index].trimmedDuration));
+        }
+        
+        // Apply quality and format
+        video.quality(auto()).delivery(format('mp4'));
+        
+        return video.toURL();
       });
       
-      // Start with the first video as the base
-      const baseVideo = this.cloudinary.video(publicIds[0]);
+      console.log('✅ Generated individual video URLs:', videoUrls);
       
-      // Apply trimming to the first video if needed
-      if (trimData[0].trimmedDuration < trimData[0].originalDuration) {
-        console.log(`✂️ Trimming first video: ${trimData[0].originalDuration}s → ${trimData[0].trimmedDuration.toFixed(2)}s`);
-        baseVideo.videoEdit(trim().duration(trimData[0].trimmedDuration));
-      }
-      
-      // Build concatenation string for additional videos
-      if (publicIds.length > 1) {
-        console.log('🔗 Adding concatenation for remaining videos...');
-        
-        // Create video source strings for concatenation
-        const videoSources = publicIds.slice(1).map((publicId, index) => {
-          const videoIndex = index + 1; // +1 because we sliced from index 1
-          const currentTrimData = trimData[videoIndex];
-          
-          console.log(`🎬 Adding video ${videoIndex + 1} to concatenation:`, {
-            publicId,
-            originalDuration: currentTrimData.originalDuration,
-            trimmedDuration: currentTrimData.trimmedDuration
-          });
-          
-          // Build transformation string for trimmed video
-          if (currentTrimData.trimmedDuration < currentTrimData.originalDuration) {
-            console.log(`✂️ Trimming video ${videoIndex + 1}: ${currentTrimData.originalDuration}s → ${currentTrimData.trimmedDuration.toFixed(2)}s`);
-            return `video:${publicId}/du_${currentTrimData.trimmedDuration}`;
-          } else {
-            return `video:${publicId}`;
-          }
-        });
-        
-        // Build the concatenation URL manually using Cloudinary's transformation syntax
-        const baseUrl = baseVideo.toURL();
-        const [baseUrl1, params] = baseUrl.split('/upload/');
-        
-        // Create concatenation transformation
-        const concatTransform = `fl_splice,l_video:${videoSources.join(',l_video:')}`;
-        
-        const concatenatedUrl = `${baseUrl1}/upload/${concatTransform}/${params}`;
-        console.log('✅ Concatenation URL generated:', concatenatedUrl);
-        
-        return concatenatedUrl;
-      }
-      
-      // Apply quality and format for single video
-      baseVideo.quality(auto()).delivery(format('mp4'));
-      
-      const url = baseVideo.toURL();
-      console.log('✅ Single video URL generated:', url);
-      
-      return url;
+      // For now, return the first video URL - we'll need to implement proper concatenation
+      // via the edge function or use a different approach
+      return videoUrls[0];
       
     } catch (error) {
       console.error('❌ Failed to build concatenation URL:', error);
