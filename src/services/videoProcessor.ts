@@ -31,16 +31,16 @@ export interface VideoProcessingOptions {
 
 export class VideoProcessor {
   constructor() {
-    console.log('🎬 VideoProcessor initialized for server-side processing');
+    console.log('🎬 VideoProcessor initialized for Cloudinary processing');
   }
 
   async processVideo(options: VideoProcessingOptions, onProgress?: (progress: number) => void): Promise<Blob> {
-    return this.processVideoServerSide(options, onProgress);
+    return this.processVideoWithCloudinary(options, onProgress);
   }
 
-  private async processVideoServerSide(options: VideoProcessingOptions, onProgress?: (progress: number) => void): Promise<Blob> {
+  private async processVideoWithCloudinary(options: VideoProcessingOptions, onProgress?: (progress: number) => void): Promise<Blob> {
     try {
-      console.log('🚀 Starting server-side video processing...', {
+      console.log('🚀 Starting Cloudinary video processing...', {
         sequences: options.sequences.length,
         platform: options.platform,
         duration: options.duration
@@ -66,18 +66,39 @@ export class VideoProcessor {
         validSequences.map((seq, idx) => `${(seq as any).originalOrder + 1}. ${seq.name}`).join(', '));
       onProgress?.(25);
 
-      // Call the edge function
-      const { data, error } = await supabase.functions.invoke('process-video', {
+      // Extract Cloudinary public IDs from the URLs
+      const publicIds = validSequences.map(seq => {
+        const url = seq.file_url;
+        // Extract public ID from Cloudinary URL
+        // Format: https://res.cloudinary.com/CLOUD_NAME/video/upload/v123456/folder/public_id.mp4
+        const match = url.match(/\/upload\/v\d+\/(.+)\.(mp4|mov|avi|webm)$/i);
+        if (match) {
+          return match[1]; // This is the public_id with folder
+        }
+        
+        // Fallback: try to extract from simpler format
+        const simpleMatch = url.match(/\/upload\/(.+)\.(mp4|mov|avi|webm)$/i);
+        if (simpleMatch) {
+          return simpleMatch[1];
+        }
+        
+        throw new Error(`Could not extract public ID from URL: ${url}`);
+      });
+
+      console.log('📋 Extracted public IDs:', publicIds);
+      onProgress?.(50);
+
+      // Call the Cloudinary concatenation edge function
+      const { data, error } = await supabase.functions.invoke('cloudinary-concatenate', {
         body: {
-          sequences: validSequences,
-          customization: options.customization,
+          publicIds,
           platform: options.platform,
-          duration: options.duration
+          customization: options.customization
         }
       });
 
       if (error) {
-        console.error('❌ Supabase function invocation error:', error);
+        console.error('❌ Cloudinary concatenation error:', error);
         throw new Error(`Video processing failed: ${error.message}`);
       }
 
@@ -85,74 +106,43 @@ export class VideoProcessor {
 
       if (!data || !data.success) {
         const errorMsg = data?.error || 'Unknown processing error';
-        console.error('❌ Video processing failed:', errorMsg);
+        console.error('❌ Cloudinary processing failed:', errorMsg);
         throw new Error(`Video processing failed: ${errorMsg}`);
       }
 
       onProgress?.(90);
 
-      // Handle storage-based response
-      if (data.useStorage && data.downloadUrl) {
-        console.log('📥 Downloading processed video from storage:', {
-          downloadUrl: data.downloadUrl,
-          filename: data.filename,
-          metadata: data.metadata
+      // Download the processed video from Cloudinary
+      const cloudinaryUrl = data.url;
+      console.log('📥 Downloading processed video from Cloudinary:', cloudinaryUrl);
+
+      try {
+        const videoResponse = await fetch(cloudinaryUrl);
+        if (!videoResponse.ok) {
+          throw new Error(`Failed to download processed video: HTTP ${videoResponse.status} ${videoResponse.statusText}`);
+        }
+
+        const videoBlob = await videoResponse.blob();
+        onProgress?.(100);
+        console.log('✅ Successfully downloaded processed video:', {
+          size: videoBlob.size,
+          type: videoBlob.type
         });
-
-        try {
-          const videoResponse = await fetch(data.downloadUrl);
-          if (!videoResponse.ok) {
-            throw new Error(`Failed to download processed video: HTTP ${videoResponse.status} ${videoResponse.statusText}`);
-          }
-
-          const videoBlob = await videoResponse.blob();
-          onProgress?.(100);
-          console.log('✅ Successfully downloaded processed video:', {
-            size: videoBlob.size,
-            type: videoBlob.type
-          });
-          
-          return videoBlob;
-          
-        } catch (downloadError) {
-          console.error('❌ Failed to download processed video:', downloadError);
-          throw new Error(`Failed to download processed video: ${downloadError.message}`);
-        }
-      }
-
-      // Fallback to base64 handling
-      if (data.videoData) {
-        console.log('🔄 Handling base64 video fallback...');
         
-        try {
-          const cleanBase64 = data.videoData.replace(/\s/g, '');
-          const binaryString = atob(cleanBase64);
-          const bytes = new Uint8Array(binaryString.length);
-          
-          for (let i = 0; i < binaryString.length; i++) {
-            bytes[i] = binaryString.charCodeAt(i);
-          }
-
-          onProgress?.(100);
-          const blob = new Blob([bytes], { type: 'video/mp4' });
-          console.log('✅ Base64 video processed:', blob.size);
-          return blob;
-          
-        } catch (conversionError) {
-          console.error('❌ Error converting base64 video:', conversionError);
-          throw new Error(`Failed to process video data: ${conversionError.message}`);
-        }
+        return videoBlob;
+        
+      } catch (downloadError) {
+        console.error('❌ Failed to download processed video:', downloadError);
+        throw new Error(`Failed to download processed video: ${downloadError.message}`);
       }
-
-      throw new Error('No valid video data received from server');
 
     } catch (error) {
-      console.error('❌ Server-side video processing failed:', error);
+      console.error('❌ Cloudinary video processing failed:', error);
       throw new Error(`Video processing failed: ${error.message}`);
     }
   }
 
-  getProcessingMode(): 'server' {
-    return 'server';
+  getProcessingMode(): 'cloudinary' {
+    return 'cloudinary';
   }
 }

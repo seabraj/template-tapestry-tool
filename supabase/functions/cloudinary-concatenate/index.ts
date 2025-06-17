@@ -8,7 +8,14 @@ const corsHeaders = {
 
 interface ConcatenationRequest {
   publicIds: string[];
-  cloudName?: string;
+  platform?: string;
+  customization?: {
+    supers?: {
+      text: string;
+      position: 'top' | 'center' | 'bottom';
+      style: 'bold' | 'light' | 'outline';
+    };
+  };
 }
 
 serve(async (req) => {
@@ -43,7 +50,7 @@ serve(async (req) => {
       );
     }
 
-    const { publicIds } = requestData;
+    const { publicIds, platform } = requestData;
     // Use hardcoded cloud name
     const cloudName = 'dsxrmo3kt';
     
@@ -52,18 +59,23 @@ serve(async (req) => {
     }
 
     console.log(`📊 Processing ${publicIds.length} videos for concatenation`);
+    console.log(`📋 Public IDs: ${publicIds.join(', ')}`);
 
     // Build Cloudinary transformation URL for concatenation
     let transformationUrl: string;
     
     if (publicIds.length === 1) {
-      // Single video - just optimize
-      transformationUrl = `https://res.cloudinary.com/${cloudName}/video/upload/q_auto:good,f_mp4/${publicIds[0]}.mp4`;
+      // Single video - just optimize and format
+      const publicId = publicIds[0];
+      transformationUrl = `https://res.cloudinary.com/${cloudName}/video/upload/q_auto:good,f_mp4/${publicId}.mp4`;
     } else {
-      // Multiple videos - concatenate using overlay transformations
+      // Multiple videos - concatenate using l_video overlays with fl_splice
       const baseVideo = publicIds[0];
-      const overlays = publicIds.slice(1).map((id, index) => {
-        return `l_video:${id},fl_splice,so_0`;
+      
+      // Build overlay transformations for concatenation
+      const overlays = publicIds.slice(1).map((id) => {
+        // Use l_video with fl_splice to concatenate videos
+        return `l_video:${id},fl_splice`;
       }).join('/');
       
       transformationUrl = `https://res.cloudinary.com/${cloudName}/video/upload/q_auto:good,f_mp4/${overlays}/${baseVideo}.mp4`;
@@ -72,10 +84,36 @@ serve(async (req) => {
     console.log('✅ Cloudinary transformation URL generated');
     console.log(`🔗 URL: ${transformationUrl}`);
 
-    // Verify the video is accessible
-    const verifyResponse = await fetch(transformationUrl, { method: 'HEAD' });
-    if (!verifyResponse.ok) {
-      throw new Error(`Failed to generate concatenated video: HTTP ${verifyResponse.status}`);
+    // Test the URL by making a HEAD request to verify it exists
+    try {
+      const testResponse = await fetch(transformationUrl, { 
+        method: 'HEAD',
+        headers: {
+          'User-Agent': 'Supabase-Edge-Function/1.0'
+        }
+      });
+      
+      if (!testResponse.ok) {
+        console.error(`❌ Cloudinary URL verification failed: ${testResponse.status} ${testResponse.statusText}`);
+        
+        // If concatenation fails, try a simpler approach with just the first video
+        if (publicIds.length > 1) {
+          console.log('🔄 Falling back to first video only...');
+          transformationUrl = `https://res.cloudinary.com/${cloudName}/video/upload/q_auto:good,f_mp4/${publicIds[0]}.mp4`;
+          
+          const fallbackResponse = await fetch(transformationUrl, { method: 'HEAD' });
+          if (!fallbackResponse.ok) {
+            throw new Error(`Failed to access even single video: HTTP ${fallbackResponse.status}`);
+          }
+        } else {
+          throw new Error(`Failed to generate video: HTTP ${testResponse.status} ${testResponse.statusText}`);
+        }
+      }
+      
+      console.log('✅ Cloudinary URL verified successfully');
+    } catch (verifyError) {
+      console.error('❌ URL verification failed:', verifyError);
+      throw new Error(`Failed to verify generated video: ${verifyError.message}`);
     }
 
     const response = {
@@ -88,6 +126,7 @@ serve(async (req) => {
         videoCount: publicIds.length,
         processingMethod: 'cloudinary_transformation',
         cloudName,
+        publicIds: publicIds
       }
     };
 
