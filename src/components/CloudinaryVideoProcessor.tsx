@@ -110,37 +110,18 @@ const CloudinaryVideoProcessor = ({ onProcessingComplete }: CloudinaryVideoProce
       return Math.round(totalProgress / uploadProgress.length);
     };
 
-    // Configuration error state
-    if (!config) {
-      return (
-        <Card className="border-2 border-red-200 bg-red-50">
-          <CardContent className="p-6 text-center">
-            <AlertCircle className="h-16 w-16 text-red-500 mx-auto mb-4" />
-            <h3 className="text-lg font-semibold text-red-800 mb-2">Configuration Required</h3>
-            <p className="text-red-600 mb-4">
-              Cloudinary environment variables are missing. Please configure:
-            </p>
-            <div className="bg-red-100 p-3 rounded-lg text-left text-sm font-mono">
-              <p>VITE_CLOUDINARY_CLOUD_NAME=your_cloud_name</p>
-              <p>VITE_CLOUDINARY_UPLOAD_PRESET=your_upload_preset</p>
-            </div>
-          </CardContent>
-        </Card>
-      );
-    }
-
     // Success state
     if (processedVideoUrl) {
       return (
         <div className="text-center space-y-6">
-          <div className="w-24 h-24 bg-green-500 rounded-full flex items-center justify-center mx-auto">
+          <div className="w-24 h-24 bg-green-600 rounded-full flex items-center justify-center mx-auto">
             <Check className="text-white text-4xl" />
           </div>
-          <h3 className="text-2xl font-bold text-green-800">
+          <h3 className="text-2xl font-bold text-green-400">
             Video Processing Complete!
           </h3>
           
-          <p className="text-gray-600">
+          <p className="text-gray-300">
             {selectedFiles.length === 1 
               ? "Your video has been successfully processed using Cloudinary."
               : `${selectedFiles.length} videos have been successfully concatenated using Cloudinary's cloud processing.`
@@ -150,7 +131,7 @@ const CloudinaryVideoProcessor = ({ onProcessingComplete }: CloudinaryVideoProce
           <div className="flex justify-center space-x-4">
             <Button 
               onClick={handleDownload}
-              className="bg-green-500 hover:bg-green-600"
+              className="bg-green-600 hover:bg-green-700"
             >
               <Download className="h-4 w-4 mr-2" />
               Download Video
@@ -158,6 +139,7 @@ const CloudinaryVideoProcessor = ({ onProcessingComplete }: CloudinaryVideoProce
             <Button 
               variant="outline" 
               onClick={() => window.open(processedVideoUrl, '_blank')}
+              className="border-gray-600 text-gray-300 hover:bg-gray-700"
             >
               <Play className="h-4 w-4 mr-2" />
               Preview in Browser
@@ -165,6 +147,7 @@ const CloudinaryVideoProcessor = ({ onProcessingComplete }: CloudinaryVideoProce
             <Button 
               variant="outline" 
               onClick={handleReset}
+              className="border-gray-600 text-gray-300 hover:bg-gray-700"
             >
               Process Another Video
             </Button>
@@ -177,22 +160,22 @@ const CloudinaryVideoProcessor = ({ onProcessingComplete }: CloudinaryVideoProce
     if (isProcessing) {
       return (
         <div className="text-center space-y-6">
-          <div className="w-24 h-24 bg-blue-500 rounded-full flex items-center justify-center mx-auto">
+          <div className="w-24 h-24 bg-blue-600 rounded-full flex items-center justify-center mx-auto">
             <Cloud className="text-white text-2xl animate-pulse" />
           </div>
-          <h3 className="text-2xl font-bold">
+          <h3 className="text-2xl font-bold text-white">
             Processing with Cloudinary...
           </h3>
           
           <div className="max-w-md mx-auto space-y-4">
             <Progress value={getOverallProgress()} className="w-full" />
-            <p className="text-sm text-gray-600">{getOverallProgress()}% complete</p>
-            <p className="text-sm text-blue-600 font-medium">{processingStep}</p>
+            <p className="text-sm text-gray-300">{getOverallProgress()}% complete</p>
+            <p className="text-sm text-blue-400 font-medium">{processingStep}</p>
           </div>
           
           <div className="grid gap-2 max-w-lg mx-auto">
             {uploadProgress.map((progress, index) => (
-              <div key={progress.videoId} className="flex items-center justify-between text-sm">
+              <div key={progress.videoId} className="flex items-center justify-between text-sm text-gray-300">
                 <span className="truncate">{selectedFiles[index]?.name}</span>
                 <div className="flex items-center space-x-2">
                   <Progress value={progress.progress} className="w-20 h-2" />
@@ -204,7 +187,7 @@ const CloudinaryVideoProcessor = ({ onProcessingComplete }: CloudinaryVideoProce
             ))}
           </div>
           
-          <p className="text-sm text-gray-500">
+          <p className="text-sm text-gray-400">
             Cloud processing - no browser limitations!
           </p>
         </div>
@@ -215,18 +198,18 @@ const CloudinaryVideoProcessor = ({ onProcessingComplete }: CloudinaryVideoProce
     return (
       <div className="space-y-6">
         <div className="text-center">
-          <h3 className="text-lg font-semibold mb-2">Cloudinary Video Processing</h3>
-          <p className="text-gray-600">Professional cloud-powered video concatenation</p>
+          <h3 className="text-lg font-semibold mb-2 text-white">Cloudinary Video Processing</h3>
+          <p className="text-gray-300">Professional cloud-powered video concatenation</p>
         </div>
 
         {/* Cloudinary Features */}
-        <Card className="border-2 border-blue-200 bg-blue-50">
+        <Card className="border-blue-800 bg-blue-950/50">
           <CardContent className="p-4">
-            <h4 className="font-semibold text-blue-800 mb-2 flex items-center">
+            <h4 className="font-semibold text-blue-300 mb-2 flex items-center">
               <Cloud className="h-5 w-5 mr-2" />
               Cloudinary Cloud Processing
             </h4>
-            <div className="grid grid-cols-2 gap-2 text-sm text-blue-600">
+            <div className="grid grid-cols-2 gap-2 text-sm text-blue-400">
               <div>✅ Unlimited file sizes</div>
               <div>✅ Professional quality</div>
               <div>✅ Fast cloud processing</div>
@@ -236,9 +219,9 @@ const CloudinaryVideoProcessor = ({ onProcessingComplete }: CloudinaryVideoProce
         </Card>
 
         {/* File Selection */}
-        <Card>
+        <Card className="bg-gray-800 border-gray-700">
           <CardHeader>
-            <CardTitle className="flex items-center">
+            <CardTitle className="flex items-center text-white">
               <Upload className="h-5 w-5 mr-2" />
               Select Videos
             </CardTitle>
@@ -249,20 +232,20 @@ const CloudinaryVideoProcessor = ({ onProcessingComplete }: CloudinaryVideoProce
               multiple
               accept="video/*"
               onChange={handleFileSelect}
-              className="w-full p-3 border-2 border-dashed border-gray-300 rounded-lg hover:border-blue-400 transition-colors"
+              className="w-full p-3 border-2 border-dashed border-gray-600 rounded-lg hover:border-blue-500 transition-colors bg-gray-900 text-gray-300"
             />
             
             {selectedFiles.length > 0 && (
               <div className="mt-4 space-y-2">
-                <h5 className="font-medium">Selected Videos:</h5>
+                <h5 className="font-medium text-white">Selected Videos:</h5>
                 {selectedFiles.map((file, index) => (
-                  <div key={index} className="flex justify-between items-center text-sm bg-gray-50 p-2 rounded">
-                    <span className="truncate">{file.name}</span>
-                    <Badge variant="outline">{formatFileSize(file.size)}</Badge>
+                  <div key={index} className="flex justify-between items-center text-sm bg-gray-700 p-2 rounded">
+                    <span className="truncate text-gray-300">{file.name}</span>
+                    <Badge variant="outline" className="border-gray-600 text-gray-300">{formatFileSize(file.size)}</Badge>
                   </div>
                 ))}
-                <div className="pt-2 border-t">
-                  <p className="text-sm font-medium">
+                <div className="pt-2 border-t border-gray-600">
+                  <p className="text-sm font-medium text-white">
                     Total: {selectedFiles.length} files ({formatFileSize(getTotalSize())})
                   </p>
                 </div>
@@ -283,11 +266,11 @@ const CloudinaryVideoProcessor = ({ onProcessingComplete }: CloudinaryVideoProce
             {selectedFiles.length === 1 ? 'Process Video' : `Concatenate ${selectedFiles.length} Videos`}
           </Button>
           {selectedFiles.length === 0 ? (
-            <p className="text-sm text-red-600 mt-2">
+            <p className="text-sm text-red-400 mt-2">
               Please select at least one video file
             </p>
           ) : (
-            <p className="text-sm text-gray-600 mt-2">
+            <p className="text-sm text-gray-400 mt-2">
               Process with Cloudinary's cloud infrastructure
             </p>
           )}
@@ -297,11 +280,11 @@ const CloudinaryVideoProcessor = ({ onProcessingComplete }: CloudinaryVideoProce
 
   } catch (error) {
     return (
-      <Card className="border-2 border-red-200 bg-red-50">
+      <Card className="border-red-800 bg-red-950/50">
         <CardContent className="p-6 text-center">
-          <AlertCircle className="h-16 w-16 text-red-500 mx-auto mb-4" />
-          <h3 className="text-lg font-semibold text-red-800 mb-2">Configuration Error</h3>
-          <p className="text-red-600">
+          <AlertCircle className="h-16 w-16 text-red-400 mx-auto mb-4" />
+          <h3 className="text-lg font-semibold text-red-300 mb-2">Configuration Error</h3>
+          <p className="text-red-400">
             {error instanceof Error ? error.message : 'Failed to initialize Cloudinary processor'}
           </p>
         </CardContent>
