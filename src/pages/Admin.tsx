@@ -88,7 +88,6 @@ const Admin = () => {
       
       const transformedData = data?.map(item => ({
         ...item,
-        cloudinary_public_id: item.cloudinary_public_id || undefined,
         video_categories: item.video_categories ? {
           id: item.video_categories.id,
           name: item.video_categories.name,

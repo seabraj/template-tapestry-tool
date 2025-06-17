@@ -1,4 +1,3 @@
-
 import { useState } from 'react';
 import { useToast } from '@/hooks/use-toast';
 import { useVideoAssets } from '@/hooks/useVideoAssets';
@@ -214,7 +213,7 @@ const Index = () => {
                     <h2 className="text-2xl font-bold text-white mb-2">Platform & Settings</h2>
                     <p className="text-gray-400">Choose your target platform and video preferences</p>
                   </div>
-                  <PlatformSelector selectedPlatform={platform} onPlatformChange={setPlatform} />
+                  <PlatformSelector selected={platform} onSelect={setPlatform} />
                   <LanguageDurationSelector 
                     language={language} 
                     duration={duration}
@@ -232,10 +231,8 @@ const Index = () => {
                   </div>
                   <SequenceManager
                     platform={platform}
-                    targetDuration={duration}
                     sequences={sequences}
                     onSequencesChange={setSequences}
-                    availableAssets={assets}
                   />
                 </div>
               )}
