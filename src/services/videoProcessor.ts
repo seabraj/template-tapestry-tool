@@ -1,4 +1,5 @@
 
+
 import { supabase } from '@/integrations/supabase/client';
 
 export interface VideoProcessingOptions {
@@ -176,14 +177,14 @@ export class VideoProcessor {
         const video = videoPublicIds[0];
         let transformations = ['q_auto:good', 'f_mp4'];
         
-        // Add trimming if needed - FIXED: Apply trimming to single video
+        // FIXED: Apply trimming correctly for single video
         if (video.trimming.duration) {
           transformations.push(`so_${video.trimming.startOffset}`, `du_${video.trimming.duration}`);
           console.log(`✂️ Single video trimming: start ${video.trimming.startOffset}s, duration ${video.trimming.duration}s`);
         }
         
         const singleVideoUrl = `https://res.cloudinary.com/dsxrmo3kt/video/upload/${transformations.join(',')}/${video.public_id}.mp4`;
-        console.log('🎬 Single video optimization URL generated with trimming:', singleVideoUrl);
+        console.log('🎬 Single video URL with trimming:', singleVideoUrl);
         onProgress?.(90);
         
         // Download the processed video
@@ -198,37 +199,39 @@ export class VideoProcessor {
         return videoBlob;
       }
 
-      // Multiple videos - use proper concatenation with trimming
-      console.log('🔗 Creating proper concatenation URL with trimming for multiple videos...');
+      // FIXED: Multiple videos - use correct concatenation with per-layer trimming
+      console.log('🔗 Creating concatenation URL with individual video trimming...');
       
-      // Build the concatenation URL using Cloudinary's video concatenation feature
+      // Build the concatenation URL - start with the first video as base
       const baseVideo = videoPublicIds[0];
-      const transformations = ['q_auto:good', 'f_mp4'];
+      let transformations = ['q_auto:good', 'f_mp4'];
       
-      // FIXED: Add trimming to base video - apply at the start of transformations
+      // CRITICAL FIX: Apply trimming to base video BEFORE other transformations
       if (baseVideo.trimming.duration) {
-        transformations.push(`so_${baseVideo.trimming.startOffset}`, `du_${baseVideo.trimming.duration}`);
-        console.log(`✂️ Base video trimming: start ${baseVideo.trimming.startOffset}s, duration ${baseVideo.trimming.duration}s`);
+        transformations.splice(1, 0, `so_${baseVideo.trimming.startOffset}`, `du_${baseVideo.trimming.duration}`);
+        console.log(`✂️ Base video trimming applied: start ${baseVideo.trimming.startOffset}s, duration ${baseVideo.trimming.duration}s`);
       }
       
-      // Add each subsequent video using proper concatenation syntax with trimming
+      // Add each subsequent video as a layer with its own trimming
       for (let i = 1; i < videoPublicIds.length; i++) {
         const video = videoPublicIds[i];
         
-        // FIXED: Build layer transformation with trimming applied to the layer itself
-        let layerTransform = `l_video:${video.public_id.replace(/\//g, ':')}`;
+        // CRITICAL FIX: Create a pre-trimmed video reference for layering
+        let videoReference = video.public_id.replace(/\//g, ':');
         
-        // Apply trimming parameters directly to the layer
+        // If this video needs trimming, we need to create a transformation that trims it first
         if (video.trimming.duration) {
-          layerTransform += `,so_${video.trimming.startOffset},du_${video.trimming.duration}`;
-          console.log(`✂️ Layer ${i} trimming: start ${video.trimming.startOffset}s, duration ${video.trimming.duration}s`);
+          // Create a nested transformation: trim the video first, then use it as a layer
+          const trimmedVideoTransform = `so_${video.trimming.startOffset},du_${video.trimming.duration}/${video.public_id}`;
+          videoReference = trimmedVideoTransform.replace(/\//g, ':');
+          console.log(`✂️ Layer ${i} pre-trimming transformation: ${trimmedVideoTransform}`);
         }
         
-        // Complete the layer with splice and apply
-        layerTransform += ',fl_splice,fl_layer_apply';
+        // Apply the layer with the (potentially trimmed) video
+        const layerTransform = `l_video:${videoReference},fl_splice,fl_layer_apply`;
         transformations.push(layerTransform);
         
-        console.log(`📎 Adding video ${video.name} for concatenation with trimming: ${layerTransform}`);
+        console.log(`📎 Layer ${i} added: ${video.name} with transform: ${layerTransform}`);
       }
       
       // Build the final concatenation URL
@@ -236,8 +239,8 @@ export class VideoProcessor {
       const concatenatedUrl = `https://res.cloudinary.com/dsxrmo3kt/video/upload/${transformationString}/${baseVideo.public_id}.mp4`;
       
       const finalDuration = trimmingPlan.reduce((sum, plan) => sum + (plan.duration || validSequences[trimmingPlan.indexOf(plan)].duration), 0);
-      console.log(`🎯 Generated concatenation URL with ${videoPublicIds.length} videos (target: ${options.duration}s, estimated: ${finalDuration}s)`);
-      console.log(`🔗 Concatenation URL: ${concatenatedUrl}`);
+      console.log(`🎯 Generated concatenation URL with trimming (target: ${options.duration}s, estimated: ${finalDuration}s)`);
+      console.log(`🔗 Final URL: ${concatenatedUrl}`);
       
       onProgress?.(75);
 
@@ -247,7 +250,7 @@ export class VideoProcessor {
         const videoResponse = await fetch(concatenatedUrl);
         
         if (!videoResponse.ok) {
-          console.error(`❌ Cloudinary concatenation with trimming failed: HTTP ${videoResponse.status}`);
+          console.error(`❌ Cloudinary concatenation failed: HTTP ${videoResponse.status}`);
           
           // Log response details for debugging
           const responseText = await videoResponse.text();
@@ -258,7 +261,7 @@ export class VideoProcessor {
             body: responseText
           });
           
-          throw new Error(`Cloudinary concatenation with trimming failed: HTTP ${videoResponse.status} ${videoResponse.statusText}`);
+          throw new Error(`Cloudinary concatenation failed: HTTP ${videoResponse.status} ${videoResponse.statusText}`);
         }
 
         const videoBlob = await videoResponse.blob();
@@ -273,12 +276,12 @@ export class VideoProcessor {
         return videoBlob;
         
       } catch (downloadError) {
-        console.error('❌ Failed to download concatenated and trimmed video:', downloadError);
-        throw new Error(`Video concatenation with trimming failed: ${downloadError.message}`);
+        console.error('❌ Failed to download concatenated video:', downloadError);
+        throw new Error(`Video concatenation failed: ${downloadError.message}`);
       }
 
     } catch (error) {
-      console.error('❌ Cloudinary video processing with trimming failed:', error);
+      console.error('❌ Cloudinary video processing failed:', error);
       throw new Error(`Video processing failed: ${error.message}`);
     }
   }
@@ -287,3 +290,4 @@ export class VideoProcessor {
     return 'cloudinary';
   }
 }
+
