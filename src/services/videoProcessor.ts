@@ -1,9 +1,10 @@
-
 import { supabase } from '@/integrations/supabase/client';
 import { Cloudinary } from '@cloudinary/url-gen';
 import { trim } from '@cloudinary/url-gen/actions/videoEdit';
 import { auto } from '@cloudinary/url-gen/qualifiers/quality';
 import { format } from '@cloudinary/url-gen/actions/delivery';
+import { concatenate } from '@cloudinary/url-gen/actions/videoEdit';
+import { source } from '@cloudinary/url-gen/qualifiers/concatenate';
 
 export interface VideoProcessingOptions {
   sequences: Array<{
@@ -111,7 +112,7 @@ export class VideoProcessor {
         processedVideoUrl = this.processSingleVideo(validSequences[0], trimData[0]);
       } else {
         console.log('🔗 Processing multiple videos for concatenation');
-        processedVideoUrl = this.buildSimpleConcatenationUrl(validSequences, trimData);
+        processedVideoUrl = this.buildConcatenationUrl(validSequences, trimData);
       }
 
       onProgress?.(75);
@@ -202,21 +203,62 @@ export class VideoProcessor {
     }
   }
 
-  private buildSimpleConcatenationUrl(sequences: any[], trimData: TrimData[]): string {
+  private buildConcatenationUrl(sequences: any[], trimData: TrimData[]): string {
     try {
-      console.log('🔧 Building simple concatenation URL...');
+      console.log('🔧 Building concatenation URL for', sequences.length, 'videos...');
       
-      // For now, let's use a simpler approach - just process the first video
-      // This is a fallback to ensure something works
-      const firstSequence = sequences[0];
-      const firstTrimData = trimData[0];
-      
-      console.log('📝 Using first video as fallback for concatenation:', {
-        name: firstSequence.name,
-        duration: firstTrimData.trimmedDuration
+      // Extract public IDs for all sequences
+      const publicIds = sequences.map((seq, index) => {
+        const publicId = this.extractCloudinaryPublicId(seq.file_url);
+        console.log(`📝 Video ${index + 1} public ID:`, publicId);
+        return publicId;
       });
       
-      return this.processSingleVideo(firstSequence, firstTrimData);
+      // Start with the first video as the base
+      const baseVideo = this.cloudinary.video(publicIds[0]);
+      
+      // Apply trimming to the first video if needed
+      if (trimData[0].trimmedDuration < trimData[0].originalDuration) {
+        console.log(`✂️ Trimming first video: ${trimData[0].originalDuration}s → ${trimData[0].trimmedDuration.toFixed(2)}s`);
+        baseVideo.videoEdit(trim().duration(trimData[0].trimmedDuration));
+      }
+      
+      // Add concatenation for additional videos
+      if (publicIds.length > 1) {
+        console.log('🔗 Adding concatenation for remaining videos...');
+        
+        const concatenateSources = publicIds.slice(1).map((publicId, index) => {
+          const videoIndex = index + 1; // +1 because we sliced from index 1
+          const currentTrimData = trimData[videoIndex];
+          
+          console.log(`🎬 Adding video ${videoIndex + 1} to concatenation:`, {
+            publicId,
+            originalDuration: currentTrimData.originalDuration,
+            trimmedDuration: currentTrimData.trimmedDuration
+          });
+          
+          // Create video source with trimming if needed
+          if (currentTrimData.trimmedDuration < currentTrimData.originalDuration) {
+            // For concatenated videos, we need to create a transformation URL
+            const trimmedVideo = this.cloudinary.video(publicId)
+              .videoEdit(trim().duration(currentTrimData.trimmedDuration));
+            return source(trimmedVideo);
+          } else {
+            return source(publicId);
+          }
+        });
+        
+        // Apply concatenation
+        baseVideo.videoEdit(concatenate(...concatenateSources));
+      }
+      
+      // Apply quality and format
+      baseVideo.quality(auto()).delivery(format('mp4'));
+      
+      const url = baseVideo.toURL();
+      console.log('✅ Concatenation URL generated:', url);
+      
+      return url;
       
     } catch (error) {
       console.error('❌ Failed to build concatenation URL:', error);
