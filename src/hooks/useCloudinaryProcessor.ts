@@ -1,4 +1,3 @@
-
 import { useState, useCallback } from 'react';
 import { useToast } from '@/hooks/use-toast';
 
@@ -17,6 +16,7 @@ interface CloudinaryProcessorOptions {
 
 interface ProcessVideoOptions {
   videos: File[];
+  targetDuration?: number; // Add target duration support
   onProgress?: (progress: CloudinaryUploadProgress[]) => void;
 }
 
@@ -79,7 +79,7 @@ export const useCloudinaryProcessor = (options: CloudinaryProcessorOptions) => {
     });
   }, [options.cloudName, options.uploadPreset]);
 
-  const concatenateVideos = useCallback(async (publicIds: string[]): Promise<string> => {
+  const concatenateVideos = useCallback(async (publicIds: string[], targetDuration?: number): Promise<string> => {
     try {
       // Call our API endpoint for server-side concatenation
       const response = await fetch('/api/concatenate-videos', {
@@ -90,6 +90,7 @@ export const useCloudinaryProcessor = (options: CloudinaryProcessorOptions) => {
         body: JSON.stringify({
           publicIds,
           cloudName: options.cloudName,
+          targetDuration, // Include target duration in API call
         }),
       });
 
@@ -105,7 +106,7 @@ export const useCloudinaryProcessor = (options: CloudinaryProcessorOptions) => {
     }
   }, [options.cloudName]);
 
-  const processVideos = useCallback(async ({ videos, onProgress }: ProcessVideoOptions): Promise<string> => {
+  const processVideos = useCallback(async ({ videos, targetDuration, onProgress }: ProcessVideoOptions): Promise<string> => {
     setIsProcessing(true);
     
     try {
@@ -136,13 +137,14 @@ export const useCloudinaryProcessor = (options: CloudinaryProcessorOptions) => {
       setUploadProgress(processingProgress);
       onProgress?.(processingProgress);
 
+      const trimMessage = targetDuration ? " with proportional trimming" : "";
       toast({
         title: "Videos Uploaded Successfully",
-        description: `${videos.length} videos uploaded. Starting concatenation...`,
+        description: `${videos.length} videos uploaded. Starting concatenation${trimMessage}...`,
       });
 
-      // Concatenate videos using Cloudinary
-      const concatenatedUrl = await concatenateVideos(publicIds);
+      // Concatenate videos using Cloudinary with optional target duration
+      const concatenatedUrl = await concatenateVideos(publicIds, targetDuration);
 
       // Final success state
       const finalProgress = uploadProgress.map(p => ({
@@ -154,8 +156,8 @@ export const useCloudinaryProcessor = (options: CloudinaryProcessorOptions) => {
       onProgress?.(finalProgress);
 
       toast({
-        title: "Video Concatenation Complete!",
-        description: "Your videos have been successfully concatenated and are ready for download.",
+        title: "Video Processing Complete!",
+        description: `Your videos have been successfully ${targetDuration ? 'trimmed and ' : ''}concatenated and are ready for download.`,
       });
 
       return concatenatedUrl;

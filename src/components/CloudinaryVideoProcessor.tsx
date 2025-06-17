@@ -1,7 +1,8 @@
-
 import { useState, useCallback } from 'react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
+import { Label } from '@/components/ui/label';
 import { Progress } from '@/components/ui/progress';
 import { Badge } from '@/components/ui/badge';
 import { useToast } from '@/hooks/use-toast';
@@ -15,6 +16,7 @@ interface CloudinaryVideoProcessorProps {
 
 const CloudinaryVideoProcessor = ({ onProcessingComplete }: CloudinaryVideoProcessorProps) => {
   const [selectedFiles, setSelectedFiles] = useState<File[]>([]);
+  const [targetDuration, setTargetDuration] = useState<number | undefined>();
   const [processedVideoUrl, setProcessedVideoUrl] = useState<string | null>(null);
   const [processingStep, setProcessingStep] = useState('');
   const { toast } = useToast();
@@ -54,6 +56,7 @@ const CloudinaryVideoProcessor = ({ onProcessingComplete }: CloudinaryVideoProce
         
         const resultUrl = await processVideos({
           videos: selectedFiles,
+          targetDuration, // Pass the target duration
           onProgress: (progress) => {
             const uploadingCount = progress.filter(p => p.status === 'uploading').length;
             const processingCount = progress.filter(p => p.status === 'processing').length;
@@ -61,7 +64,8 @@ const CloudinaryVideoProcessor = ({ onProcessingComplete }: CloudinaryVideoProce
             if (uploadingCount > 0) {
               setProcessingStep(`Uploading ${uploadingCount} video(s) to Cloudinary...`);
             } else if (processingCount > 0) {
-              setProcessingStep('Processing and concatenating videos...');
+              const trimMessage = targetDuration ? ' with proportional trimming' : '';
+              setProcessingStep(`Processing and concatenating videos${trimMessage}...`);
             } else {
               setProcessingStep('Finalizing video...');
             }
@@ -76,7 +80,7 @@ const CloudinaryVideoProcessor = ({ onProcessingComplete }: CloudinaryVideoProce
         console.error('Processing failed:', error);
         setProcessingStep('');
       }
-    }, [selectedFiles, processVideos, toast, onProcessingComplete]);
+    }, [selectedFiles, targetDuration, processVideos, toast, onProcessingComplete]);
 
     const handleDownload = useCallback(() => {
       if (processedVideoUrl) {
@@ -100,14 +104,9 @@ const CloudinaryVideoProcessor = ({ onProcessingComplete }: CloudinaryVideoProce
       setProcessingStep('');
     }, []);
 
-    const getTotalSize = () => {
-      return selectedFiles.reduce((total, file) => total + file.size, 0);
-    };
-
-    const getOverallProgress = () => {
-      if (uploadProgress.length === 0) return 0;
-      const totalProgress = uploadProgress.reduce((sum, p) => sum + p.progress, 0);
-      return Math.round(totalProgress / uploadProgress.length);
+    // Calculate total duration of selected videos (estimate 10s per video if duration unknown)
+    const getTotalDuration = () => {
+      return selectedFiles.length * 10; // Rough estimate since we don't have duration from File objects
     };
 
     // Success state
@@ -213,7 +212,7 @@ const CloudinaryVideoProcessor = ({ onProcessingComplete }: CloudinaryVideoProce
               <div>✅ Unlimited file sizes</div>
               <div>✅ Professional quality</div>
               <div>✅ Fast cloud processing</div>
-              <div>✅ Automatic optimization</div>
+              <div>✅ Proportional trimming</div>
             </div>
           </CardContent>
         </Card>
@@ -254,6 +253,45 @@ const CloudinaryVideoProcessor = ({ onProcessingComplete }: CloudinaryVideoProce
           </CardContent>
         </Card>
 
+        {/* Target Duration Input */}
+        {selectedFiles.length > 0 && (
+          <Card className="bg-gray-800 border-gray-700">
+            <CardHeader>
+              <CardTitle className="text-white">Duration Settings</CardTitle>
+            </CardHeader>
+            <CardContent className="space-y-4">
+              <div className="space-y-2">
+                <Label htmlFor="target-duration" className="text-gray-300">
+                  Target Duration (seconds) - Optional
+                </Label>
+                <Input
+                  id="target-duration"
+                  type="number"
+                  min="1"
+                  step="0.1"
+                  value={targetDuration || ''}
+                  onChange={(e) => setTargetDuration(e.target.value ? parseFloat(e.target.value) : undefined)}
+                  placeholder="Leave empty to use full duration"
+                  className="bg-gray-700 border-gray-600 text-white placeholder-gray-400"
+                />
+                <div className="text-sm text-gray-400">
+                  <p>Estimated total duration: ~{getTotalDuration()}s</p>
+                  {targetDuration && targetDuration < getTotalDuration() && (
+                    <p className="text-orange-400 mt-1">
+                      ⚠️ Videos will be trimmed proportionally to {targetDuration}s
+                    </p>
+                  )}
+                  {targetDuration && targetDuration >= getTotalDuration() && (
+                    <p className="text-green-400 mt-1">
+                      ✅ No trimming needed - target duration is sufficient
+                    </p>
+                  )}
+                </div>
+              </div>
+            </CardContent>
+          </Card>
+        )}
+
         {/* Process Button */}
         <div className="text-center">
           <Button 
@@ -263,7 +301,12 @@ const CloudinaryVideoProcessor = ({ onProcessingComplete }: CloudinaryVideoProce
             disabled={selectedFiles.length === 0}
           >
             <Cloud className="h-5 w-5 mr-2" />
-            {selectedFiles.length === 1 ? 'Process Video' : `Concatenate ${selectedFiles.length} Videos`}
+            {targetDuration && targetDuration < getTotalDuration() 
+              ? `Concatenate & Trim to ${targetDuration}s`
+              : selectedFiles.length === 1 
+                ? 'Process Video' 
+                : `Concatenate ${selectedFiles.length} Videos`
+            }
           </Button>
           {selectedFiles.length === 0 ? (
             <p className="text-sm text-red-400 mt-2">
@@ -272,6 +315,9 @@ const CloudinaryVideoProcessor = ({ onProcessingComplete }: CloudinaryVideoProce
           ) : (
             <p className="text-sm text-gray-400 mt-2">
               Process with Cloudinary's cloud infrastructure
+              {targetDuration && targetDuration < getTotalDuration() && (
+                <span className="text-orange-400"> • Proportional trimming enabled</span>
+              )}
             </p>
           )}
         </div>

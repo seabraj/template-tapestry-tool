@@ -1,5 +1,4 @@
 
-
 import { supabase } from '@/integrations/supabase/client';
 
 export interface VideoProcessingOptions {
@@ -30,9 +29,15 @@ export interface VideoProcessingOptions {
   duration: number;
 }
 
+interface TrimData {
+  originalDuration: number;
+  trimmedDuration: number;
+  trimPercentage: number;
+}
+
 export class VideoProcessor {
   constructor() {
-    console.log('🎬 VideoProcessor initialized for Cloudinary concatenation with trimming');
+    console.log('🎬 VideoProcessor initialized for Cloudinary concatenation with proportional trimming');
   }
 
   async processVideo(options: VideoProcessingOptions, onProgress?: (progress: number) => void): Promise<Blob> {
@@ -76,50 +81,46 @@ export class VideoProcessor {
     throw new Error(`Could not extract public ID from URL: ${url}`);
   }
 
-  private calculateTrimmingStrategy(sequences: Array<{duration: number}>, targetDuration: number) {
-    const totalDuration = sequences.reduce((sum, seq) => sum + seq.duration, 0);
+  private calculateProportionalTrimming(videos: Array<{duration: number}>, targetDuration: number): TrimData[] {
+    const totalDuration = videos.reduce((sum, video) => sum + video.duration, 0);
     
-    console.log(`🎯 Trimming calculation: ${totalDuration}s total → ${targetDuration}s target`);
+    console.log(`🎯 Proportional trimming calculation: ${totalDuration}s total → ${targetDuration}s target`);
     
-    if (totalDuration <= targetDuration) {
-      console.log('✅ No trimming needed - total duration fits within target');
-      return sequences.map(() => ({ startOffset: 0, duration: null })); // Use full clips
+    if (targetDuration >= totalDuration) {
+      console.log('✅ No trimming needed - target duration is >= total duration');
+      return videos.map(video => ({ 
+        originalDuration: video.duration,
+        trimmedDuration: video.duration,
+        trimPercentage: 100
+      }));
     }
     
-    // Calculate proportional trimming for each video
+    // Calculate proportional scaling factor
     const scaleFactor = targetDuration / totalDuration;
-    console.log(`📐 Scale factor: ${scaleFactor.toFixed(3)}`);
+    console.log(`📐 Scale factor: ${scaleFactor.toFixed(3)} (${(scaleFactor * 100).toFixed(1)}%)`);
     
-    const trimmingPlan = sequences.map((seq, index) => {
-      const trimmedDuration = seq.duration * scaleFactor;
-      const startOffset = 0; // Start from beginning of each clip
+    const trimData = videos.map((video, index) => {
+      const trimmedDuration = video.duration * scaleFactor;
+      const trimPercentage = Math.round(scaleFactor * 100 * 100) / 100; // Round to 2 decimals
       
-      console.log(`✂️ Video ${index + 1}: ${seq.duration}s → ${trimmedDuration.toFixed(2)}s`);
+      console.log(`✂️ Video ${index + 1}: ${video.duration}s → ${trimmedDuration.toFixed(2)}s (${trimPercentage}%)`);
       
       return {
-        startOffset,
-        duration: Math.max(1, Math.floor(trimmedDuration)) // Ensure at least 1 second
+        originalDuration: video.duration,
+        trimmedDuration: trimmedDuration,
+        trimPercentage: trimPercentage
       };
     });
     
-    // Verify total matches target (adjust last video if needed)
-    const calculatedTotal = trimmingPlan.reduce((sum, plan) => sum + (plan.duration || 0), 0);
-    const difference = targetDuration - calculatedTotal;
+    const actualTotal = trimData.reduce((sum, trim) => sum + trim.trimmedDuration, 0);
+    console.log(`🎯 Final calculated duration: ${actualTotal.toFixed(2)}s (target: ${targetDuration}s)`);
     
-    if (Math.abs(difference) > 0 && trimmingPlan.length > 0) {
-      const lastPlan = trimmingPlan[trimmingPlan.length - 1];
-      if (lastPlan.duration) {
-        lastPlan.duration = Math.max(1, lastPlan.duration + difference);
-        console.log(`🔧 Adjusted last video duration by ${difference}s to match target exactly`);
-      }
-    }
-    
-    return trimmingPlan;
+    return trimData;
   }
 
   private async processVideoWithCloudinaryConcatenation(options: VideoProcessingOptions, onProgress?: (progress: number) => void): Promise<Blob> {
     try {
-      console.log('🚀 Starting Cloudinary video concatenation with trimming...', {
+      console.log('🚀 Starting Cloudinary video concatenation with proportional trimming...', {
         sequences: options.sequences.length,
         platform: options.platform,
         targetDuration: options.duration,
@@ -146,24 +147,24 @@ export class VideoProcessor {
         validSequences.map((seq, idx) => `${(seq as any).originalOrder + 1}. ${seq.name}`).join(', '));
       onProgress?.(25);
 
-      // Calculate trimming strategy
-      const trimmingPlan = this.calculateTrimmingStrategy(validSequences, options.duration);
+      // Calculate proportional trimming
+      const trimData = this.calculateProportionalTrimming(validSequences, options.duration);
       
       // Extract Cloudinary public IDs
       const videoPublicIds = [];
       for (let i = 0; i < validSequences.length; i++) {
         const seq = validSequences[i];
-        const trimming = trimmingPlan[i];
+        const trim = trimData[i];
         
         try {
           const publicId = this.extractCloudinaryPublicId(seq.file_url);
           videoPublicIds.push({
             public_id: publicId,
             name: seq.name,
-            trimming
+            trimData: trim
           });
           
-          console.log(`📋 Video: ${seq.name} - ${publicId} (${trimming.duration ? `${trimming.duration}s` : 'full'})`);
+          console.log(`📋 Video: ${seq.name} - ${publicId} (${trim.trimPercentage}% = ${trim.trimmedDuration.toFixed(2)}s)`);
         } catch (error) {
           console.error(`❌ Failed to process sequence ${seq.name}:`, error);
           throw error;
@@ -177,10 +178,10 @@ export class VideoProcessor {
         const video = videoPublicIds[0];
         let transformations = ['q_auto:good', 'f_mp4'];
         
-        // FIXED: Apply trimming correctly for single video
-        if (video.trimming.duration) {
-          transformations.push(`so_${video.trimming.startOffset}`, `du_${video.trimming.duration}`);
-          console.log(`✂️ Single video trimming: start ${video.trimming.startOffset}s, duration ${video.trimming.duration}s`);
+        // Apply proportional trimming using percentage
+        if (video.trimData.trimPercentage < 100) {
+          transformations.push(`du_${video.trimData.trimPercentage}p`);
+          console.log(`✂️ Single video trimming: ${video.trimData.trimPercentage}% duration`);
         }
         
         const singleVideoUrl = `https://res.cloudinary.com/dsxrmo3kt/video/upload/${transformations.join(',')}/${video.public_id}.mp4`;
@@ -195,51 +196,48 @@ export class VideoProcessor {
         
         const videoBlob = await videoResponse.blob();
         onProgress?.(100);
-        console.log('✅ Successfully processed single video with trimming');
+        console.log('✅ Successfully processed single video with proportional trimming');
         return videoBlob;
       }
 
-      // FIXED: Multiple videos - use correct concatenation with per-layer trimming
-      console.log('🔗 Creating concatenation URL with individual video trimming...');
+      // Multiple videos - use concatenation with proportional trimming
+      console.log('🔗 Creating concatenation URL with proportional trimming...');
       
       // Build the concatenation URL - start with the first video as base
       const baseVideo = videoPublicIds[0];
       let transformations = ['q_auto:good', 'f_mp4'];
       
-      // CRITICAL FIX: Apply trimming to base video BEFORE other transformations
-      if (baseVideo.trimming.duration) {
-        transformations.splice(1, 0, `so_${baseVideo.trimming.startOffset}`, `du_${baseVideo.trimming.duration}`);
-        console.log(`✂️ Base video trimming applied: start ${baseVideo.trimming.startOffset}s, duration ${baseVideo.trimming.duration}s`);
+      // Apply proportional trimming to base video
+      if (baseVideo.trimData.trimPercentage < 100) {
+        transformations.push(`du_${baseVideo.trimData.trimPercentage}p`);
+        console.log(`✂️ Base video proportional trimming: ${baseVideo.trimData.trimPercentage}%`);
       }
       
-      // Add each subsequent video as a layer with its own trimming
+      // Add each subsequent video as a layer with proportional trimming
       for (let i = 1; i < videoPublicIds.length; i++) {
         const video = videoPublicIds[i];
         
-        // CRITICAL FIX: Create a pre-trimmed video reference for layering
-        let videoReference = video.public_id.replace(/\//g, ':');
+        // Create overlay transformation with proportional trimming
+        let overlayTransform = `l_video:${video.public_id.replace(/\//g, ':')}`;
         
-        // If this video needs trimming, we need to create a transformation that trims it first
-        if (video.trimming.duration) {
-          // Create a nested transformation: trim the video first, then use it as a layer
-          const trimmedVideoTransform = `so_${video.trimming.startOffset},du_${video.trimming.duration}/${video.public_id}`;
-          videoReference = trimmedVideoTransform.replace(/\//g, ':');
-          console.log(`✂️ Layer ${i} pre-trimming transformation: ${trimmedVideoTransform}`);
+        // Add proportional trimming using Cloudinary's du_Xp syntax
+        if (video.trimData.trimPercentage < 100) {
+          overlayTransform += `/du_${video.trimData.trimPercentage}p`;
+          console.log(`✂️ Layer ${i} proportional trimming: ${video.trimData.trimPercentage}%`);
         }
         
-        // Apply the layer with the (potentially trimmed) video
-        const layerTransform = `l_video:${videoReference},fl_splice,fl_layer_apply`;
-        transformations.push(layerTransform);
+        overlayTransform += '/fl_splice,fl_layer_apply';
+        transformations.push(overlayTransform);
         
-        console.log(`📎 Layer ${i} added: ${video.name} with transform: ${layerTransform}`);
+        console.log(`📎 Layer ${i} added: ${video.name} with transform: ${overlayTransform}`);
       }
       
       // Build the final concatenation URL
       const transformationString = transformations.join('/');
       const concatenatedUrl = `https://res.cloudinary.com/dsxrmo3kt/video/upload/${transformationString}/${baseVideo.public_id}.mp4`;
       
-      const finalDuration = trimmingPlan.reduce((sum, plan) => sum + (plan.duration || validSequences[trimmingPlan.indexOf(plan)].duration), 0);
-      console.log(`🎯 Generated concatenation URL with trimming (target: ${options.duration}s, estimated: ${finalDuration}s)`);
+      const finalDuration = trimData.reduce((sum, trim) => sum + trim.trimmedDuration, 0);
+      console.log(`🎯 Generated concatenation URL with proportional trimming (target: ${options.duration}s, calculated: ${finalDuration.toFixed(2)}s)`);
       console.log(`🔗 Final URL: ${concatenatedUrl}`);
       
       onProgress?.(75);
@@ -270,7 +268,8 @@ export class VideoProcessor {
         console.log('✅ Successfully downloaded concatenated and trimmed video:', {
           size: videoBlob.size,
           type: videoBlob.type,
-          targetDuration: options.duration
+          targetDuration: options.duration,
+          calculatedDuration: finalDuration.toFixed(2)
         });
         
         return videoBlob;
@@ -290,4 +289,3 @@ export class VideoProcessor {
     return 'cloudinary';
   }
 }
-

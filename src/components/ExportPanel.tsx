@@ -1,4 +1,3 @@
-
 import { Card, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
@@ -74,7 +73,7 @@ const ExportPanel = ({
         })),
         customization,
         platform,
-        duration: totalDuration
+        duration: duration // Use the user-specified duration from step 2
       }, (progress) => {
         setProgress(progress);
       });
@@ -86,7 +85,7 @@ const ExportPanel = ({
 
       toast({
         title: "Video Generated Successfully!",
-        description: "Your video has been processed and is ready for download.",
+        description: `Your video has been processed and ${duration < totalDuration ? 'trimmed ' : ''}is ready for download.`,
       });
 
     } catch (error) {
@@ -231,12 +230,37 @@ const ExportPanel = ({
 
             <div className="text-center">
               <h5 className="font-medium text-orange-300">Duration</h5>
-              <p className="text-lg font-bold text-orange-400">{totalDuration}s</p>
-              <p className="text-sm text-orange-300">{selectedSequences.length} clips</p>
+              <p className="text-lg font-bold text-orange-400">{duration}s</p>
+              <p className="text-sm text-orange-300">
+                {selectedSequences.length} clips
+                {duration < totalDuration && (
+                  <span className="block text-yellow-400 text-xs mt-1">
+                    (trimmed from {totalDuration}s)
+                  </span>
+                )}
+              </p>
             </div>
           </div>
         </CardContent>
       </Card>
+
+      {/* Duration Warning */}
+      {duration < totalDuration && (
+        <Card className="border-yellow-600 bg-yellow-950/50">
+          <CardContent className="p-4">
+            <div className="flex items-center space-x-2 text-yellow-400">
+              <AlertCircle className="h-5 w-5" />
+              <div>
+                <h4 className="font-semibold">Proportional Trimming Enabled</h4>
+                <p className="text-sm">
+                  Videos will be trimmed proportionally from {totalDuration}s to {duration}s 
+                  ({Math.round((duration / totalDuration) * 100)}% of original duration)
+                </p>
+              </div>
+            </div>
+          </CardContent>
+        </Card>
+      )}
 
       {/* Selected Sequences Preview */}
       <Card className="bg-gray-800 border-gray-700">
@@ -263,15 +287,26 @@ const ExportPanel = ({
                   </div>
                   <div className="flex-1">
                     <h5 className="font-medium text-white">{sequence.name}</h5>
-                    <p className="text-sm text-gray-400">{sequence.duration}s duration</p>
+                    <p className="text-sm text-gray-400">
+                      {sequence.duration}s duration
+                      {duration < totalDuration && (
+                        <span className="text-yellow-400 ml-2">
+                          → {((sequence.duration / totalDuration) * duration).toFixed(1)}s trimmed
+                        </span>
+                      )}
+                    </p>
                   </div>
                   <Badge variant="secondary">{sequence.duration}s</Badge>
                 </div>
               ))}
               <div className="border-t border-gray-600 pt-3 mt-4">
                 <div className="flex justify-between items-center">
-                  <span className="font-medium text-white">Total Duration:</span>
-                  <Badge className="bg-green-600">{totalDuration}s</Badge>
+                  <span className="font-medium text-white">
+                    {duration < totalDuration ? 'Target' : 'Total'} Duration:
+                  </span>
+                  <Badge className={duration < totalDuration ? "bg-yellow-600" : "bg-green-600"}>
+                    {duration}s
+                  </Badge>
                 </div>
               </div>
             </div>
@@ -317,7 +352,10 @@ const ExportPanel = ({
           disabled={selectedSequences.length === 0}
         >
           <Video className="h-5 w-5 mr-2" />
-          Generate Video
+          {duration < totalDuration 
+            ? `Generate & Trim to ${duration}s`
+            : 'Generate Video'
+          }
         </Button>
         {selectedSequences.length === 0 ? (
           <p className="text-sm text-red-400 mt-2">
@@ -326,6 +364,9 @@ const ExportPanel = ({
         ) : (
           <p className="text-sm text-gray-400 mt-2">
             Generate your final video with {selectedSequences.length} sequence(s)
+            {duration < totalDuration && (
+              <span className="text-yellow-400"> • Proportional trimming will be applied</span>
+            )}
           </p>
         )}
       </div>
