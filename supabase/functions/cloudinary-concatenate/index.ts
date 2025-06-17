@@ -35,7 +35,7 @@ serve(async (req) => {
   }
 
   try {
-    console.log('🎬 === Cloudinary True Concatenation Started ===');
+    console.log('🎬 === Cloudinary Sequential Concatenation Started ===');
     
     const { videos, targetDuration } = await req.json() as ConcatenationRequest;
     
@@ -59,161 +59,170 @@ serve(async (req) => {
       };
     });
 
-    // Method 1: Create individual trimmed videos first, then concatenate
-    console.log('🔧 Method 1: Creating trimmed videos for concatenation...');
+    // Method 1: Use Cloudinary's video stitching with proper sequential approach
+    console.log('🔧 Method 1: Sequential video stitching...');
     
     try {
-      const resultPublicId = `concat_result_${Date.now()}`;
+      const baseVideo = processedVideos[0];
+      const additionalVideos = processedVideos.slice(1);
+      const resultId = `concatenated_${Date.now()}`;
       
-      // Step 1: Create trimmed versions of each video
-      const trimmedVideos = [];
+      console.log(`🎬 Base video: ${baseVideo.publicId} (${baseVideo.duration.toFixed(2)}s)`);
       
-      for (let i = 0; i < processedVideos.length; i++) {
-        const video = processedVideos[i];
-        const trimmedId = `trimmed_${i}_${Date.now()}`;
+      // Build sequential transformation using proper Cloudinary concatenation
+      let currentOffset = baseVideo.duration;
+      const transforms = [`du_${baseVideo.duration.toFixed(2)}`];
+      
+      for (let i = 0; i < additionalVideos.length; i++) {
+        const video = additionalVideos[i];
+        console.log(`➕ Adding video ${i + 2}: ${video.publicId} at offset ${currentOffset.toFixed(2)}s`);
         
-        console.log(`✂️ Creating trimmed video ${i + 1}: ${trimmedId} (${video.duration.toFixed(2)}s)`);
+        // Use timeline positioning for true concatenation
+        transforms.push(
+          `l_video:${video.publicId.replace('/', ':')}`
+        );
+        transforms.push(`so_${currentOffset.toFixed(2)}`); // Start at end of previous video
+        transforms.push(`du_${video.duration.toFixed(2)}`); // Duration of this clip
+        transforms.push('fl_layer_apply');
         
-        // Create trimmed video using upload with transformation
-        try {
-          const trimResult = await cloudinary.uploader.upload(
-            cloudinary.url(video.publicId, {
-              resource_type: 'video',
-              transformation: [
-                { duration: video.duration.toFixed(2) },
-                { quality: 'auto:good' }
-              ],
-              format: 'mp4'
-            }),
-            {
-              resource_type: 'video',
-              public_id: trimmedId,
-              overwrite: true
-            }
-          );
-          
-          trimmedVideos.push(trimmedId);
-          console.log(`✅ Trimmed video ${i + 1} created: ${trimmedId}`);
-          
-        } catch (trimError) {
-          console.error(`❌ Failed to create trimmed video ${i + 1}:`, trimError.message);
-          throw trimError;
-        }
+        currentOffset += video.duration;
       }
       
-      // Step 2: Use Archive API to concatenate the trimmed videos
-      console.log('🔗 Concatenating trimmed videos using Archive API...');
+      // Add final formatting
+      transforms.push('w_1280,h_720,c_pad');
+      transforms.push('ac_aac');
+      transforms.push('q_auto:good');
       
-      const archiveResult = await cloudinary.uploader.create_archive({
-        resource_type: 'video',
-        type: 'upload',
-        public_ids: trimmedVideos,
-        target_format: 'mp4',
-        mode: 'create',
-        notification_url: null, // Synchronous
-        transformation: [
-          { width: 1280, height: 720, crop: 'pad' },
-          { audio_codec: 'aac' },
-          { quality: 'auto:good' }
-        ]
-      });
+      const sequentialUrl = `https://res.cloudinary.com/dsxrmo3kt/video/upload/${transforms.join('/')}/${baseVideo.publicId}.mp4`;
+      console.log('🎯 Sequential concatenation URL:', sequentialUrl);
+      console.log('📋 Transformation details:', transforms.join(' | '));
       
-      console.log('✅ Archive concatenation completed:', archiveResult.secure_url);
+      // Test the sequential URL
+      const sequentialTest = await fetch(sequentialUrl, { method: 'HEAD' });
+      console.log(`📡 Sequential URL test: ${sequentialTest.status} ${sequentialTest.statusText}`);
       
-      // Clean up trimmed videos
-      console.log('🧹 Cleaning up temporary trimmed videos...');
-      for (const trimmedId of trimmedVideos) {
-        try {
-          await cloudinary.uploader.destroy(trimmedId, { resource_type: 'video' });
-        } catch (cleanupError) {
-          console.warn(`⚠️ Failed to cleanup ${trimmedId}:`, cleanupError.message);
-        }
-      }
-      
-      return new Response(
-        JSON.stringify({ 
-          success: true, 
-          url: archiveResult.secure_url,
-          message: `Successfully concatenated ${videos.length} videos using Archive API`,
-          method: 'archive_concatenation',
-          totalDuration: targetDuration
-        }),
-        { status: 200, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-      );
-      
-    } catch (archiveError) {
-      console.warn('⚠️ Archive concatenation failed:', archiveError.message);
-    }
-    
-    // Method 2: Simple playlist approach using Cloudinary's video stitching
-    console.log('🔧 Method 2: Using playlist-based concatenation...');
-    
-    try {
-      // Create a simple manifest for concatenation
-      const playlistManifest = {
-        video: processedVideos.map(video => ({
-          publicId: video.publicId,
-          transformation: `du_${video.duration.toFixed(2)}`
-        }))
-      };
-      
-      console.log('📝 Playlist manifest:', JSON.stringify(playlistManifest, null, 2));
-      
-      // Upload manifest as raw JSON
-      const manifestResult = await cloudinary.uploader.upload(
-        `data:application/json;base64,${btoa(JSON.stringify(playlistManifest))}`,
-        {
-          resource_type: 'raw',
-          public_id: `playlist_${Date.now()}`,
-          use_filename: false,
-          unique_filename: true
-        }
-      );
-      
-      console.log('📄 Playlist manifest uploaded:', manifestResult.public_id);
-      
-      // Create video from playlist
-      const playlistUrl = cloudinary.url('sample', {
-        resource_type: 'video',
-        transformation: [
-          { 
-            overlay: `raw:${manifestResult.public_id}.json`,
-            flags: 'splice'
-          },
-          { width: 1280, height: 720, crop: 'pad' },
-          { audio_codec: 'aac' },
-          { quality: 'auto:good' }
-        ],
-        format: 'mp4'
-      });
-      
-      console.log('🎯 Playlist-based URL:', playlistUrl);
-      
-      // Test the playlist URL
-      const playlistTest = await fetch(playlistUrl, { method: 'HEAD' });
-      console.log(`📡 Playlist URL test: ${playlistTest.status} ${playlistTest.statusText}`);
-      
-      if (playlistTest.ok) {
+      if (sequentialTest.ok) {
         return new Response(
           JSON.stringify({ 
             success: true, 
-            url: playlistUrl,
-            message: `Successfully created concatenated video using playlist method`,
-            method: 'playlist',
-            totalDuration: targetDuration
+            url: sequentialUrl,
+            message: `Successfully concatenated ${videos.length} videos sequentially (${targetDuration.toFixed(2)}s total)`,
+            method: 'sequential_stitching',
+            totalDuration: targetDuration,
+            videosProcessed: videos.length
           }),
           { status: 200, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
         );
       }
       
-    } catch (playlistError) {
-      console.warn('⚠️ Playlist method failed:', playlistError.message);
+    } catch (sequentialError) {
+      console.warn('⚠️ Sequential stitching failed:', sequentialError.message);
     }
     
-    // Method 3: Reliable fallback - use the video that best fits the target duration
+    // Method 2: Use the trimmed videos approach that was working, but with proper concatenation
+    console.log('🔧 Method 2: Creating and concatenating trimmed videos...');
+    
+    try {
+      const timestamp = Date.now();
+      const trimmedVideos = [];
+      
+      // Step 1: Create trimmed versions (this was working!)
+      for (let i = 0; i < processedVideos.length; i++) {
+        const video = processedVideos[i];
+        const trimmedId = `trimmed_${i}_${timestamp}`;
+        
+        console.log(`✂️ Creating trimmed video ${i + 1}: ${trimmedId} (${video.duration.toFixed(2)}s)`);
+        
+        // Generate URL for trimmed video
+        const trimmedUrl = cloudinary.url(video.publicId, {
+          resource_type: 'video',
+          transformation: [
+            { duration: video.duration.toFixed(2) },
+            { quality: 'auto:good' }
+          ],
+          format: 'mp4'
+        });
+        
+        // Upload as new video with trimmed duration
+        const trimResult = await cloudinary.uploader.upload(trimmedUrl, {
+          resource_type: 'video',
+          public_id: trimmedId,
+          overwrite: true
+        });
+        
+        trimmedVideos.push(trimmedId);
+        console.log(`✅ Trimmed video ${i + 1} created: ${trimmedId}`);
+      }
+      
+      // Step 2: Create concatenated video using the trimmed videos
+      console.log('🔗 Concatenating trimmed videos...');
+      
+      if (trimmedVideos.length >= 2) {
+        const baseId = trimmedVideos[0];
+        const overlayIds = trimmedVideos.slice(1);
+        
+        // Build concatenation transformation
+        const concatTransforms = [];
+        let offset = 0;
+        
+        // Get duration of base video
+        console.log(`📹 Base trimmed video: ${baseId}`);
+        
+        // Add overlays sequentially
+        for (let i = 0; i < overlayIds.length; i++) {
+          const overlayId = overlayIds[i];
+          console.log(`➕ Adding overlay: ${overlayId} after base video`);
+          
+          concatTransforms.push(`l_video:${overlayId}`);
+          concatTransforms.push('so_auto'); // Start after previous video ends
+          concatTransforms.push('fl_layer_apply');
+        }
+        
+        // Add final formatting
+        concatTransforms.push('w_1280,h_720,c_pad');
+        concatTransforms.push('ac_aac');
+        concatTransforms.push('q_auto:good');
+        
+        const concatUrl = `https://res.cloudinary.com/dsxrmo3kt/video/upload/${concatTransforms.join('/')}/${baseId}.mp4`;
+        console.log('🎯 Trimmed concatenation URL:', concatUrl);
+        
+        // Test the concatenation URL
+        const concatTest = await fetch(concatUrl, { method: 'HEAD' });
+        console.log(`📡 Concatenation URL test: ${concatTest.status} ${concatTest.statusText}`);
+        
+        if (concatTest.ok) {
+          // Clean up trimmed videos after successful concatenation
+          console.log('🧹 Cleaning up temporary videos...');
+          for (const trimmedId of trimmedVideos) {
+            try {
+              await cloudinary.uploader.destroy(trimmedId, { resource_type: 'video' });
+              console.log(`🗑️ Cleaned up: ${trimmedId}`);
+            } catch (cleanupError) {
+              console.warn(`⚠️ Cleanup warning for ${trimmedId}:`, cleanupError.message);
+            }
+          }
+          
+          return new Response(
+            JSON.stringify({ 
+              success: true, 
+              url: concatUrl,
+              message: `Successfully concatenated ${videos.length} trimmed videos (${targetDuration.toFixed(2)}s total)`,
+              method: 'trimmed_concatenation',
+              totalDuration: targetDuration,
+              videosProcessed: videos.length
+            }),
+            { status: 200, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+          );
+        }
+      }
+      
+    } catch (trimmedError) {
+      console.warn('⚠️ Trimmed concatenation failed:', trimmedError.message);
+    }
+    
+    // Method 3: Smart fallback (current working method)
     console.log('🔧 Method 3: Smart video selection fallback...');
     
-    // Find the video whose proportional duration is closest to the target
     const bestVideo = processedVideos.reduce((best, current) => {
       const bestDiff = Math.abs(best.duration - targetDuration);
       const currentDiff = Math.abs(current.duration - targetDuration);
@@ -221,16 +230,19 @@ serve(async (req) => {
     });
     
     const fallbackDuration = Math.min(bestVideo.duration, targetDuration);
-    const fallbackTransforms = [
-      `du_${fallbackDuration.toFixed(2)}`,
-      'w_1280,h_720,c_pad',
-      'ac_aac',
-      'q_auto:good'
-    ];
+    const fallbackUrl = cloudinary.url(bestVideo.publicId, {
+      resource_type: 'video',
+      transformation: [
+        { duration: fallbackDuration.toFixed(2) },
+        { width: 1280, height: 720, crop: 'pad' },
+        { audio_codec: 'aac' },
+        { quality: 'auto:good' }
+      ],
+      format: 'mp4'
+    });
     
-    const fallbackUrl = `https://res.cloudinary.com/dsxrmo3kt/video/upload/${fallbackTransforms.join('/')}/${bestVideo.publicId}.mp4`;
-    console.log('🎯 Smart fallback URL:', fallbackUrl);
-    console.log(`📹 Using best-fit video: ${bestVideo.publicId} (${fallbackDuration.toFixed(2)}s)`);
+    console.log('🎯 Smart fallback URL (using SDK):', fallbackUrl);
+    console.log(`📹 Selected video: ${bestVideo.publicId} (${fallbackDuration.toFixed(2)}s)`);
     
     return new Response(
       JSON.stringify({ 
@@ -243,7 +255,7 @@ serve(async (req) => {
         targetDuration: targetDuration,
         videosProcessed: 1,
         totalVideos: videos.length,
-        note: 'True concatenation in development - using optimal single video'
+        note: 'Concatenation methods being optimized - using reliable single video approach'
       }),
       { status: 200, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
     );
