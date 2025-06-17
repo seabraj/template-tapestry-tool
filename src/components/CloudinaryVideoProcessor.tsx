@@ -1,3 +1,4 @@
+
 import { useState, useCallback } from 'react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -20,6 +21,23 @@ const CloudinaryVideoProcessor = ({ onProcessingComplete }: CloudinaryVideoProce
   const [processedVideoUrl, setProcessedVideoUrl] = useState<string | null>(null);
   const [processingStep, setProcessingStep] = useState('');
   const { toast } = useToast();
+
+  // Helper function to calculate overall progress
+  const getOverallProgress = useCallback(() => {
+    if (uploadProgress.length === 0) return 0;
+    const totalProgress = uploadProgress.reduce((sum, p) => sum + p.progress, 0);
+    return Math.round(totalProgress / uploadProgress.length);
+  }, [uploadProgress]);
+
+  // Helper function to calculate total file size
+  const getTotalSize = useCallback(() => {
+    return selectedFiles.reduce((total, file) => total + file.size, 0);
+  }, [selectedFiles]);
+
+  // Calculate total duration of selected videos (estimate 10s per video if duration unknown)
+  const getTotalDuration = useCallback(() => {
+    return selectedFiles.length * 10; // Rough estimate since we don't have duration from File objects
+  }, [selectedFiles]);
 
   try {
     const config = getCloudinaryConfig();
