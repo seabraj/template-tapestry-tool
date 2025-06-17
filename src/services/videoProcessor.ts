@@ -1,3 +1,4 @@
+
 import { supabase } from '@/integrations/supabase/client';
 
 export interface VideoProcessingOptions {
@@ -175,14 +176,14 @@ export class VideoProcessor {
         const video = videoPublicIds[0];
         let transformations = ['q_auto:good', 'f_mp4'];
         
-        // Add trimming if needed
-        if (video.trimming.duration && video.trimming.duration < validSequences[0].duration) {
+        // Add trimming if needed - FIXED: Apply trimming to single video
+        if (video.trimming.duration) {
           transformations.push(`so_${video.trimming.startOffset}`, `du_${video.trimming.duration}`);
           console.log(`✂️ Single video trimming: start ${video.trimming.startOffset}s, duration ${video.trimming.duration}s`);
         }
         
         const singleVideoUrl = `https://res.cloudinary.com/dsxrmo3kt/video/upload/${transformations.join(',')}/${video.public_id}.mp4`;
-        console.log('🎬 Single video optimization URL generated with trimming');
+        console.log('🎬 Single video optimization URL generated with trimming:', singleVideoUrl);
         onProgress?.(90);
         
         // Download the processed video
@@ -204,8 +205,8 @@ export class VideoProcessor {
       const baseVideo = videoPublicIds[0];
       const transformations = ['q_auto:good', 'f_mp4'];
       
-      // Add trimming to base video if needed
-      if (baseVideo.trimming.duration && baseVideo.trimming.duration < validSequences[0].duration) {
+      // FIXED: Add trimming to base video - apply at the start of transformations
+      if (baseVideo.trimming.duration) {
         transformations.push(`so_${baseVideo.trimming.startOffset}`, `du_${baseVideo.trimming.duration}`);
         console.log(`✂️ Base video trimming: start ${baseVideo.trimming.startOffset}s, duration ${baseVideo.trimming.duration}s`);
       }
@@ -214,11 +215,11 @@ export class VideoProcessor {
       for (let i = 1; i < videoPublicIds.length; i++) {
         const video = videoPublicIds[i];
         
-        // Build layer transformation with trimming
+        // FIXED: Build layer transformation with trimming applied to the layer itself
         let layerTransform = `l_video:${video.public_id.replace(/\//g, ':')}`;
         
-        // Add trimming parameters to the layer if needed
-        if (video.trimming.duration && video.trimming.duration < validSequences[i].duration) {
+        // Apply trimming parameters directly to the layer
+        if (video.trimming.duration) {
           layerTransform += `,so_${video.trimming.startOffset},du_${video.trimming.duration}`;
           console.log(`✂️ Layer ${i} trimming: start ${video.trimming.startOffset}s, duration ${video.trimming.duration}s`);
         }
@@ -227,7 +228,7 @@ export class VideoProcessor {
         layerTransform += ',fl_splice,fl_layer_apply';
         transformations.push(layerTransform);
         
-        console.log(`📎 Adding video ${video.name} for concatenation with trimming`);
+        console.log(`📎 Adding video ${video.name} for concatenation with trimming: ${layerTransform}`);
       }
       
       // Build the final concatenation URL
