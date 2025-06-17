@@ -7,70 +7,25 @@ const corsHeaders = {
 };
 
 // --- Configure Cloudinary Admin API ---
+// We still need the config for the SDK to sign URLs if needed in the future.
 try {
   cloudinary.config({
-    cloud_name: 'dsxrmo3kt', // Your cloud name
+    cloud_name: 'dsxrmo3kt',
     api_key: Deno.env.get('CLOUDINARY_API_KEY'),
     api_secret: Deno.env.get('CLOUDINARY_API_SECRET'),
     secure: true,
   });
   console.log('✅ Cloudinary SDK configured successfully.');
 } catch(e) {
-  console.error('❌ Failed to configure Cloudinary SDK. Ensure API Key and Secret are set in Supabase environment variables.', e);
+  console.error('❌ Failed to configure Cloudinary SDK.', e);
 }
-
 
 interface ConcatenationRequest {
   publicIds: string[];
   targetDuration: number;
 }
 
-interface VideoInfo {
-  publicId: string;
-  duration: number;
-  url: string;
-}
-
-// --- FINAL, ROBUST FUNCTION TO FETCH VIDEO DETAILS ---
-async function fetchVideoInfo(publicIds: string[]): Promise<VideoInfo[]> {
-  console.log('📡 Fetching video information using Cloudinary Admin API...');
-  
-  const videoInfos: VideoInfo[] = [];
-  
-  for (const publicId of publicIds) {
-    try {
-      // THE FIX: Use `cinemagraph_analysis: true` to force full video metadata retrieval.
-      const result = await cloudinary.api.resource(publicId, { 
-        resource_type: 'video',
-        cinemagraph_analysis: true 
-      });
-
-      const duration = result.duration;
-
-      if (!duration || typeof duration !== 'number') {
-         throw new Error(`Duration not found in API response for ${publicId}.`);
-      }
-
-      const roundedDuration = Math.round(duration * 100) / 100;
-      console.log(`📹 Video ${publicId}: ${roundedDuration}s duration (from API)`);
-      
-      videoInfos.push({
-        publicId: publicId,
-        duration: roundedDuration,
-        url: result.secure_url,
-      });
-
-    } catch (error) {
-      console.warn(`⚠️ Error fetching info for ${publicId} from Admin API:`, error.message);
-      throw new Error(`Failed to get metadata for video ${publicId}.`);
-    }
-  }
-  return videoInfos;
-}
-
-
 serve(async (req) => {
-  // Standard OPTIONS request handling
   if (req.method === 'OPTIONS') {
     return new Response(null, { headers: corsHeaders });
   }
@@ -86,36 +41,55 @@ serve(async (req) => {
 
     console.log(`📊 Processing ${publicIds.length} videos. Target duration: ${targetDuration}s`);
 
-    // Fetch video info with the corrected API call
-    const videoInfos = await fetchVideoInfo(publicIds);
-    const totalOriginalDuration = videoInfos.reduce((sum, v) => sum + v.duration, 0);
-    console.log(`⏱️ Total original duration: ${totalOriginalDuration.toFixed(2)}s`);
-
-    // --- Build Transformation URL ---
-    let transformations = [ 'w_1280,h_720,c_pad,q_auto:good' ];
-
-    // Determine the final duration of the video
-    const finalDuration = Math.min(totalOriginalDuration, targetDuration);
-
-    // Add the first video as the base layer, trimmed proportionally
-    const firstVideo = videoInfos[0];
-    const firstVideoTrimmedDuration = (firstVideo.duration / totalOriginalDuration) * finalDuration;
-    transformations.push(`l_video:${firstVideo.publicId}`);
-    transformations.push(`du_${firstVideoTrimmedDuration.toFixed(2)}`);
-    transformations.push('fl_layer_apply');
+    // --- FINAL ROBUST SOLUTION using on-the-fly variables ---
     
-    // Add subsequent videos as trimmed and spliced overlays
-    for (let i = 1; i < videoInfos.length; i++) {
-        const video = videoInfos[i];
-        const trimmedDuration = (video.duration / totalOriginalDuration) * finalDuration;
-        transformations.push(`l_video:${video.publicId}`);
-        transformations.push('fl_splice');
-        transformations.push(`du_${trimmedDuration.toFixed(2)}`);
-        transformations.push('fl_layer_apply');
+    const transformations = [];
+    
+    // 1. Define a variable for the final target duration
+    const targetDurationVar = `$finalDuration_to_f_${targetDuration}`;
+    transformations.push(targetDurationVar);
+    
+    // 2. Define variables for each video's original duration using 'idu' (initial duration)
+    const durationVars = publicIds.map((id, i) => `$d${i}_to_i_idu`);
+    
+    // 3. To use 'idu' for each video, they must be part of a transformation chain.
+    // We will build this chain using layers.
+    
+    // Define the total duration variable by summing the individual duration variables
+    const totalDurationVar = `$totalDuration_to_f_${durationVars.map(v => v.split('_')[0]).join('_add_')}`;
+    
+    // --- Build the Transformation Chain ---
+    // Start with a base canvas and quality settings
+    transformations.push('w_1280,h_720,c_pad,q_auto:good');
+    
+    // Add the first video as the base layer, with its duration variable defined.
+    transformations.push(`l_video:${publicIds[0]}/${durationVars[0]}`);
+    
+    // Add subsequent videos as layers, each defining its own duration variable
+    for (let i = 1; i < publicIds.length; i++) {
+        transformations.push(`l_video:${publicIds[i]}/${durationVars[i]}/fl_layer_apply`);
     }
+
+    // Now that all durations are in variables, calculate the total
+    transformations.push(totalDurationVar);
+
+    // Now, create the final video by splicing the layers again, but this time with proportional trimming.
+    // This requires a second "pass" in the transformation string.
     
-    // To create a final video from layers, we use a base canvas.
-    // The final URL is constructed with comma-separated transformations.
+    // Trim the first video proportionally
+    const firstVideoTrim = `l_video:${publicIds[0]},du_($finalDuration_mul_$d0)_div_$totalDuration`;
+    transformations.push(firstVideoTrim);
+    
+    // Splice subsequent videos, trimmed proportionally
+    for (let i = 1; i < publicIds.length; i++) {
+        const subsequentTrim = `l_video:${publicIds[i]},du_($finalDuration_mul_$d${i})_div_$totalDuration,fl_splice`;
+        transformations.push(subsequentTrim);
+    }
+
+    // Apply all layer transformations
+    transformations.push('fl_layer_apply');
+
+    // Generate the final URL using a base canvas, with comma-separated transformations
     const finalUrl = `https://res.cloudinary.com/${cloudName}/video/upload/${transformations.join(',')}/e_colorize,co_black/w_1,h_1/f_mp4/canvas.mp4`;
     console.log('🎯 Final URL generated:', finalUrl);
 
@@ -123,7 +97,7 @@ serve(async (req) => {
       JSON.stringify({
         success: true,
         url: finalUrl,
-        message: `Successfully processed ${publicIds.length} videos.`,
+        message: `Successfully generated proportional video URL for ${publicIds.length} videos.`,
       }),
       { status: 200, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
     );
