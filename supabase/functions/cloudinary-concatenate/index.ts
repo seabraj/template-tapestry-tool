@@ -131,7 +131,9 @@ serve(async (req) => {
             success: true,
             url: singleVideoUrl,
             message: `Single video processed (${sortedVideos[0].duration.toFixed(2)}s duration)`,
-            method: 'single_video'
+            method: 'single_video',
+            tempVideosKept: trimmedVideos.map(v => v.publicId),
+            note: "Temp videos kept for testing - cleanup disabled"
           }),
           { status: 200, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
         );
@@ -174,7 +176,11 @@ serve(async (req) => {
           if (sortedVideos.length === 2) {
             console.log('🎉 Two-video concatenation complete');
             
-            // Cleanup and return
+            // TEMPORARILY DISABLE CLEANUP to test if temp videos are needed
+            console.log('⚠️ TEMP: Skipping cleanup to test if temp videos are needed for processing');
+            
+            /*
+            // Cleanup and return - DISABLED FOR TESTING
             for (const video of trimmedVideos) {
               try {
                 await cloudinary.uploader.destroy(video.publicId, { resource_type: 'video' });
@@ -182,6 +188,7 @@ serve(async (req) => {
                 console.warn(`⚠️ Cleanup warning: ${cleanupError.message}`);
               }
             }
+            */
             
             return new Response(
               JSON.stringify({ 
@@ -190,7 +197,9 @@ serve(async (req) => {
                 message: `Successfully concatenated 2 videos to ${targetDuration}s using step-by-step method`,
                 method: 'step_by_step_2_videos',
                 totalDuration: targetDuration,
-                videosProcessed: 2
+                videosProcessed: 2,
+                tempVideosKept: trimmedVideos.map(v => v.publicId),
+                note: "Temp videos kept for testing - cleanup disabled"
               }),
               { status: 200, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
             );
@@ -240,7 +249,12 @@ serve(async (req) => {
             if (finalTest.ok) {
               console.log('✅ Direct 3-video concatenation successful');
               
-              // Cleanup
+              // TEMPORARILY DISABLE CLEANUP to test if temp videos are needed
+              console.log('⚠️ TEMP: Skipping cleanup to test if temp videos are needed for processing');
+              console.log('🔧 Temp videos will remain in temp_processing folder for testing');
+              
+              /*
+              // Cleanup - DISABLED FOR TESTING
               for (const video of trimmedVideos) {
                 try {
                   await cloudinary.uploader.destroy(video.publicId, { resource_type: 'video' });
@@ -248,6 +262,7 @@ serve(async (req) => {
                   console.warn(`⚠️ Cleanup warning: ${cleanupError.message}`);
                 }
               }
+              */
               
               return new Response(
                 JSON.stringify({ 
@@ -257,7 +272,9 @@ serve(async (req) => {
                   method: 'direct_3_video_concatenation',
                   totalDuration: targetDuration,
                   videosProcessed: 3,
-                  transformations: directTransformations
+                  transformations: directTransformations,
+                  tempVideosKept: trimmedVideos.map(v => v.publicId),
+                  note: "Temp videos kept for testing - cleanup disabled"
                 }),
                 { status: 200, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
               );
@@ -274,6 +291,11 @@ serve(async (req) => {
       
     } catch (concatenationError) {
       console.error('❌ Step-by-step concatenation failed:', concatenationError.message);
+      
+      // TEMPORARILY DISABLE ERROR CLEANUP to preserve temp videos for debugging
+      console.log('⚠️ TEMP: Preserving temp videos after concatenation error for debugging');
+      console.log('🔧 Temp videos available for manual inspection:', trimmedVideos.map(v => v.publicId));
+      
       throw new Error(`Concatenation failed: ${concatenationError.message}`);
     }
 
@@ -281,11 +303,16 @@ serve(async (req) => {
     console.error('❌ === VIDEO PROCESSING FAILED ===');
     console.error('Error details:', error);
     
+    // TEMPORARILY DISABLE ERROR CLEANUP to preserve temp videos for debugging
+    console.log('⚠️ TEMP: Skipping error cleanup to preserve temp videos for debugging');
+    console.log('🔧 Any created temp videos will remain in temp_processing folder');
+    
     return new Response(
       JSON.stringify({ 
         success: false, 
         error: error.message,
-        phase: 'processing_failed'
+        phase: 'processing_failed',
+        note: "Temp videos preserved for debugging - cleanup disabled"
       }),
       { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
     );
