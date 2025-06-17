@@ -19,7 +19,6 @@ try {
   console.error('❌ Failed to configure Cloudinary SDK.', e);
 }
 
-// The frontend will now send the video object with its duration
 interface VideoInfo {
   publicId: string;
   duration: number;
@@ -38,15 +37,15 @@ serve(async (req) => {
   try {
     console.log('🎬 === Cloudinary Manifest Concatenation Started ===');
     
+    // --- THIS IS THE CORRECTED LINE ---
     const { videos, targetDuration } = await req.json() as ConcatenationRequest;
+    
     const cloudName = 'dsxrmo3kt';
     
-    if (!videos?.length) throw new Error('No videos provided');
+    if (!videos?.length) throw new Error('No videos provided'); // This was the error thrown
     if (!targetDuration || targetDuration <= 0) throw new Error('A valid target duration is required.');
 
     console.log(`📊 Processing ${videos.length} videos. Target duration: ${targetDuration}s`);
-
-    // --- MANIFEST-BASED SOLUTION ---
 
     // 1. Calculate total duration from the reliable data sent from the frontend
     const totalOriginalDuration = videos.reduce((sum, v) => sum + v.duration, 0);
@@ -59,7 +58,7 @@ serve(async (req) => {
         const proportionalDuration = (video.duration / totalOriginalDuration) * targetDuration;
         return {
           public_id: video.publicId,
-          transform: `du_${proportionalDuration.toFixed(2)}` // Simple duration trim
+          transform: `du_${proportionalDuration.toFixed(2)}`
         };
       })
     };
