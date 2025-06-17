@@ -23,7 +23,6 @@ serve(async (req) => {
   try {
     const { action, videos, targetDuration, jobId } = await req.json();
     
-    // Use the SERVICE_ROLE_KEY to bypass RLS for this backend service
     const supabaseClient = createClient(
       Deno.env.get('SUPABASE_URL') ?? '',
       Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? ''
@@ -35,7 +34,6 @@ serve(async (req) => {
       const timestamp = Date.now();
       const trimmedIds = [];
 
-      // Create a new job record in the database
       const { data: newJob, error: createJobError } = await supabaseClient
         .from('jobs')
         .insert({ target_duration: targetDuration, status: 'processing_trims' })
@@ -49,7 +47,8 @@ serve(async (req) => {
         const trimmedId = `trimmed_${i}_${timestamp}`;
         trimmedIds.push(trimmedId);
 
-        // Use eager_async: true to NOT wait for the response
+        // --- FINAL FIX IS HERE ---
+        // This simplified structure is a more direct command to Cloudinary.
         await cloudinary.uploader.explicit(video.publicId, {
           type: 'upload',
           resource_type: 'video',
@@ -58,15 +57,13 @@ serve(async (req) => {
             public_id: trimmedId,
             format: 'mp4',
             quality: 'auto:good',
-            transformation: [{ duration: proportionalDuration.toFixed(2) }]
+            duration: proportionalDuration.toFixed(2) // Duration is a top-level property
           }]
         });
       }
 
-      // Save the expected IDs to the job record
       await supabaseClient.from('jobs').update({ trimmed_ids: trimmedIds }).eq('id', newJob.id);
 
-      // Return the Job ID to the client
       return new Response(JSON.stringify({ jobId: newJob.id }), {
         headers: { ...corsHeaders, "Content-Type": "application/json" },
       });
@@ -84,7 +81,6 @@ serve(async (req) => {
       const sortedVideos = job.trimmed_ids as string[];
       if (sortedVideos.length < 2) throw new Error("Not enough videos to concatenate.");
 
-      // Build the concatenation URL
       const video1Id = sortedVideos[0];
       const transformationChain = ['w_1280,h_720,c_pad'];
 
@@ -97,7 +93,6 @@ serve(async (req) => {
 
       const finalUrl = `https://res.cloudinary.com/dsxrmo3kt/video/upload/${transformationChain.join('/')}/${video1Id}.mp4`;
       
-      // Save final URL and update status
       await supabaseClient.from('jobs').update({ status: 'completed', final_url: finalUrl }).eq('id', jobId);
 
       return new Response(JSON.stringify({ success: true, url: finalUrl }), {
