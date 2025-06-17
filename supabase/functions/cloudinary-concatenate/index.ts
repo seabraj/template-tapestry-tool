@@ -1,4 +1,3 @@
-
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 
 const corsHeaders = {
@@ -100,15 +99,11 @@ serve(async (req) => {
     
     // Method 1: Simple video list concatenation
     console.log('🔄 Trying Method 1 (simple video list)...');
-    
-    // Clean public IDs for URL construction
-    const cleanPublicIds = publicIds.map(id => id.replace(/^video_library\//, ''));
-    console.log('🧹 Clean public IDs:', cleanPublicIds);
-    
+        
     let transformations = ['q_auto:good'];
     
-    // Try video concatenation with pipe syntax
-    const videoList = cleanPublicIds.map(id => `video:${id}`).join('|');
+    // Use publicIds directly in the concatenation
+    const videoList = publicIds.map(id => `video:${id}`).join('|');
     transformations.push(`video_concat:${videoList}`);
     
     if (targetDuration) {
@@ -118,7 +113,7 @@ serve(async (req) => {
     
     transformations.push('f_mp4');
     
-    const method1Url = `https://res.cloudinary.com/${cloudName}/video/upload/${transformations.join(',')}/${cleanPublicIds[0]}.mp4`;
+    const method1Url = `https://res.cloudinary.com/${cloudName}/video/upload/${transformations.join(',')}/${publicIds[0]}.mp4`;
     console.log(`🎯 Method 1 URL: ${method1Url}`);
 
     if (await testUrl(method1Url)) {
@@ -146,9 +141,9 @@ serve(async (req) => {
     
     transformations = ['q_auto:good'];
     
-    // Add videos as layers
-    for (let i = 1; i < cleanPublicIds.length; i++) {
-      transformations.push(`l_video:${cleanPublicIds[i]}`);
+    // Add videos as layers using publicIds directly
+    for (let i = 1; i < publicIds.length; i++) {
+      transformations.push(`l_video:${publicIds[i]}`);
       transformations.push('fl_splice');
     }
     
@@ -158,7 +153,7 @@ serve(async (req) => {
     
     transformations.push('f_mp4');
     
-    const method2Url = `https://res.cloudinary.com/${cloudName}/video/upload/${transformations.join(',')}/${cleanPublicIds[0]}.mp4`;
+    const method2Url = `https://res.cloudinary.com/${cloudName}/video/upload/${transformations.join(',')}/${publicIds[0]}.mp4`;
     console.log(`🎯 Method 2 URL: ${method2Url}`);
     
     if (await testUrl(method2Url)) {
@@ -308,9 +303,8 @@ async function fetchVideoInfo(publicIds: string[], cloudName: string): Promise<V
   
   for (const publicId of publicIds) {
     try {
-      // Try to get video info from Cloudinary's info endpoint
-      const cleanId = publicId.replace(/^video_library\//, '');
-      const infoUrl = `https://res.cloudinary.com/${cloudName}/video/upload/${cleanId}.json`;
+      // Use publicId directly without cleaning
+      const infoUrl = `https://res.cloudinary.com/${cloudName}/video/upload/${publicId}.json`;
       
       console.log(`🔍 Fetching info for ${publicId} from: ${infoUrl}`);
       
@@ -321,25 +315,24 @@ async function fetchVideoInfo(publicIds: string[], cloudName: string): Promise<V
         console.log(`📹 Video ${publicId}: ${duration}s duration`);
         
         videoInfos.push({
-          publicId: cleanId,
+          publicId: publicId,
           duration: duration,
-          url: `https://res.cloudinary.com/${cloudName}/video/upload/${cleanId}.mp4`
+          url: `https://res.cloudinary.com/${cloudName}/video/upload/${publicId}.mp4`
         });
       } else {
         console.warn(`⚠️ Could not fetch info for ${publicId}, using default duration`);
         videoInfos.push({
-          publicId: cleanId,
+          publicId: publicId,
           duration: 10, // Default duration
-          url: `https://res.cloudinary.com/${cloudName}/video/upload/${cleanId}.mp4`
+          url: `https://res.cloudinary.com/${cloudName}/video/upload/${publicId}.mp4`
         });
       }
     } catch (error) {
       console.warn(`⚠️ Error fetching info for ${publicId}:`, error);
-      const cleanId = publicId.replace(/^video_library\//, '');
       videoInfos.push({
-        publicId: cleanId,
+        publicId: publicId,
         duration: 10, // Default duration
-        url: `https://res.cloudinary.com/${cloudName}/video/upload/${cleanId}.mp4`
+        url: `https://res.cloudinary.com/${cloudName}/video/upload/${publicId}.mp4`
       });
     }
   }
@@ -367,28 +360,21 @@ async function concatenateWithUploadAPI(videoInfos: VideoInfo[], targetDuration:
   try {
     console.log('🚀 Attempting Upload API concatenation...');
     
-    // This would require Cloudinary Upload API credentials
-    // For now, we'll simulate the approach with a more robust URL construction
-    
     const publicIds = videoInfos.map(v => v.publicId);
     
-    // Try a different transformation approach with timeline
     let transformations = ['q_auto:good'];
     
     // Build timeline-based concatenation
-    const timeline = [];
     let currentOffset = 0;
     
     for (let i = 0; i < videoInfos.length; i++) {
       const video = videoInfos[i];
       if (i === 0) {
-        // First video is the base
         if (targetDuration) {
           const videoDuration = targetDuration ? Math.min(video.duration, targetDuration / videoInfos.length) : video.duration;
           transformations.push(`du_${videoDuration}`);
         }
       } else {
-        // Add subsequent videos as overlays with timeline
         transformations.push(`l_video:${video.publicId}`);
         transformations.push(`so_${currentOffset}`);
         transformations.push('fl_splice');
