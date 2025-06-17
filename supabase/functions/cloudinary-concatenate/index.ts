@@ -9,25 +9,68 @@ const corsHeaders = {
 // --- Configure Cloudinary Admin API ---
 try {
   cloudinary.config({
-    cloud_name: 'dsxrmo3kt',
+    cloud_name: 'dsxrmo3kt', // Your cloud name
     api_key: Deno.env.get('CLOUDINARY_API_KEY'),
     api_secret: Deno.env.get('CLOUDINARY_API_SECRET'),
     secure: true,
   });
   console.log('✅ Cloudinary SDK configured successfully.');
 } catch(e) {
-  console.error('❌ Failed to configure Cloudinary SDK.', e);
+  console.error('❌ Failed to configure Cloudinary SDK. Ensure API Key and Secret are set in Supabase environment variables.', e);
 }
+
 
 interface ConcatenationRequest {
   publicIds: string[];
   targetDuration: number;
 }
 
-// This function is no longer needed as we will perform calculations in the URL.
-// async function fetchVideoInfo(...) { ... }
+interface VideoInfo {
+  publicId: string;
+  duration: number;
+  url: string;
+}
+
+// --- FINAL, ROBUST FUNCTION TO FETCH VIDEO DETAILS ---
+async function fetchVideoInfo(publicIds: string[]): Promise<VideoInfo[]> {
+  console.log('📡 Fetching video information using Cloudinary Admin API...');
+  
+  const videoInfos: VideoInfo[] = [];
+  
+  for (const publicId of publicIds) {
+    try {
+      // THE FIX: Use `cinemagraph_analysis: true` to force full video metadata retrieval.
+      const result = await cloudinary.api.resource(publicId, { 
+        resource_type: 'video',
+        cinemagraph_analysis: true 
+      });
+
+      const duration = result.duration;
+
+      if (!duration || typeof duration !== 'number') {
+         throw new Error(`Duration not found in API response for ${publicId}.`);
+      }
+
+      const roundedDuration = Math.round(duration * 100) / 100;
+      console.log(`📹 Video ${publicId}: ${roundedDuration}s duration (from API)`);
+      
+      videoInfos.push({
+        publicId: publicId,
+        duration: roundedDuration,
+        url: result.secure_url,
+      });
+
+    } catch (error) {
+      console.warn(`⚠️ Error fetching info for ${publicId} from Admin API:`, error.message);
+      throw new Error(`Failed to get metadata for video ${publicId}.`);
+    }
+  }
+  return videoInfos;
+}
+
 
 serve(async (req) => {
+  // Standard OPTIONS request handling
   if (req.method === 'OPTIONS') {
     return new Response(null, { headers: corsHeaders });
   }
@@ -43,58 +86,44 @@ serve(async (req) => {
 
     console.log(`📊 Processing ${publicIds.length} videos. Target duration: ${targetDuration}s`);
 
-    // --- FINAL, ROBUST SOLUTION ---
-    // We will build a URL that uses Cloudinary's variables and expressions 
-    // to calculate proportional durations on the fly.
+    // Fetch video info with the corrected API call
+    const videoInfos = await fetchVideoInfo(publicIds);
+    const totalOriginalDuration = videoInfos.reduce((sum, v) => sum + v.duration, 0);
+    console.log(`⏱️ Total original duration: ${totalOriginalDuration.toFixed(2)}s`);
 
-    let transformations = [];
+    // --- Build Transformation URL ---
+    let transformations = [ 'w_1280,h_720,c_pad,q_auto:good' ];
+
+    // Determine the final duration of the video
+    const finalDuration = Math.min(totalOriginalDuration, targetDuration);
+
+    // Add the first video as the base layer, trimmed proportionally
+    const firstVideo = videoInfos[0];
+    const firstVideoTrimmedDuration = (firstVideo.duration / totalOriginalDuration) * finalDuration;
+    transformations.push(`l_video:${firstVideo.publicId}`);
+    transformations.push(`du_${firstVideoTrimmedDuration.toFixed(2)}`);
+    transformations.push('fl_layer_apply');
     
-    // 1. Set initial variables
-    // Create a variable for the target duration, e.g., $duration_10
-    const durationVar = `$duration_${targetDuration}`;
-    transformations.push(`${durationVar}_to_f!${targetDuration}`);
-
-    // Create a variable for each video's duration by extracting it from the video metadata.
-    // e.g., $d1_to_i!${publicIds[0]}_!duration!
-    for (let i = 0; i < publicIds.length; i++) {
-        const videoDurationVar = `$d${i}`;
-        // The public ID needs to be formatted with colons instead of slashes for use in variables.
-        const formattedPublicId = publicIds[i].replace(/\//g, ':');
-        transformations.push(`${videoDurationVar}_to_i!${formattedPublicId}!duration`);
+    // Add subsequent videos as trimmed and spliced overlays
+    for (let i = 1; i < videoInfos.length; i++) {
+        const video = videoInfos[i];
+        const trimmedDuration = (video.duration / totalOriginalDuration) * finalDuration;
+        transformations.push(`l_video:${video.publicId}`);
+        transformations.push('fl_splice');
+        transformations.push(`du_${trimmedDuration.toFixed(2)}`);
+        transformations.push('fl_layer_apply');
     }
-
-    // 2. Calculate the total duration of all source videos
-    // e.g., $total_to_f!$d0_add_$d1_add_$d2
-    const durationVars = Array.from({ length: publicIds.length }, (_, i) => `$d${i}`);
-    transformations.push(`$total_to_f!${durationVars.join('_add_')}!`);
-
-    // 3. Build the video layers with proportional trimming
-    // Set a base canvas for our video composition.
-    transformations.push('w_1280,h_720,c_pad,q_auto:good');
-
-    // Add the first video, trimmed proportionally
-    // du_($duration_mul_$d0)_div_$total
-    const firstVideoTrim = `du_(${durationVar}_mul_$d0)_div_$total`;
-    transformations.push(`l_video:${publicIds[0]},${firstVideoTrim},fl_layer_apply`);
-
-    // Add subsequent videos, trimmed and spliced
-    for (let i = 1; i < publicIds.length; i++) {
-        const subsequentTrim = `du_(${durationVar}_mul_$d${i})_div_$total`;
-        transformations.push(`l_video:${publicIds[i]},${subsequentTrim},fl_splice,fl_layer_apply`);
-    }
-
-    // 4. Create the final URL using a base canvas
-    const finalUrl = `https://res.cloudinary.com/${cloudName}/video/upload/${transformations.join('/')}/e_colorize,co_black/w_1,h_1/f_mp4/canvas.mp4`;
+    
+    // To create a final video from layers, we use a base canvas.
+    // The final URL is constructed with comma-separated transformations.
+    const finalUrl = `https://res.cloudinary.com/${cloudName}/video/upload/${transformations.join(',')}/e_colorize,co_black/w_1,h_1/f_mp4/canvas.mp4`;
     console.log('🎯 Final URL generated:', finalUrl);
-    
-    // The URL is now too complex to reliably test with a HEAD request. We will trust it.
-    console.log('✅ URL generated successfully. Skipping HEAD request test for complex URL.');
 
     return new Response(
       JSON.stringify({
         success: true,
         url: finalUrl,
-        message: `Successfully generated proportional video URL for ${publicIds.length} videos.`,
+        message: `Successfully processed ${publicIds.length} videos.`,
       }),
       { status: 200, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
     );
