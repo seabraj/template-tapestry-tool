@@ -118,13 +118,13 @@ export class VideoProcessor {
       console.log('🎯 Final public IDs for concatenation:', publicIds);
       onProgress?.(50);
 
-      // Call the Cloudinary concatenation edge function
+      // Call the Cloudinary concatenation edge function (without text overlays)
       console.log('🔗 Calling cloudinary-concatenate edge function...');
       const { data, error } = await supabase.functions.invoke('cloudinary-concatenate', {
         body: {
           publicIds,
-          platform: options.platform,
-          customization: options.customization
+          platform: options.platform
+          // Remove customization to avoid text overlays
         }
       });
 
