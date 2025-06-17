@@ -8,7 +8,6 @@ const corsHeaders = {
 };
 
 // --- Configure Cloudinary Admin API ---
-// This uses the environment variables you set in the Supabase Dashboard
 try {
   cloudinary.config({
     cloud_name: 'dsxrmo3kt', // Your cloud name
@@ -34,7 +33,7 @@ interface VideoInfo {
   url: string;
 }
 
-// --- NEW, ROBUST FUNCTION TO FETCH VIDEO DETAILS ---
+// --- FINAL, ROBUST FUNCTION TO FETCH VIDEO DETAILS ---
 async function fetchVideoInfo(publicIds: string[]): Promise<VideoInfo[]> {
   console.log('📡 Fetching video information using Cloudinary Admin API...');
   
@@ -42,22 +41,26 @@ async function fetchVideoInfo(publicIds: string[]): Promise<VideoInfo[]> {
   
   for (const publicId of publicIds) {
     try {
-      // Use the SDK to get resource details
-      const result = await cloudinary.api.resource(publicId, { resource_type: 'video' });
+      // THE FIX: Add `video_metadata: true` to explicitly request full video details.
+      const result = await cloudinary.api.resource(publicId, { 
+        resource_type: 'video',
+        video_metadata: true // This flag requests detailed video analysis, including duration.
+      });
 
-      // --- DEBUGGING LINE ADDED HERE ---
-      console.log('Cloudinary API Response:', JSON.stringify(result, null, 2));
+      // The duration might now be inside the `video_metadata` object, or at the top level.
+      // We will check for it safely.
+      const duration = result.video_metadata?.duration ?? result.duration;
 
-      const duration = Math.round(result.duration * 100) / 100;
-
-      if (!duration) {
-         throw new Error('Duration not available in API response.');
+      if (!duration || typeof duration !== 'number') {
+         throw new Error('Duration not found in API response, even after requesting it.');
       }
 
-      console.log(`📹 Video ${publicId}: ${duration}s duration (from API)`);
+      const roundedDuration = Math.round(duration * 100) / 100;
+
+      console.log(`📹 Video ${publicId}: ${roundedDuration}s duration (from API)`);
       videoInfos.push({
         publicId: publicId,
-        duration: duration,
+        duration: roundedDuration,
         url: result.secure_url,
       });
 
@@ -66,7 +69,7 @@ async function fetchVideoInfo(publicIds: string[]): Promise<VideoInfo[]> {
       console.warn('Falling back to 10s default duration for this video.');
       videoInfos.push({
         publicId: publicId,
-        duration: 10, // Keep a fallback, but it should not be hit if credentials are correct
+        duration: 10,
         url: `https://res.cloudinary.com/dsxrmo3kt/video/upload/${publicId}.mp4`
       });
     }
@@ -91,57 +94,48 @@ serve(async (req) => {
 
     console.log(`📊 Processing ${publicIds.length} videos. Target duration: ${targetDuration || 'auto'}s`);
 
-    // This now calls the new, robust function
     const videoInfos = await fetchVideoInfo(publicIds);
     console.log('📹 Video info fetched:', videoInfos.map(v => `${v.publicId}: ${v.duration}s`));
 
     const totalOriginalDuration = videoInfos.reduce((sum, v) => sum + v.duration, 0);
     console.log(`⏱️ Total original duration: ${totalOriginalDuration.toFixed(2)}s`);
 
-
     // --- Proportional Trimming Calculation ---
-    // This is the core logic your tool needs
     let transformations = [];
-    let builtFromScratch = false;
+
+    // Set a base canvas for our video composition
+    transformations.push('w_1280,h_720,c_pad,q_auto:good');
 
     // Check if trimming is actually needed
     if (targetDuration && targetDuration < totalOriginalDuration) {
         console.log('🔄 Applying proportional trimming to all clips.');
-        transformations.push('w_1280,h_720,c_pad,q_auto:good'); // Example base transformation for consistency
 
-        // First video is the base layer
+        // First video is the base layer, trimmed proportionally
         const firstVideo = videoInfos[0];
         const firstVideoTrimmedDuration = (firstVideo.duration / totalOriginalDuration) * targetDuration;
         transformations.push(`l_video:${firstVideo.publicId},du_${firstVideoTrimmedDuration.toFixed(2)},fl_layer_apply`);
         
-        // Add subsequent videos as overlays
+        // Add subsequent videos as trimmed and spliced overlays
         for (let i = 1; i < videoInfos.length; i++) {
             const video = videoInfos[i];
             const trimmedDuration = (video.duration / totalOriginalDuration) * targetDuration;
-            // Splice this video, trimmed to its proportional duration
             transformations.push(`l_video:${video.publicId},du_${trimmedDuration.toFixed(2)},fl_splice,fl_layer_apply`);
         }
-        builtFromScratch = true;
     } else {
         // If no trimming is needed, just concatenate them as is
         console.log('🔗 Concatenating all clips without trimming.');
-        transformations.push('w_1280,h_720,c_pad,q_auto:good');
 
-        // Add first video
         transformations.push(`l_video:${videoInfos[0].publicId},fl_layer_apply`);
-        // Splice subsequent videos
         for (let i = 1; i < videoInfos.length; i++) {
             transformations.push(`l_video:${videoInfos[i].publicId},fl_splice,fl_layer_apply`);
         }
-        builtFromScratch = true;
     }
     
-    // To create a video from layers, you must use a base canvas, like a color source
-    // The public ID at the end of the URL is the base layer.
+    // To create a final video from layers, you must use a base canvas, like a color source.
     const finalUrl = `https://res.cloudinary.com/${cloudName}/video/upload/${transformations.join('/')}/e_colorize,co_black/w_1,h_1/f_mp4/canvas.mp4`;
     console.log('🎯 Final URL generated:', finalUrl);
 
-    // Test the generated URL
+    // Test the generated URL to ensure it's valid
     const isUrlValid = await testUrl(finalUrl);
     if (!isUrlValid) {
         console.error('❌ The final generated URL is not valid. Returning error.');
@@ -172,7 +166,7 @@ async function testUrl(url: string): Promise<boolean> {
     console.log('🔍 Testing URL:', url);
     const response = await fetch(url, { method: 'HEAD' });
     console.log(`📊 URL test result: ${response.status}`);
-    // A 400 bad request might still be "ok" during generation, but 404 is a real error
+    // A 400 Bad Request can sometimes happen with very long URLs, but 404 is a definitive "not found".
     return response.status < 404; 
   } catch (error) {
     console.log('❌ URL test failed:', error);
