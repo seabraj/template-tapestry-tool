@@ -44,6 +44,10 @@ async function fetchVideoInfo(publicIds: string[]): Promise<VideoInfo[]> {
     try {
       // Use the SDK to get resource details
       const result = await cloudinary.api.resource(publicId, { resource_type: 'video' });
+
+      // --- DEBUGGING LINE ADDED HERE ---
+      console.log('Cloudinary API Response:', JSON.stringify(result, null, 2));
+
       const duration = Math.round(result.duration * 100) / 100;
 
       if (!duration) {
