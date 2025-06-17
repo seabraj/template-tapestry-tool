@@ -21,97 +21,73 @@ serve(async (req) => {
   }
 
   try {
-    const { action, videos, targetDuration, jobId } = await req.json();
+    const { jobId } = await req.json();
+    if (!jobId) throw new Error("Job ID is required.");
+
+    // Use the SERVICE_ROLE_KEY to bypass RLS for this backend service
     const supabaseClient = createClient(
       Deno.env.get('SUPABASE_URL') ?? '',
-      Deno.env.get('SUPABASE_ANON_KEY') ?? '',
-      { global: { headers: { Authorization: req.headers.get('Authorization')! } } }
+      Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? ''
     );
+
+    // 1. Get the job details from the database
+    const { data: job, error: jobError } = await supabaseClient
+      .from('jobs')
+      .select('status, trimmed_ids')
+      .eq('id', jobId)
+      .single();
+
+    if (jobError || !job) throw new Error(`Job not found: ${jobError?.message}`);
+    if (job.status === 'completed') {
+      return new Response(JSON.stringify({ status: 'completed' }), {
+        headers: { ...corsHeaders, "Content-Type": "application/json" },
+      });
+    }
+
+    // 2. Check Cloudinary for the resources
+    const publicIds = job.trimmed_ids as string[];
+    if (!publicIds || publicIds.length === 0) {
+      // Not an error, but the job isn't ready yet.
+      return new Response(JSON.stringify({ status: 'processing_trims' }), {
+        headers: { ...corsHeaders, "Content-Type": "application/json" },
+      });
+    }
+
+    const { resources } = await cloudinary.api.resources({
+        type: 'upload',
+        resource_type: 'video',
+        public_ids: publicIds
+    });
     
-    // ACTION 1: Start the trimming process
-    if (action === 'start_job') {
-      const totalOriginalDuration = videos.reduce((sum, v) => sum.duration + v.duration, 0);
-      const timestamp = Date.now();
-      const trimmedIds = [];
+    // 3. Verify if all videos are trimmed and have duration
+    let allReady = true;
+    if (resources.length !== publicIds.length) {
+        allReady = false;
+    } else {
+        for (const resource of resources) {
+            if (!resource.duration || resource.duration === 0) {
+                allReady = false;
+                break;
+            }
+        }
+    }
 
-      // Create a new job record in the database
-      const { data: newJob, error: createJobError } = await supabaseClient
-        .from('jobs')
-        .insert({ target_duration: targetDuration })
-        .select()
-        .single();
-      if (createJobError) throw createJobError;
-
-      for (let i = 0; i < videos.length; i++) {
-        const video = videos[i];
-        const proportionalDuration = (video.duration / totalOriginalDuration) * targetDuration;
-        const trimmedId = `temp_processing/trimmed_${i}_${timestamp}`;
-        trimmedIds.push(trimmedId);
-
-        // Use eager_async: true to NOT wait for the response
-        await cloudinary.uploader.explicit(video.publicId, {
-          type: 'upload',
-          resource_type: 'video',
-          eager_async: true, 
-          eager: [{
-            public_id: trimmedId,
-            format: 'mp4',
-            quality: 'auto:good',
-            transformation: [{ duration: proportionalDuration.toFixed(2) }]
-          }]
+    // 4. Update status if ready, otherwise return processing
+    if (allReady) {
+        await supabaseClient.from('jobs').update({ status: 'ready_to_concatenate' }).eq('id', jobId);
+        return new Response(JSON.stringify({ status: 'ready_to_concatenate' }), {
+            headers: { ...corsHeaders, "Content-Type": "application/json" },
         });
-      }
-
-      // Save the expected IDs to the job record
-      await supabaseClient.from('jobs').update({ trimmed_ids: trimmedIds }).eq('id', newJob.id);
-
-      // Return the Job ID to the client
-      return new Response(JSON.stringify({ jobId: newJob.id }), {
-        headers: { ...corsHeaders, "Content-Type": "application/json" },
-      });
-    }
-
-    // ACTION 2: Concatenate the finished videos
-    else if (action === 'concatenate') {
-      const { data: job, error: jobError } = await supabaseClient
-        .from('jobs')
-        .select('trimmed_ids, target_duration')
-        .eq('id', jobId)
-        .single();
-      if (jobError || !job) throw new Error("Job not found or not ready.");
-
-      const sortedVideos = job.trimmed_ids as string[];
-      if (sortedVideos.length < 2) throw new Error("Not enough videos to concatenate.");
-
-      // Build the concatenation URL
-      const video1Id = sortedVideos[0];
-      const transformationChain = ['w_1280,h_720,c_pad'];
-
-      for (let i = 1; i < sortedVideos.length; i++) {
-        const videoToSpliceId = (sortedVideos[i] as string).replace(/\//g, ':');
-        transformationChain.push(`l_video:${videoToSpliceId},w_1280,h_720,c_pad`);
-        transformationChain.push('fl_splice');
-      }
-      transformationChain.push('ac_aac', 'q_auto:good');
-
-      const finalUrl = `https://res.cloudinary.com/dsxrmo3kt/video/upload/${transformationChain.join('/')}/${video1Id}.mp4`;
-      
-      // Save final URL and update status
-      await supabaseClient.from('jobs').update({ status: 'completed', final_url: finalUrl }).eq('id', jobId);
-
-      return new Response(JSON.stringify({ success: true, url: finalUrl }), {
-        headers: { ...corsHeaders, "Content-Type": "application/json" },
-      });
-    }
-    
-    else {
-      throw new Error("Invalid 'action' provided.");
+    } else {
+        return new Response(JSON.stringify({ status: 'processing_trims' }), {
+            headers: { ...corsHeaders, "Content-Type": "application/json" },
+        });
     }
 
   } catch (error) {
     return new Response(JSON.stringify({ error: error.message }), {
-      status: 500,
-      headers: { ...corsHeaders, "Content-Type": "application/json" },
+        status: 500,
+        headers: { ...corsHeaders, "Content-Type": "application/json" },
     });
   }
 });
