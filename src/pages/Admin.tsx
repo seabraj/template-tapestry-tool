@@ -1,4 +1,3 @@
-
 import { useState, useEffect } from 'react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -89,7 +88,7 @@ const Admin = () => {
       
       const transformedData = data?.map(item => ({
         ...item,
-        cloudinary_public_id: item.cloudinary_public_id || '',
+        cloudinary_public_id: item.cloudinary_public_id || undefined,
         video_categories: item.video_categories ? {
           id: item.video_categories.id,
           name: item.video_categories.name,
@@ -235,7 +234,7 @@ const Admin = () => {
     }
   };
 
-  const deleteAsset = async (id: string, publicId: string) => {
+  const deleteAsset = async (id: string, publicId?: string) => {
     try {
       // Delete from Supabase first
       const { error } = await supabase
@@ -295,6 +294,7 @@ const Admin = () => {
 
   return (
     <div className="min-h-screen bg-gray-950">
+      {/* Header */}
       <div className="bg-gray-900 border-b border-gray-800 shadow-sm">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
           <div className="flex items-center justify-between h-16">
@@ -313,7 +313,7 @@ const Admin = () => {
 
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
-          {/* Upload Form - Now First */}
+          {/* Upload Form - First */}
           <div className="lg:col-span-1 lg:order-1">
             <Card className="bg-gray-900 border-gray-800">
               <CardHeader>
@@ -422,7 +422,7 @@ const Admin = () => {
             </Card>
           </div>
 
-          {/* Video Library - Now Second */}
+          {/* Video Library - Second */}
           <div className="lg:col-span-2 lg:order-2">
             <Card className="bg-gray-900 border-gray-800">
               <CardHeader>
@@ -498,7 +498,7 @@ const Admin = () => {
                               <Button
                                 size="sm"
                                 variant="destructive"
-                                onClick={() => deleteAsset(asset.id, asset.cloudinary_public_id || '')}
+                                onClick={() => deleteAsset(asset.id, asset.cloudinary_public_id)}
                                 className="bg-red-600 hover:bg-red-700"
                               >
                                 <Trash2 className="h-4 w-4" />

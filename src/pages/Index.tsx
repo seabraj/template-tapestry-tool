@@ -29,6 +29,21 @@ export interface CustomizationSettings {
   backgroundColor: string;
   textColor: string;
   fontSize: number;
+  supers: {
+    text: string;
+    position: 'top' | 'center' | 'bottom';
+    style: 'bold' | 'light' | 'outline';
+  };
+  endFrame: {
+    enabled: boolean;
+    text: string;
+    logoPosition: 'center' | 'corner';
+  };
+  cta: {
+    enabled: boolean;
+    text: string;
+    style: 'button' | 'text' | 'animated';
+  };
 }
 
 const Index = () => {
@@ -42,7 +57,22 @@ const Index = () => {
     overlayPosition: 'bottom-right',
     backgroundColor: '#000000',
     textColor: '#FFFFFF',
-    fontSize: 24
+    fontSize: 24,
+    supers: {
+      text: '',
+      position: 'bottom',
+      style: 'bold'
+    },
+    endFrame: {
+      enabled: false,
+      text: '',
+      logoPosition: 'center'
+    },
+    cta: {
+      enabled: false,
+      text: '',
+      style: 'button'
+    }
   });
 
   const { toast } = useToast();
@@ -184,7 +214,7 @@ const Index = () => {
                     <h2 className="text-2xl font-bold text-white mb-2">Platform & Settings</h2>
                     <p className="text-gray-400">Choose your target platform and video preferences</p>
                   </div>
-                  <PlatformSelector platform={platform} onPlatformChange={setPlatform} />
+                  <PlatformSelector selectedPlatform={platform} onPlatformChange={setPlatform} />
                   <LanguageDurationSelector 
                     language={language} 
                     duration={duration}
@@ -202,7 +232,7 @@ const Index = () => {
                   </div>
                   <SequenceManager
                     platform={platform}
-                    duration={duration}
+                    targetDuration={duration}
                     sequences={sequences}
                     onSequencesChange={setSequences}
                     availableAssets={assets}
@@ -219,6 +249,8 @@ const Index = () => {
                   <CustomizationPanel
                     settings={customization}
                     onSettingsChange={setCustomization}
+                    sequences={sequences}
+                    platform={platform}
                   />
                 </div>
               )}
