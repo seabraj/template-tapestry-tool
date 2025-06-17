@@ -1,8 +1,8 @@
 
+
 import { supabase } from '@/integrations/supabase/client';
 import { Cloudinary } from '@cloudinary/url-gen';
 import { trim } from '@cloudinary/url-gen/actions/videoEdit';
-import { concatenate } from '@cloudinary/url-gen/actions/videoEdit';
 import { auto } from '@cloudinary/url-gen/qualifiers/quality';
 import { format } from '@cloudinary/url-gen/actions/delivery';
 
@@ -48,11 +48,103 @@ export class VideoProcessor {
         cloudName: 'dsxrmo3kt'
       }
     });
-    console.log('🎬 VideoProcessor initialized with Cloudinary SDK');
+    console.log('🎬 VideoProcessor initialized');
   }
 
   async processVideo(options: VideoProcessingOptions, onProgress?: (progress: number) => void): Promise<Blob> {
-    return this.processVideoWithCloudinarySDK(options, onProgress);
+    // Use Edge Function for reliable processing
+    return this.processVideoWithEdgeFunction(options, onProgress);
+  }
+
+  private async processVideoWithEdgeFunction(options: VideoProcessingOptions, onProgress?: (progress: number) => void): Promise<Blob> {
+    try {
+      console.log('🚀 Starting Edge Function video processing...', {
+        sequences: options.sequences.length,
+        platform: options.platform,
+        targetDuration: options.duration
+      });
+      onProgress?.(10);
+
+      // Validate sequences
+      const validSequences = options.sequences.filter((seq, index) => {
+        if (!seq.file_url || !seq.file_url.startsWith('http')) {
+          console.warn(`❌ Invalid sequence URL: ${seq.id} - ${seq.file_url}`);
+          return false;
+        }
+        return true;
+      });
+
+      if (validSequences.length === 0) {
+        throw new Error('No valid video sequences found');
+      }
+
+      // Add original order to preserve sequence
+      const sequencesWithOrder = validSequences.map((seq, index) => ({
+        ...seq,
+        originalOrder: index
+      }));
+
+      console.log(`✅ Processing ${validSequences.length} sequence(s) in order:`, 
+        sequencesWithOrder.map((s, i) => `${i + 1}. ${s.name}`));
+      onProgress?.(25);
+
+      // Call Edge Function
+      const response = await fetch('/api/process-video', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          sequences: sequencesWithOrder,
+          customization: options.customization,
+          platform: options.platform,
+          duration: options.duration
+        }),
+      });
+
+      onProgress?.(50);
+
+      if (!response.ok) {
+        const errorData = await response.json().catch(() => null);
+        console.error('❌ Edge Function failed:', {
+          status: response.status,
+          statusText: response.statusText,
+          error: errorData
+        });
+        throw new Error(`Video processing failed: ${response.status} - ${errorData?.error || response.statusText}`);
+      }
+
+      const result = await response.json();
+      console.log('✅ Edge Function response:', result);
+      onProgress?.(75);
+
+      if (!result.success) {
+        throw new Error(result.error || 'Video processing failed');
+      }
+
+      // Download the processed video
+      console.log('📥 Downloading processed video from:', result.downloadUrl);
+      const videoResponse = await fetch(result.downloadUrl);
+      
+      if (!videoResponse.ok) {
+        throw new Error(`Failed to download processed video: HTTP ${videoResponse.status}`);
+      }
+
+      const videoBlob = await videoResponse.blob();
+      onProgress?.(100);
+
+      console.log('✅ Successfully downloaded processed video');
+      console.log(`🎯 Target duration: ${options.duration}s`);
+      console.log(`📹 Video count: ${validSequences.length} sequences`);
+      console.log(`🎬 Final video size: ${(videoBlob.size / (1024 * 1024)).toFixed(2)}MB`);
+      console.log(`📋 Processing method: ${result.metadata?.processingMethod || 'edge_function'}`);
+
+      return videoBlob;
+
+    } catch (error) {
+      console.error('❌ Edge Function video processing failed:', error);
+      throw new Error(`Video processing failed: ${error.message}`);
+    }
   }
 
   private extractCloudinaryPublicId(url: string): string {
@@ -122,144 +214,8 @@ export class VideoProcessor {
     return trimData;
   }
 
-  private async processVideoWithCloudinarySDK(options: VideoProcessingOptions, onProgress?: (progress: number) => void): Promise<Blob> {
-    try {
-      console.log('🚀 Starting Cloudinary SDK video processing...', {
-        sequences: options.sequences.length,
-        platform: options.platform,
-        targetDuration: options.duration
-      });
-      onProgress?.(10);
-
-      // Validate and process sequences
-      const validSequences = options.sequences.filter((seq, index) => {
-        if (!seq.file_url || !seq.file_url.startsWith('http')) {
-          console.warn(`❌ Invalid sequence URL: ${seq.id} - ${seq.file_url}`);
-          return false;
-        }
-        return true;
-      });
-
-      if (validSequences.length === 0) {
-        throw new Error('No valid video sequences found');
-      }
-
-      console.log(`✅ Processing ${validSequences.length} sequence(s) in order`);
-      onProgress?.(25);
-
-      // Calculate trimming data
-      const trimData = this.calculateProportionalTrimming(validSequences, options.duration);
-      
-      // Extract public IDs and build video objects (preserve order)
-      const videoData = [];
-      for (let i = 0; i < validSequences.length; i++) {
-        const seq = validSequences[i];
-        const trim = trimData[i];
-        
-        try {
-          const publicId = this.extractCloudinaryPublicId(seq.file_url);
-          videoData.push({
-            publicId,
-            name: seq.name,
-            duration: seq.duration,
-            trimData: trim
-          });
-          console.log(`📋 Video ${i + 1}/${validSequences.length}: ${seq.name} (${publicId}) - ${trim.trimmedDuration.toFixed(2)}s`);
-        } catch (error) {
-          console.error(`❌ Failed to process sequence ${seq.name}:`, error);
-          throw error;
-        }
-      }
-
-      onProgress?.(50);
-
-      if (videoData.length === 1) {
-        // Single video processing
-        const video = videoData[0];
-        const videoUrl = this.cloudinary.video(video.publicId)
-          .quality(auto())
-          .delivery(format('mp4'))
-          .videoEdit(trim().startOffset(0).endOffset(video.trimData.trimmedDuration))
-          .toURL();
-
-        console.log('🎬 Single video URL:', videoUrl);
-        onProgress?.(90);
-        
-        const videoResponse = await fetch(videoUrl);
-        if (!videoResponse.ok) {
-          throw new Error(`Failed to download video: HTTP ${videoResponse.status}`);
-        }
-        
-        const videoBlob = await videoResponse.blob();
-        onProgress?.(100);
-        console.log('✅ Successfully processed single video');
-        return videoBlob;
-      }
-
-      // Multiple videos - use proper concatenation with manual URL construction
-      console.log('🔗 Processing multiple videos with sequential concatenation...');
-      
-      // Build concatenation URL using proper Cloudinary syntax
-      const baseVideo = videoData[0];
-      let transformations = [];
-      
-      // Start with quality and format
-      transformations.push('q_auto:good', 'f_mp4');
-      
-      // Apply trimming to base video if needed
-      if (baseVideo.trimData.trimmedDuration < baseVideo.duration) {
-        transformations.push(`so_0,eo_${baseVideo.trimData.trimmedDuration.toFixed(2)}`);
-      }
-      
-      // Add subsequent videos using fl_splice for proper concatenation
-      for (let i = 1; i < videoData.length; i++) {
-        const video = videoData[i];
-        let videoTransform = `l_video:${video.publicId.replace(/\//g, ':')}`;
-        
-        // Apply trimming to this video if needed
-        if (video.trimData.trimmedDuration < video.duration) {
-          videoTransform += `/so_0,eo_${video.trimData.trimmedDuration.toFixed(2)}`;
-        }
-        
-        // Use fl_splice to concatenate sequentially
-        videoTransform += '/fl_splice';
-        transformations.push(videoTransform);
-      }
-      
-      const concatenatedUrl = `https://res.cloudinary.com/dsxrmo3kt/video/upload/${transformations.join(',')}/${baseVideo.publicId}.mp4`;
-      
-      console.log('🔗 Final concatenation URL:', concatenatedUrl);
-      console.log('🎬 Video order preserved:', videoData.map((v, i) => `${i + 1}. ${v.name}`));
-      onProgress?.(75);
-
-      const videoResponse = await fetch(concatenatedUrl);
-      if (!videoResponse.ok) {
-        console.error('❌ Cloudinary concatenation failed:', {
-          status: videoResponse.status,
-          statusText: videoResponse.statusText,
-          url: concatenatedUrl
-        });
-        throw new Error(`Cloudinary concatenation failed: HTTP ${videoResponse.status} - ${videoResponse.statusText}`);
-      }
-
-      const videoBlob = await videoResponse.blob();
-      onProgress?.(100);
-      
-      const actualDuration = options.duration;
-      console.log('✅ Successfully processed concatenated video');
-      console.log(`🎯 Expected duration: ${actualDuration}s`);
-      console.log(`📹 Video count: ${videoData.length} sequences`);
-      console.log(`🎬 Final video size: ${(videoBlob.size / (1024 * 1024)).toFixed(2)}MB`);
-      
-      return videoBlob;
-
-    } catch (error) {
-      console.error('❌ Cloudinary SDK video processing failed:', error);
-      throw new Error(`Video processing failed: ${error.message}`);
-    }
-  }
-
-  getProcessingMode(): 'cloudinary' {
-    return 'cloudinary';
+  getProcessingMode(): 'edge_function' {
+    return 'edge_function';
   }
 }
+
