@@ -4,7 +4,6 @@ import { trim } from '@cloudinary/url-gen/actions/videoEdit';
 import { auto } from '@cloudinary/url-gen/qualifiers/quality';
 import { format } from '@cloudinary/url-gen/actions/delivery';
 import { concatenate } from '@cloudinary/url-gen/actions/videoEdit';
-import { source } from '@cloudinary/url-gen/qualifiers/source';
 
 export interface VideoProcessingOptions {
   sequences: Array<{
@@ -227,8 +226,8 @@ export class VideoProcessor {
       if (publicIds.length > 1) {
         console.log('🔗 Adding concatenation for remaining videos...');
         
-        // Create sources for concatenation
-        const sources = publicIds.slice(1).map((publicId, index) => {
+        // Create video objects for concatenation
+        const additionalVideos = publicIds.slice(1).map((publicId, index) => {
           const videoIndex = index + 1; // +1 because we sliced from index 1
           const currentTrimData = trimData[videoIndex];
           
@@ -238,18 +237,18 @@ export class VideoProcessor {
             trimmedDuration: currentTrimData.trimmedDuration
           });
           
-          // Create video source with trimming if needed
+          // Create video object with trimming if needed
+          const video = this.cloudinary.video(publicId);
           if (currentTrimData.trimmedDuration < currentTrimData.originalDuration) {
-            // Create a transformation string for trimmed video
-            return `video:${publicId}/du_${currentTrimData.trimmedDuration}`;
-          } else {
-            return `video:${publicId}`;
+            console.log(`✂️ Trimming video ${videoIndex + 1}: ${currentTrimData.originalDuration}s → ${currentTrimData.trimmedDuration.toFixed(2)}s`);
+            video.videoEdit(trim().duration(currentTrimData.trimmedDuration));
           }
+          
+          return video;
         });
         
-        // Apply concatenation using the correct syntax
-        const concatenationTransform = sources.join(',');
-        baseVideo.videoEdit(concatenate().sources(concatenationTransform));
+        // Apply concatenation with all additional videos
+        baseVideo.videoEdit(concatenate(...additionalVideos));
       }
       
       // Apply quality and format
