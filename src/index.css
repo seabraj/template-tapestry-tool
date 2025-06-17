@@ -55,8 +55,4 @@
     background-color: rgb(17 24 39); /* gray-900 */
     color: rgb(249 250 251); /* gray-50 */
   }
-
-  html {
-    @apply dark;
-  }
 }
