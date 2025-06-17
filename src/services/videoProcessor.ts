@@ -38,23 +38,16 @@ export class VideoProcessor {
       sequenceCount: options.sequences.length,
       platform: options.platform,
       targetDuration: options.duration,
-      sequences: options.sequences.map(s => ({ 
-        id: s.id, 
-        name: s.name, 
-        duration: s.duration, 
-        hasUrl: !!s.file_url 
-      }))
     });
 
     try {
       if (!options.sequences || options.sequences.length === 0) {
         throw new Error('No video sequences provided');
       }
-
       if (!options.duration || options.duration <= 0) {
         throw new Error('Invalid target duration provided');
       }
-
+      // This now calls the new async-aware method
       return await this.processVideoWithCloudinary(options, onProgress);
     } catch (error) {
       console.error('❌ processVideo failed:', error);
@@ -62,6 +55,7 @@ export class VideoProcessor {
     }
   }
 
+  // --- THIS METHOD IS REWRITTEN FOR THE ASYNC FLOW ---
   private async processVideoWithCloudinary(options: VideoProcessingOptions, onProgress?: (progress: number) => void): Promise<Blob> {
     try {
       console.log('🔧 Starting Cloudinary video processing...');
@@ -72,15 +66,10 @@ export class VideoProcessor {
         throw new Error('No valid video sequences found after validation');
       }
 
-      console.log(`✅ Validated ${validSequences.length} sequence(s)`);
-      onProgress?.(25);
-      onProgress?.(40);
-
-      console.log('📡 Calling cloudinary-concatenate edge function...');
-      onProgress?.(50);
-      
-      // --- DEBUGGING STEP IS HERE ---
-      const requestBody = {
+      // --- STAGE 1: START THE JOB ---
+      console.log('📡 [Stage 1] Calling edge function to START the job...');
+      const startRequestBody = {
+        action: 'start_job', // New action parameter
         videos: validSequences.map(seq => ({
           publicId: this.extractPublicIdFromUrl(seq.file_url),
           duration: seq.duration
@@ -88,33 +77,44 @@ export class VideoProcessor {
         targetDuration: options.duration
       };
 
-      // This new log will show us exactly what is being sent to the backend.
-      console.log('--- PAYLOAD TO BACKEND ---', JSON.stringify(requestBody, null, 2));
-
-      const { data, error } = await supabase.functions.invoke('cloudinary-concatenate', {
-        body: requestBody
+      const { data: startData, error: startError } = await supabase.functions.invoke('cloudinary-concatenate', {
+        body: startRequestBody
       });
-      // --- END OF DEBUGGING STEP ---
 
-      if (error) {
-        console.error('❌ Cloudinary concatenation error:', error);
-        throw new Error(`Cloudinary concatenation failed: ${error.message}`);
-      }
+      if (startError) throw new Error(`[Stage 1] Failed to start job: ${startError.message}`);
+      const { jobId } = startData;
+      if (!jobId) throw new Error('[Stage 1] Did not receive a job ID from the server.');
+      
+      console.log(`✅ [Stage 1] Job started successfully with ID: ${jobId}`);
+      onProgress?.(25);
 
-      if (!data?.success) {
-        console.error('❌ Cloudinary concatenation returned unsuccessful result:', data);
-        throw new Error(data?.error || 'Video concatenation failed');
-      }
-
-      console.log('✅ Cloudinary concatenation completed successfully:', {
-        url: data.url,
-        message: data.message,
-      });
+      // --- STAGE 2: POLL FOR COMPLETION ---
+      console.log('⏳ [Stage 2] Polling for job completion...');
+      await this._pollForJobCompletion(jobId, onProgress);
+      console.log('✅ [Stage 2] Polling complete. Trimming finished.');
       onProgress?.(75);
 
-      console.log('📥 Downloading processed video from:', data.url);
-      const videoBlob = await this.downloadFromUrl(data.url);
+      // --- STAGE 3: FINALIZE THE VIDEO ---
+      console.log('🔗 [Stage 3] Calling edge function to FINALIZE the video...');
+      const { data: finalData, error: finalError } = await supabase.functions.invoke('cloudinary-concatenate', {
+        body: {
+          action: 'concatenate', // New action parameter
+          jobId: jobId
+        }
+      });
 
+      if (finalError) throw new Error(`[Stage 3] Concatenation failed: ${finalError.message}`);
+      if (!finalData?.success || !finalData?.url) {
+        throw new Error(finalData?.error || '[Stage 3] Finalizing video failed.');
+      }
+      
+      const finalUrl = finalData.url;
+      console.log(`✅ [Stage 3] Final URL received: ${finalUrl}`);
+      onProgress?.(90);
+
+      // --- STAGE 4: DOWNLOAD THE FINAL VIDEO ---
+      console.log('📥 [Stage 4] Downloading processed video...');
+      const videoBlob = await this.downloadFromUrl(finalUrl);
       onProgress?.(100);
       console.log('✅ Video processing completed successfully');
       
@@ -126,61 +126,70 @@ export class VideoProcessor {
     }
   }
 
+  // --- NEW HELPER METHOD FOR POLLING ---
+  private _pollForJobCompletion(jobId: string, onProgress?: (progress: number) => void): Promise<void> {
+    return new Promise((resolve, reject) => {
+      let currentProgress = 25;
+      const intervalId = setInterval(async () => {
+        try {
+          const { data, error } = await supabase.functions.invoke('check-job-status', {
+            body: { jobId }
+          });
+
+          if (error) {
+            clearInterval(intervalId);
+            return reject(new Error(`Polling failed: ${error.message}`));
+          }
+          
+          console.log(`Polling... current status: ${data.status}`);
+          
+          if (data.status === 'ready_to_concatenate') {
+            clearInterval(intervalId);
+            return resolve();
+          }
+
+          // Optional: Increment progress slightly during polling to show activity
+          if (currentProgress < 75) {
+            currentProgress += 5;
+            onProgress?.(currentProgress);
+          }
+
+        } catch (e) {
+          clearInterval(intervalId);
+          return reject(e);
+        }
+      }, 5000); // Poll every 5 seconds
+    });
+  }
+
+  // --- UNCHANGED HELPER METHODS ---
   private validateSequences(sequences: any[]) {
+    // This method remains the same as your original.
     console.log('🔍 Validating sequences...');
-    
     const validSequences = sequences.filter((seq, index) => {
-      console.log(`Validating sequence ${index + 1}:`, {
-        id: seq.id,
-        name: seq.name,
-        duration: seq.duration,
-        file_url: seq.file_url ? 'present' : 'missing'
-      });
-
-      if (!seq.file_url) {
-        console.warn(`❌ Sequence ${seq.id} has no file_url`);
+      console.log(`Validating sequence ${index + 1}:`, { id: seq.id, name: seq.name, duration: seq.duration, file_url: seq.file_url ? 'present' : 'missing' });
+      if (!seq.file_url || !seq.file_url.startsWith('http') || !seq.duration || seq.duration <= 0 || !seq.file_url.includes('cloudinary.com')) {
+        console.warn(`❌ Sequence ${seq.id} is invalid`);
         return false;
       }
-
-      if (!seq.file_url.startsWith('http')) {
-        console.warn(`❌ Sequence ${seq.id} has invalid URL: ${seq.file_url}`);
-        return false;
-      }
-
-      if (!seq.duration || seq.duration <= 0) {
-        console.warn(`❌ Sequence ${seq.id} has invalid duration: ${seq.duration}`);
-        return false;
-      }
-
-      if (!seq.file_url.includes('cloudinary.com')) {
-        console.warn(`❌ Sequence ${seq.id} is not a Cloudinary URL: ${seq.file_url}`);
-        return false;
-      }
-
       console.log(`✅ Sequence ${seq.id} is valid`);
       return true;
     });
-
     console.log(`✅ Validation complete: ${validSequences.length}/${sequences.length} sequences are valid`);
     return validSequences;
   }
 
   private extractPublicIdFromUrl(cloudinaryUrl: string): string {
+    // This method remains the same as your original.
     try {
       const urlParts = cloudinaryUrl.split('/');
       const uploadIndex = urlParts.findIndex(part => part === 'upload');
-      
-      if (uploadIndex === -1) {
-        throw new Error('Invalid Cloudinary URL format');
-      }
-
+      if (uploadIndex === -1) throw new Error('Invalid Cloudinary URL format');
       const pathAfterUpload = urlParts.slice(uploadIndex + 1).join('/');
       const pathWithoutVersion = pathAfterUpload.replace(/^v\d+\//, '');
       const publicId = pathWithoutVersion.replace(/\.[^/.]+$/, '');
-      
       console.log(`📋 Extracted public ID: ${publicId} from URL: ${cloudinaryUrl}`);
       return publicId;
-      
     } catch (error) {
       console.error('❌ Failed to extract public ID from URL:', cloudinaryUrl, error);
       throw new Error(`Invalid Cloudinary URL: ${cloudinaryUrl}`);
@@ -188,29 +197,18 @@ export class VideoProcessor {
   }
 
   private async downloadFromUrl(url: string): Promise<Blob> {
+    // This method remains the same as your original.
     try {
       console.log('📥 Starting download from URL:', url);
-      
       const response = await fetch(url);
-      
       if (!response.ok) {
         const errorText = await response.text().catch(() => 'Unknown error');
         console.error(`❌ Video download failed with status ${response.status}:`, errorText);
         throw new Error(`Failed to download video: HTTP ${response.status} - ${response.statusText}`);
       }
-
-      const contentType = response.headers.get('content-type');
-      console.log('📄 Response content type:', contentType);
-
-      if (!contentType || !contentType.includes('video')) {
-        console.warn('⚠️ Unexpected content type:', contentType);
-      }
-
       const videoBlob = await response.blob();
       console.log('✅ Video downloaded successfully, size:', videoBlob.size, 'bytes');
-      
       return videoBlob;
-      
     } catch (error) {
       console.error('❌ Video download failed:', error);
       throw new Error(`Video download failed: ${error.message}`);
