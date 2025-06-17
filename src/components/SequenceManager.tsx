@@ -4,9 +4,10 @@ import { Card, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Checkbox } from '@/components/ui/checkbox';
 import { VideoSequence, Platform } from '@/pages/Index';
-import { ArrowUp, ArrowDown, RefreshCw, Play } from 'lucide-react';
+import { ArrowUp, ArrowDown, RefreshCw, Play, GripVertical } from 'lucide-react';
 import { useVideoAssets } from '@/hooks/useVideoAssets';
 import { useToast } from '@/hooks/use-toast';
+import { DragDropContext, Droppable, Draggable, DropResult } from 'react-beautiful-dnd';
 
 interface SequenceManagerProps {
   sequences: VideoSequence[];
@@ -15,7 +16,6 @@ interface SequenceManagerProps {
 }
 
 const SequenceManager = ({ sequences, onSequencesChange, platform }: SequenceManagerProps) => {
-  const [draggedItem, setDraggedItem] = useState<string | null>(null);
   const { assets, loading, error, refetch, convertToSequences, getVideoUrlById } = useVideoAssets(platform);
   const { toast } = useToast();
 
@@ -60,6 +60,21 @@ const SequenceManager = ({ sequences, onSequencesChange, platform }: SequenceMan
     [newSequences[targetIndex], newSequences[currentIndex]];
     
     onSequencesChange(newSequences);
+  };
+
+  const handleDragEnd = (result: DropResult) => {
+    if (!result.destination) return;
+
+    const newSequences = [...sequences];
+    const [reorderedItem] = newSequences.splice(result.source.index, 1);
+    newSequences.splice(result.destination.index, 0, reorderedItem);
+
+    onSequencesChange(newSequences);
+    
+    toast({
+      title: "Sequence reordered",
+      description: `Moved "${reorderedItem.name}" to position ${result.destination.index + 1}`,
+    });
   };
 
   const selectedSequences = sequences.filter(s => s.selected);
@@ -114,7 +129,7 @@ const SequenceManager = ({ sequences, onSequencesChange, platform }: SequenceMan
     <div className="space-y-6">
       <div className="text-center">
         <h3 className="text-lg font-semibold mb-2">Select & Arrange Sequences</h3>
-        <p className="text-gray-600">Choose which video clips to include and arrange them in order</p>
+        <p className="text-gray-600">Choose which video clips to include and drag to reorder them</p>
         <Button 
           onClick={handleRefreshLibrary} 
           variant="outline" 
@@ -153,110 +168,130 @@ const SequenceManager = ({ sequences, onSequencesChange, platform }: SequenceMan
         </CardContent>
       </Card>
 
-      {/* Sequence List */}
-      <div className="space-y-3">
-        {sequences.map((sequence, index) => {
-          const videoUrl = getVideoUrlById(sequence.id);
-          return (
-            <Card 
-              key={sequence.id}
-              className={`
-                transition-all duration-200 border-2
-                ${sequence.selected 
-                  ? 'border-blue-500 bg-blue-50 shadow-md' 
-                  : 'border-gray-200 bg-white'
-                }
-                ${draggedItem === sequence.id ? 'opacity-50' : ''}
-              `}
+      {/* Drag and Drop Sequence List */}
+      <DragDropContext onDragEnd={handleDragEnd}>
+        <Droppable droppableId="sequences">
+          {(provided, snapshot) => (
+            <div
+              {...provided.droppableProps}
+              ref={provided.innerRef}
+              className={`space-y-3 ${snapshot.isDraggingOver ? 'bg-blue-50 rounded-lg p-2' : ''}`}
             >
-              <CardContent className="p-4">
-                <div className="flex items-center space-x-4">
-                  {/* Checkbox */}
-                  <Checkbox
-                    checked={sequence.selected}
-                    onCheckedChange={() => toggleSequence(sequence.id)}
-                  />
+              {sequences.map((sequence, index) => {
+                const videoUrl = getVideoUrlById(sequence.id);
+                return (
+                  <Draggable key={sequence.id} draggableId={sequence.id} index={index}>
+                    {(provided, snapshot) => (
+                      <Card 
+                        ref={provided.innerRef}
+                        {...provided.draggableProps}
+                        className={`
+                          transition-all duration-200 border-2
+                          ${sequence.selected 
+                            ? 'border-blue-500 bg-blue-50 shadow-md' 
+                            : 'border-gray-200 bg-white'
+                          }
+                          ${snapshot.isDragging ? 'shadow-lg rotate-1 scale-105' : ''}
+                        `}
+                      >
+                        <CardContent className="p-4">
+                          <div className="flex items-center space-x-4">
+                            {/* Drag Handle */}
+                            <div {...provided.dragHandleProps} className="cursor-grab active:cursor-grabbing">
+                              <GripVertical className="h-5 w-5 text-gray-400 hover:text-gray-600" />
+                            </div>
 
-                  {/* Order Number */}
-                  <div className={`
-                    w-8 h-8 rounded-full flex items-center justify-center text-sm font-bold
-                    ${sequence.selected 
-                      ? 'bg-blue-500 text-white' 
-                      : 'bg-gray-200 text-gray-500'
-                    }
-                  `}>
-                    {index + 1}
-                  </div>
+                            {/* Checkbox */}
+                            <Checkbox
+                              checked={sequence.selected}
+                              onCheckedChange={() => toggleSequence(sequence.id)}
+                            />
 
-                  {/* Video Preview */}
-                  <div className="w-20 h-14 bg-gray-300 rounded-lg flex items-center justify-center overflow-hidden relative group">
-                    {videoUrl ? (
-                      <>
-                        <video 
-                          src={videoUrl}
-                          className="w-full h-full object-cover rounded-lg"
-                          preload="metadata"
-                          muted
-                          onError={(e) => {
-                            console.error('Video preview error:', e);
-                            // Fallback to placeholder
-                            (e.target as HTMLVideoElement).style.display = 'none';
-                          }}
-                        />
-                        <div className="absolute inset-0 bg-black bg-opacity-0 group-hover:bg-opacity-30 transition-all duration-200 flex items-center justify-center">
-                          <Play className="h-4 w-4 text-white opacity-0 group-hover:opacity-100 transition-opacity duration-200" />
-                        </div>
-                      </>
-                    ) : (
-                      <span className="text-xs text-gray-600">CLIP</span>
+                            {/* Order Number */}
+                            <div className={`
+                              w-8 h-8 rounded-full flex items-center justify-center text-sm font-bold
+                              ${sequence.selected 
+                                ? 'bg-blue-500 text-white' 
+                                : 'bg-gray-200 text-gray-500'
+                              }
+                            `}>
+                              {index + 1}
+                            </div>
+
+                            {/* Video Preview */}
+                            <div className="w-20 h-14 bg-gray-300 rounded-lg flex items-center justify-center overflow-hidden relative group">
+                              {videoUrl ? (
+                                <>
+                                  <video 
+                                    src={videoUrl}
+                                    className="w-full h-full object-cover rounded-lg"
+                                    preload="metadata"
+                                    muted
+                                    onError={(e) => {
+                                      console.error('Video preview error:', e);
+                                      (e.target as HTMLVideoElement).style.display = 'none';
+                                    }}
+                                  />
+                                  <div className="absolute inset-0 bg-black bg-opacity-0 group-hover:bg-opacity-30 transition-all duration-200 flex items-center justify-center">
+                                    <Play className="h-4 w-4 text-white opacity-0 group-hover:opacity-100 transition-opacity duration-200" />
+                                  </div>
+                                </>
+                              ) : (
+                                <span className="text-xs text-gray-600">CLIP</span>
+                              )}
+                            </div>
+
+                            {/* Details */}
+                            <div className="flex-1">
+                              <h4 className="font-semibold text-gray-900">{sequence.name}</h4>
+                              <p className="text-sm text-gray-600">{sequence.duration}s duration</p>
+                            </div>
+
+                            {/* Preview Button */}
+                            {videoUrl && (
+                              <Button
+                                size="sm"
+                                variant="outline"
+                                onClick={() => window.open(videoUrl, '_blank')}
+                                className="h-8 w-8 p-0"
+                              >
+                                <Play className="h-3 w-3" />
+                              </Button>
+                            )}
+
+                            {/* Legacy Move Controls (kept for backup) */}
+                            <div className="flex flex-col space-y-1 opacity-50">
+                              <Button
+                                variant="outline"
+                                size="sm"
+                                onClick={() => moveSequence(sequence.id, 'up')}
+                                disabled={index === 0}
+                                className="h-6 w-8 p-0"
+                              >
+                                <ArrowUp className="h-3 w-3" />
+                              </Button>
+                              <Button
+                                variant="outline"
+                                size="sm"
+                                onClick={() => moveSequence(sequence.id, 'down')}
+                                disabled={index === sequences.length - 1}
+                                className="h-6 w-8 p-0"
+                              >
+                                <ArrowDown className="h-3 w-3" />
+                              </Button>
+                            </div>
+                          </div>
+                        </CardContent>
+                      </Card>
                     )}
-                  </div>
-
-                  {/* Details */}
-                  <div className="flex-1">
-                    <h4 className="font-semibold text-gray-900">{sequence.name}</h4>
-                    <p className="text-sm text-gray-600">{sequence.duration}s duration</p>
-                  </div>
-
-                  {/* Preview Button */}
-                  {videoUrl && (
-                    <Button
-                      size="sm"
-                      variant="outline"
-                      onClick={() => window.open(videoUrl, '_blank')}
-                      className="h-8 w-8 p-0"
-                    >
-                      <Play className="h-3 w-3" />
-                    </Button>
-                  )}
-
-                  {/* Move Controls */}
-                  <div className="flex flex-col space-y-1">
-                    <Button
-                      variant="outline"
-                      size="sm"
-                      onClick={() => moveSequence(sequence.id, 'up')}
-                      disabled={index === 0}
-                      className="h-6 w-8 p-0"
-                    >
-                      <ArrowUp className="h-3 w-3" />
-                    </Button>
-                    <Button
-                      variant="outline"
-                      size="sm"
-                      onClick={() => moveSequence(sequence.id, 'down')}
-                      disabled={index === sequences.length - 1}
-                      className="h-6 w-8 p-0"
-                    >
-                      <ArrowDown className="h-3 w-3" />
-                    </Button>
-                  </div>
-                </div>
-              </CardContent>
-            </Card>
-          );
-        })}
-      </div>
+                  </Draggable>
+                );
+              })}
+              {provided.placeholder}
+            </div>
+          )}
+        </Droppable>
+      </DragDropContext>
 
       {/* Preview Timeline */}
       <Card className="border-2 border-purple-200 bg-purple-50">
