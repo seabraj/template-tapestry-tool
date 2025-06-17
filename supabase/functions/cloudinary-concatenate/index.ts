@@ -37,22 +37,18 @@ serve(async (req) => {
   try {
     console.log('🎬 === Cloudinary Manifest Concatenation Started ===');
     
-    // --- THIS IS THE CORRECTED LINE ---
     const { videos, targetDuration } = await req.json() as ConcatenationRequest;
-    
     const cloudName = 'dsxrmo3kt';
     
-    if (!videos?.length) throw new Error('No videos provided'); // This was the error thrown
+    if (!videos?.length) throw new Error('No videos provided');
     if (!targetDuration || targetDuration <= 0) throw new Error('A valid target duration is required.');
 
     console.log(`📊 Processing ${videos.length} videos. Target duration: ${targetDuration}s`);
 
-    // 1. Calculate total duration from the reliable data sent from the frontend
     const totalOriginalDuration = videos.reduce((sum, v) => sum + v.duration, 0);
     if (totalOriginalDuration <= 0) throw new Error('Total duration of source videos is zero.');
     console.log(`⏱️ Total original duration: ${totalOriginalDuration.toFixed(2)}s`);
     
-    // 2. Build the manifest entries with proportional trimming
     const manifest = {
       entries: videos.map(video => {
         const proportionalDuration = (video.duration / totalOriginalDuration) * targetDuration;
@@ -65,7 +61,6 @@ serve(async (req) => {
     
     console.log('📝 Generated Manifest:', JSON.stringify(manifest, null, 2));
 
-    // 3. Upload the manifest as a raw JSON file to Cloudinary
     const manifestString = JSON.stringify(manifest);
     const uploadResult = await cloudinary.uploader.upload(
       `data:text/plain;base64,${btoa(manifestString)}`, 
@@ -75,15 +70,17 @@ serve(async (req) => {
     const manifestPublicId = uploadResult.public_id;
     console.log(`📄 Manifest uploaded successfully with public ID: ${manifestPublicId}`);
 
-    // 4. Generate the final, simple URL using the manifest
-    const finalUrl = cloudinary.url(`${manifestPublicId}.json`, {
-      resource_type: 'video',
-      transformation: [
-        { width: 1280, height: 720, crop: 'pad', audio_codec: 'aac' },
-        { effect: 'concatenate:manifest_json' },
-        { fetch_format: 'mp4' }
-      ]
-    });
+    // --- THIS IS THE CORRECTED PART ---
+    // Manually build the URL with the correct syntax for manifest-based concatenation.
+    const transformations = [
+      'w_1280,h_720,c_pad',                             // Set dimensions for the final video
+      `l_video:raw:upload:${manifestPublicId}.json`,    // Specify the manifest as a video layer
+      'fl_splice',                                      // Use the splice flag to concatenate from the manifest
+      'q_auto:good'                                     // Set a good quality level
+    ].join('/');
+
+    const finalUrl = `https://res.cloudinary.com/${cloudName}/video/upload/${transformations}/final_video.mp4`;
+    // --- END OF CORRECTION ---
 
     console.log('🎯 Final URL generated:', finalUrl);
 
