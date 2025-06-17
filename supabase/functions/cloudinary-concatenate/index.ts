@@ -46,7 +46,7 @@ serve(async (req) => {
       for (let i = 0; i < videos.length; i++) {
         const video = videos[i];
         const proportionalDuration = (video.duration / totalOriginalDuration) * targetDuration;
-        const trimmedId = `temp_processing/trimmed_${i}_${timestamp}`;
+        const trimmedId = `trimmed_${i}_${timestamp}`;
         trimmedIds.push(trimmedId);
 
         // Use eager_async: true to NOT wait for the response
