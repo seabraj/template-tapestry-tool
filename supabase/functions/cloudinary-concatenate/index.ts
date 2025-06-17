@@ -1,5 +1,6 @@
+// FINAL code for: cloudinary-concatenate/index.ts
+
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
-import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
 import { v2 as cloudinary } from 'npm:cloudinary@^1.41.1';
 
 const corsHeaders = {
@@ -21,88 +22,57 @@ serve(async (req) => {
   }
 
   try {
-    const { action, videos, targetDuration, jobId } = await req.json();
-    
-    const supabaseClient = createClient(
-      Deno.env.get('SUPABASE_URL') ?? '',
-      Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? ''
-    );
-    
-    // ACTION 1: Start the trimming process
-    if (action === 'start_job') {
-      const totalOriginalDuration = videos.reduce((sum, v) => sum + v.duration, 0);
-      const timestamp = Date.now();
-      const trimmedIds = [];
+    const { videos, targetDuration } = await req.json();
 
-      const { data: newJob, error: createJobError } = await supabaseClient
-        .from('jobs')
-        .insert({ target_duration: targetDuration, status: 'processing_trims' })
-        .select()
-        .single();
-      if (createJobError) throw createJobError;
+    if (!videos || videos.length === 0) throw new Error('No videos provided.');
+    if (!targetDuration || targetDuration <= 0) throw new Error('Invalid target duration.');
 
-      for (let i = 0; i < videos.length; i++) {
-        const video = videos[i];
-        const proportionalDuration = (video.duration / totalOriginalDuration) * targetDuration;
-        const trimmedId = `trimmed_${i}_${timestamp}`;
-        trimmedIds.push(trimmedId);
+    const totalOriginalDuration = videos.reduce((sum, v) => sum + v.duration, 0);
+    if (totalOriginalDuration <= 0) throw new Error('Total original duration of videos is zero.');
 
-        // --- FINAL FIX IS HERE ---
-        // This simplified structure is a more direct command to Cloudinary.
-        await cloudinary.uploader.explicit(video.publicId, {
-          type: 'upload',
-          resource_type: 'video',
-          eager_async: true, 
-          eager: [{
-            public_id: trimmedId,
-            format: 'mp4',
-            quality: 'auto:good',
-            duration: proportionalDuration.toFixed(2) // Duration is a top-level property
-          }]
-        });
-      }
+    const firstVideo = videos[0];
+    const firstVideoProportionalDuration = (firstVideo.duration / totalOriginalDuration) * targetDuration;
 
-      await supabaseClient.from('jobs').update({ trimmed_ids: trimmedIds }).eq('id', newJob.id);
+    // Start building the transformation array for the Cloudinary SDK
+    const transformations = [
+      // First, set the dimensions and trim the base video
+      { width: 1280, height: 720, crop: 'pad' },
+      { duration: firstVideoProportionalDuration.toFixed(2) },
+    ];
 
-      return new Response(JSON.stringify({ jobId: newJob.id }), {
-        headers: { ...corsHeaders, "Content-Type": "application/json" },
-      });
-    }
+    // Loop through the rest of the videos and add them as overlays to be spliced
+    for (let i = 1; i < videos.length; i++) {
+      const subsequentVideo = videos[i];
+      const subsequentVideoProportionalDuration = (subsequentVideo.duration / totalOriginalDuration) * targetDuration;
 
-    // ACTION 2: Concatenate the finished videos
-    else if (action === 'concatenate') {
-      const { data: job, error: jobError } = await supabaseClient
-        .from('jobs')
-        .select('trimmed_ids, target_duration')
-        .eq('id', jobId)
-        .single();
-      if (jobError || !job) throw new Error("Job not found or not ready.");
-
-      const sortedVideos = job.trimmed_ids as string[];
-      if (sortedVideos.length < 2) throw new Error("Not enough videos to concatenate.");
-
-      const video1Id = sortedVideos[0];
-      const transformationChain = ['w_1280,h_720,c_pad'];
-
-      for (let i = 1; i < sortedVideos.length; i++) {
-        const videoToSpliceId = (sortedVideos[i] as string).replace(/\//g, ':');
-        transformationChain.push(`l_video:${videoToSpliceId},w_1280,h_720,c_pad`);
-        transformationChain.push('fl_splice');
-      }
-      transformationChain.push('ac_aac', 'q_auto:good');
-
-      const finalUrl = `https://res.cloudinary.com/dsxrmo3kt/video/upload/${transformationChain.join('/')}/${video1Id}.mp4`;
+      // Define the video overlay, including its own trim transformation
+      const overlayOptions = {
+        resource_type: 'video',
+        public_id: subsequentVideo.publicId,
+        transformation: [
+            { width: 1280, height: 720, crop: 'pad' },
+            { duration: subsequentVideoProportionalDuration.toFixed(2) }
+        ]
+      };
       
-      await supabaseClient.from('jobs').update({ status: 'completed', final_url: finalUrl }).eq('id', jobId);
+      // Add the overlay layer and the splice flag
+      transformations.push({ overlay: overlayOptions });
+      transformations.push({ flags: 'splice' });
+    }
 
-      return new Response(JSON.stringify({ success: true, url: finalUrl }), {
-        headers: { ...corsHeaders, "Content-Type": "application/json" },
-      });
-    }
-    
-    else {
-      throw new Error("Invalid 'action' provided.");
-    }
+    // Add final overall transformations
+    transformations.push({ audio_codec: 'aac' }, { quality: 'auto:good' });
+
+    // Let the Cloudinary SDK generate the final, complex URL
+    const finalUrl = cloudinary.url(firstVideo.publicId, {
+      resource_type: 'video',
+      transformation: transformations,
+      format: 'mp4',
+    });
+
+    return new Response(JSON.stringify({ success: true, url: finalUrl }), {
+      headers: { ...corsHeaders, "Content-Type": "application/json" },
+    });
 
   } catch (error) {
     return new Response(JSON.stringify({ error: error.message }), {
