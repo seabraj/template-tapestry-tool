@@ -3,7 +3,6 @@ import { Cloudinary } from '@cloudinary/url-gen';
 import { trim } from '@cloudinary/url-gen/actions/videoEdit';
 import { auto } from '@cloudinary/url-gen/qualifiers/quality';
 import { format } from '@cloudinary/url-gen/actions/delivery';
-import { concatenate } from '@cloudinary/url-gen/actions/videoEdit';
 
 export interface VideoProcessingOptions {
   sequences: Array<{
@@ -222,12 +221,12 @@ export class VideoProcessor {
         baseVideo.videoEdit(trim().duration(trimData[0].trimmedDuration));
       }
       
-      // Add concatenation for additional videos
+      // Build concatenation string for additional videos
       if (publicIds.length > 1) {
         console.log('🔗 Adding concatenation for remaining videos...');
         
-        // Create video objects for concatenation
-        const additionalVideos = publicIds.slice(1).map((publicId, index) => {
+        // Create video source strings for concatenation
+        const videoSources = publicIds.slice(1).map((publicId, index) => {
           const videoIndex = index + 1; // +1 because we sliced from index 1
           const currentTrimData = trimData[videoIndex];
           
@@ -237,25 +236,33 @@ export class VideoProcessor {
             trimmedDuration: currentTrimData.trimmedDuration
           });
           
-          // Create video object with trimming if needed
-          const video = this.cloudinary.video(publicId);
+          // Build transformation string for trimmed video
           if (currentTrimData.trimmedDuration < currentTrimData.originalDuration) {
             console.log(`✂️ Trimming video ${videoIndex + 1}: ${currentTrimData.originalDuration}s → ${currentTrimData.trimmedDuration.toFixed(2)}s`);
-            video.videoEdit(trim().duration(currentTrimData.trimmedDuration));
+            return `video:${publicId}/du_${currentTrimData.trimmedDuration}`;
+          } else {
+            return `video:${publicId}`;
           }
-          
-          return video;
         });
         
-        // Apply concatenation with all additional videos
-        baseVideo.videoEdit(concatenate(...additionalVideos));
+        // Build the concatenation URL manually using Cloudinary's transformation syntax
+        const baseUrl = baseVideo.toURL();
+        const [baseUrl1, params] = baseUrl.split('/upload/');
+        
+        // Create concatenation transformation
+        const concatTransform = `fl_splice,l_video:${videoSources.join(',l_video:')}`;
+        
+        const concatenatedUrl = `${baseUrl1}/upload/${concatTransform}/${params}`;
+        console.log('✅ Concatenation URL generated:', concatenatedUrl);
+        
+        return concatenatedUrl;
       }
       
-      // Apply quality and format
+      // Apply quality and format for single video
       baseVideo.quality(auto()).delivery(format('mp4'));
       
       const url = baseVideo.toURL();
-      console.log('✅ Concatenation URL generated:', url);
+      console.log('✅ Single video URL generated:', url);
       
       return url;
       
