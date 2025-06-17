@@ -31,11 +31,11 @@ export interface VideoProcessingOptions {
 
 export class VideoProcessor {
   constructor() {
-    console.log('🎬 VideoProcessor initialized for Cloudinary processing');
+    console.log('🎬 VideoProcessor initialized for direct Cloudinary processing');
   }
 
   async processVideo(options: VideoProcessingOptions, onProgress?: (progress: number) => void): Promise<Blob> {
-    return this.processVideoWithCloudinary(options, onProgress);
+    return this.processVideoWithDirectCloudinary(options, onProgress);
   }
 
   private extractCloudinaryPublicId(url: string): string {
@@ -75,9 +75,28 @@ export class VideoProcessor {
     throw new Error(`Could not extract public ID from URL: ${url}`);
   }
 
-  private async processVideoWithCloudinary(options: VideoProcessingOptions, onProgress?: (progress: number) => void): Promise<Blob> {
+  private async getVideoMetadata(publicId: string): Promise<{ duration: number }> {
     try {
-      console.log('🚀 Starting Cloudinary video processing...', {
+      const cloudName = 'dsxrmo3kt';
+      const metadataUrl = `https://res.cloudinary.com/${cloudName}/video/upload/${publicId}.json`;
+      const response = await fetch(metadataUrl);
+      
+      if (response.ok) {
+        const metadata = await response.json();
+        return { duration: metadata.duration || 10 };
+      } else {
+        console.warn(`⚠️ Could not fetch metadata for ${publicId}, using 10s default`);
+        return { duration: 10 };
+      }
+    } catch (error) {
+      console.warn(`⚠️ Metadata fetch failed for ${publicId}, using 10s default`);
+      return { duration: 10 };
+    }
+  }
+
+  private async processVideoWithDirectCloudinary(options: VideoProcessingOptions, onProgress?: (progress: number) => void): Promise<Blob> {
+    try {
+      console.log('🚀 Starting direct Cloudinary video processing...', {
         sequences: options.sequences.length,
         platform: options.platform,
         duration: options.duration
@@ -103,72 +122,103 @@ export class VideoProcessor {
         validSequences.map((seq, idx) => `${(seq as any).originalOrder + 1}. ${seq.name}`).join(', '));
       onProgress?.(25);
 
-      // Extract Cloudinary public IDs from the URLs
-      const publicIds = validSequences.map((seq, index) => {
+      // Extract Cloudinary public IDs and get metadata
+      const videoData = [];
+      for (const seq of validSequences) {
         try {
           const publicId = this.extractCloudinaryPublicId(seq.file_url);
-          console.log(`📋 Sequence ${index + 1} (${seq.name}): ${publicId}`);
-          return publicId;
+          const metadata = await this.getVideoMetadata(publicId);
+          
+          videoData.push({
+            public_id: publicId,
+            duration: metadata.duration
+          });
+          
+          console.log(`📋 Video: ${seq.name} - ${publicId} (${metadata.duration}s)`);
         } catch (error) {
-          console.error(`❌ Failed to extract public ID for sequence ${seq.name}:`, error);
+          console.error(`❌ Failed to process sequence ${seq.name}:`, error);
           throw error;
         }
-      });
+      }
 
-      console.log('🎯 Final public IDs for concatenation:', publicIds);
       onProgress?.(50);
 
-      // Call the Cloudinary concatenation edge function (without text overlays)
-      console.log('🔗 Calling cloudinary-concatenate edge function...');
-      const { data, error } = await supabase.functions.invoke('cloudinary-concatenate', {
-        body: {
-          publicIds,
-          platform: options.platform
-          // Remove customization to avoid text overlays
+      if (videoData.length === 1) {
+        // Single video - just optimize and format
+        const singleVideoUrl = `https://res.cloudinary.com/dsxrmo3kt/video/upload/q_auto:good,f_mp4/${videoData[0].public_id}.mp4`;
+        console.log('🎬 Single video optimization URL generated');
+        onProgress?.(90);
+        
+        // Download the processed video
+        const videoResponse = await fetch(singleVideoUrl);
+        if (!videoResponse.ok) {
+          throw new Error(`Failed to download video: HTTP ${videoResponse.status}`);
         }
-      });
-
-      if (error) {
-        console.error('❌ Cloudinary concatenation error:', error);
-        throw new Error(`Video processing failed: ${error.message}`);
+        
+        const videoBlob = await videoResponse.blob();
+        onProgress?.(100);
+        console.log('✅ Successfully processed single video');
+        return videoBlob;
       }
 
+      // Multiple videos - concatenate using Cloudinary transformations
+      console.log('🔗 Creating concatenation URL for multiple videos...');
+      
+      const baseVideo = videoData[0];
+      const transformations = ['q_auto:good', 'f_mp4'];
+      
+      let currentTime = baseVideo.duration;
+      
+      // Add each subsequent video as overlay with timing
+      for (let i = 1; i < videoData.length; i++) {
+        const video = videoData[i];
+        const escapedPublicId = video.public_id.replace(/\//g, ':');
+        
+        transformations.push(`l_video:${escapedPublicId}`);
+        transformations.push(`so_${currentTime}`);
+        transformations.push('fl_layer_apply');
+        
+        console.log(`📎 Adding ${video.public_id} at ${currentTime}s (duration: ${video.duration}s)`);
+        currentTime += video.duration;
+      }
+      
+      // Build the final concatenation URL
+      const transformationString = transformations.join('/');
+      const concatenatedUrl = `https://res.cloudinary.com/dsxrmo3kt/video/upload/${transformationString}/${baseVideo.public_id}.mp4`;
+      
+      console.log(`🎯 Generated concatenation URL with ${videoData.length} videos`);
+      console.log(`📤 Total duration: ${currentTime}s`);
+      console.log(`🔗 Concatenation URL: ${concatenatedUrl}`);
+      
       onProgress?.(75);
 
-      if (!data || !data.success) {
-        const errorMsg = data?.error || 'Unknown processing error';
-        console.error('❌ Cloudinary processing failed:', errorMsg);
-        throw new Error(`Video processing failed: ${errorMsg}`);
-      }
-
-      onProgress?.(90);
-
-      // Download the processed video from Cloudinary
-      const cloudinaryUrl = data.url;
-      console.log('📥 Downloading processed video from Cloudinary:', cloudinaryUrl);
-
+      // Download the concatenated video
       try {
-        const videoResponse = await fetch(cloudinaryUrl);
+        console.log('📥 Downloading concatenated video...');
+        const videoResponse = await fetch(concatenatedUrl);
+        
         if (!videoResponse.ok) {
-          throw new Error(`Failed to download processed video: HTTP ${videoResponse.status} ${videoResponse.statusText}`);
+          throw new Error(`Failed to download concatenated video: HTTP ${videoResponse.status} ${videoResponse.statusText}`);
         }
 
         const videoBlob = await videoResponse.blob();
         onProgress?.(100);
-        console.log('✅ Successfully downloaded processed video:', {
+        
+        console.log('✅ Successfully downloaded concatenated video:', {
           size: videoBlob.size,
-          type: videoBlob.type
+          type: videoBlob.type,
+          totalDuration: currentTime
         });
         
         return videoBlob;
         
       } catch (downloadError) {
-        console.error('❌ Failed to download processed video:', downloadError);
-        throw new Error(`Failed to download processed video: ${downloadError.message}`);
+        console.error('❌ Failed to download concatenated video:', downloadError);
+        throw new Error(`Failed to download concatenated video: ${downloadError.message}`);
       }
 
     } catch (error) {
-      console.error('❌ Cloudinary video processing failed:', error);
+      console.error('❌ Direct Cloudinary video processing failed:', error);
       throw new Error(`Video processing failed: ${error.message}`);
     }
   }

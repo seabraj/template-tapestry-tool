@@ -82,10 +82,6 @@ const Index = () => {
   const handleNextStep = () => {
     if (currentStep < totalSteps) {
       setCurrentStep(currentStep + 1);
-      toast({
-        title: `Step ${currentStep + 1}`,
-        description: getStepDescription(currentStep + 1),
-      });
     }
   };
 
