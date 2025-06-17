@@ -102,6 +102,41 @@ serve(async (req) => {
     
     console.log('✅ === PHASE 1 COMPLETE ===');
     
+    // DIAGNOSTIC: Test fl_splice with original videos first
+    console.log('🔬 === DIAGNOSTIC: Testing fl_splice with original videos ===');
+    
+    try {
+      const originalVideo1 = videos[0]; // First original video
+      const originalVideo2 = videos[1]; // Second original video
+      
+      const origVideo1Id = originalVideo1.publicId.replace(/\//g, ':');
+      const origVideo2Id = originalVideo2.publicId.replace(/\//g, ':');
+      
+      const diagnosticTransforms = [
+        'w_1280,h_720,c_pad',
+        `l_video:${origVideo2Id},w_1280,h_720,c_pad`,
+        'fl_splice',
+        'q_auto'
+      ].join('/');
+      
+      const diagnosticUrl = `https://res.cloudinary.com/dsxrmo3kt/video/upload/${diagnosticTransforms}/${originalVideo1.publicId}.mp4`;
+      
+      console.log('🔬 Diagnostic URL (original videos):', diagnosticUrl);
+      
+      const diagnosticTest = await fetch(diagnosticUrl, { method: 'HEAD' });
+      console.log(`🔬 Diagnostic test: ${diagnosticTest.status} ${diagnosticTest.statusText}`);
+      
+      if (diagnosticTest.ok) {
+        console.log('✅ fl_splice syntax works with original videos!');
+        console.log('🎯 Issue is likely with trimmed video metadata');
+      } else {
+        console.log('❌ fl_splice syntax issue - problem not metadata');
+      }
+      
+    } catch (diagnosticError) {
+      console.warn('⚠️ Diagnostic test failed:', diagnosticError.message);
+    }
+    
     // PHASE 2: Step-by-step concatenation using simple fl_splice
     console.log('🔗 === PHASE 2: Step-by-step Cloudinary concatenation ===');
     
