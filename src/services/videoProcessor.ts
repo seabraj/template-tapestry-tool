@@ -1,4 +1,3 @@
-
 import { supabase } from '@/integrations/supabase/client';
 
 export interface VideoProcessingOptions {
@@ -39,7 +38,12 @@ export class VideoProcessor {
       sequenceCount: options.sequences.length,
       platform: options.platform,
       targetDuration: options.duration,
-      sequences: options.sequences.map(s => ({ id: s.id, name: s.name, duration: s.duration, hasUrl: !!s.file_url }))
+      sequences: options.sequences.map(s => ({ 
+        id: s.id, 
+        name: s.name, 
+        duration: s.duration, 
+        hasUrl: !!s.file_url 
+      }))
     });
 
     try {
@@ -80,8 +84,8 @@ export class VideoProcessor {
       console.log(`📊 Total duration: ${totalDuration}s, Target: ${options.duration}s, Needs trimming: ${needsTrimming}`);
       onProgress?.(40);
 
-      // Call the cloudinary concatenation edge function
-      console.log('📡 Calling cloudinary-concatenate edge function...');
+      // Call the enhanced cloudinary concatenation edge function
+      console.log('📡 Calling enhanced cloudinary-concatenate edge function...');
       onProgress?.(50);
 
       const { data, error } = await supabase.functions.invoke('cloudinary-concatenate', {
@@ -104,7 +108,10 @@ export class VideoProcessor {
 
       console.log('✅ Cloudinary concatenation completed successfully:', {
         url: data.url,
-        message: data.message
+        message: data.message,
+        method: data.metadata?.method,
+        actualDuration: data.metadata?.actualDuration,
+        proportionalCalculation: data.metadata?.proportionalCalculation
       });
       onProgress?.(75);
 
