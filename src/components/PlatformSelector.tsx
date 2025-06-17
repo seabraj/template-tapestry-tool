@@ -28,7 +28,7 @@ const PlatformSelector = ({ selected, onSelect }: PlatformSelectorProps) => {
       name: 'Instagram Stories',
       ratio: '9:16',
       description: 'Vertical format, full-screen mobile experience',
-      frameClass: 'w-15 h-25'
+      frameClass: 'w-[60px] h-[100px]'
     }
   ];
 
@@ -45,7 +45,7 @@ const PlatformSelector = ({ selected, onSelect }: PlatformSelectorProps) => {
           onClick={() => onSelect(platform.id)}
         >
           <CardContent className="p-6 text-center relative">
-            <div className="inline-block bg-white/10 text-white px-3 py-1.5 rounded-lg text-xs font-medium uppercase tracking-wider mb-6">
+            <div className="inline-block bg-white/10 text-white px-3 py-1.5 rounded-xl text-xs font-medium uppercase tracking-wider mb-6">
               Video Format
             </div>
             
