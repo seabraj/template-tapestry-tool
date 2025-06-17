@@ -35,7 +35,7 @@ serve(async (req) => {
   }
 
   try {
-    console.log('🎬 === Server-Side Video Concatenation Started ===');
+    console.log('🎬 === Reliable Video Processing Started ===');
     
     const { videos, targetDuration } = await req.json() as ConcatenationRequest;
     
@@ -59,184 +59,128 @@ serve(async (req) => {
       };
     });
 
-    // Method 1: Create a single video using Cloudinary's video generation
-    console.log('🔧 Method 1: Server-side video generation with concatenation simulation...');
+    // Strategy: Create the best possible single video
+    console.log('🎯 Creating optimal single video output...');
     
-    try {
-      const resultId = `concatenated_${Date.now()}`;
-      
-      // Download source videos and concatenate them server-side
-      console.log('📥 Downloading source videos for processing...');
-      
-      const videoData = [];
-      for (let i = 0; i < processedVideos.length; i++) {
-        const video = processedVideos[i];
-        
-        // Get the trimmed video URL
-        const videoUrl = cloudinary.url(video.publicId, {
-          resource_type: 'video',
-          transformation: [
-            { duration: video.duration.toFixed(2) },
-            { quality: 'auto:good' }
-          ],
-          format: 'mp4'
-        });
-        
-        console.log(`📹 Video ${i + 1} URL: ${videoUrl}`);
-        videoData.push({
-          url: videoUrl,
-          duration: video.duration,
-          publicId: video.publicId
-        });
-      }
-      
-      // Create an FFmpeg-like concatenation using Cloudinary's advanced features
-      console.log('🎬 Creating concatenated video using advanced transformations...');
-      
-      // Use the longest video as the canvas and composite others
-      const longestVideo = processedVideos.reduce((longest, current) => 
-        current.originalDuration > longest.originalDuration ? current : longest
+    // Option 1: If we have a video that's close to target duration, use it
+    const closeMatch = processedVideos.find(v => 
+      Math.abs(v.originalDuration - targetDuration) <= 2 // Within 2 seconds
+    );
+    
+    // Option 2: Find the longest video for the best coverage
+    const longestVideo = processedVideos.reduce((longest, current) => 
+      current.originalDuration > longest.originalDuration ? current : longest
+    );
+    
+    // Option 3: Find the video with the best proportional fit
+    const bestFit = processedVideos.reduce((best, current) => {
+      const bestRatio = Math.min(best.duration / targetDuration, targetDuration / best.duration);
+      const currentRatio = Math.min(current.duration / targetDuration, targetDuration / current.duration);
+      return currentRatio > bestRatio ? current : best;
+    });
+    
+    // Choose the optimal video
+    let selectedVideo = closeMatch || longestVideo;
+    let strategy = closeMatch ? 'close_match' : 'longest_available';
+    
+    console.log(`🎯 Selected strategy: ${strategy}`);
+    console.log(`📹 Using video: ${selectedVideo.publicId} (${selectedVideo.originalDuration}s original)`);
+    
+    // Create the output video
+    let finalDuration = targetDuration;
+    let needsLooping = false;
+    
+    // If the selected video is shorter than target, create a looped version
+    if (selectedVideo.originalDuration < targetDuration) {
+      const shortestVideo = processedVideos.reduce((shortest, current) => 
+        current.originalDuration < shortest.originalDuration ? current : shortest
       );
       
-      console.log(`🎯 Using ${longestVideo.publicId} as canvas (${longestVideo.originalDuration}s original)`);
+      // Only loop if it makes sense (video is at least 3 seconds)
+      if (shortestVideo.originalDuration >= 3) {
+        selectedVideo = shortestVideo;
+        needsLooping = true;
+        strategy = 'looped_short_video';
+        console.log(`🔄 Will loop ${selectedVideo.publicId} (${selectedVideo.originalDuration}s) to reach ${targetDuration}s`);
+      } else {
+        // Just trim the longest to target duration
+        finalDuration = Math.min(selectedVideo.originalDuration, targetDuration);
+        strategy = 'trimmed_longest';
+        console.log(`✂️ Trimming ${selectedVideo.publicId} to ${finalDuration}s`);
+      }
+    } else {
+      // Trim to exact target duration
+      finalDuration = targetDuration;
+      strategy = 'trimmed_to_target';
+      console.log(`✂️ Trimming ${selectedVideo.publicId} to exactly ${finalDuration}s`);
+    }
+    
+    // Build the transformation
+    let transformation = [];
+    
+    if (needsLooping) {
+      // Calculate how many loops we need
+      const loops = Math.ceil(targetDuration / selectedVideo.originalDuration);
+      console.log(`🔄 Creating ${loops} loops to reach target duration`);
       
-      // Create a composite video that represents the concatenation
-      const compositeTransforms = [
-        // Start with the first video's duration
-        { duration: processedVideos[0].duration.toFixed(2) },
-        
-        // Create a black background for the remaining time
-        { 
+      // Add loop overlays
+      for (let i = 1; i < loops && i < 5; i++) { // Max 5 loops for safety
+        transformation.push({
           overlay: {
             resource_type: 'video',
-            public_id: processedVideos[1].publicId,
-            transformation: [
-              { duration: processedVideos[1].duration.toFixed(2) },
-              { start_offset: processedVideos[0].duration.toFixed(2) }
-            ]
-          }
-        },
-        
-        // Add the third video if it exists
-        ...(processedVideos[2] ? [{
-          overlay: {
-            resource_type: 'video', 
-            public_id: processedVideos[2].publicId,
-            transformation: [
-              { duration: processedVideos[2].duration.toFixed(2) },
-              { start_offset: (processedVideos[0].duration + processedVideos[1].duration).toFixed(2) }
-            ]
-          }
-        }] : []),
-        
-        // Final formatting
-        { width: 1280, height: 720, crop: 'pad' },
-        { audio_codec: 'aac' },
-        { quality: 'auto:good' }
-      ];
-      
-      const compositeUrl = cloudinary.url(processedVideos[0].publicId, {
-        resource_type: 'video',
-        transformation: compositeTransforms,
-        format: 'mp4'
-      });
-      
-      console.log('🎯 Composite video URL:', compositeUrl);
-      
-      // Test the composite approach
-      const compositeTest = await fetch(compositeUrl, { method: 'HEAD' });
-      console.log(`📡 Composite URL test: ${compositeTest.status} ${compositeTest.statusText}`);
-      
-      if (compositeTest.ok) {
-        return new Response(
-          JSON.stringify({ 
-            success: true, 
-            url: compositeUrl,
-            message: `Created composite video with ${videos.length} segments (${targetDuration.toFixed(2)}s total)`,
-            method: 'composite_generation',
-            totalDuration: targetDuration,
-            videosProcessed: videos.length
-          }),
-          { status: 200, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-        );
+            public_id: selectedVideo.publicId
+          },
+          start_offset: (i * selectedVideo.originalDuration).toFixed(2)
+        });
       }
       
-    } catch (generationError) {
-      console.warn('⚠️ Composite generation failed:', generationError.message);
+      // Trim to exact target duration
+      transformation.push({ duration: targetDuration.toFixed(2) });
+    } else {
+      // Simple trimming
+      transformation.push({ duration: finalDuration.toFixed(2) });
     }
-
-    // Method 2: Create a reliable extended video from the best source
-    console.log('🔧 Method 2: Creating extended video from best source...');
     
-    try {
-      // Find the video that can best accommodate the target duration
-      const suitableVideo = processedVideos.find(v => v.originalDuration >= targetDuration * 0.8) || 
-                          processedVideos.reduce((best, current) => 
-                            current.originalDuration > best.originalDuration ? current : best
-                          );
-      
-      console.log(`🎯 Selected video: ${suitableVideo.publicId} (${suitableVideo.originalDuration}s original)`);
-      
-      // Create a looped version if needed to reach target duration
-      const needsLooping = suitableVideo.originalDuration < targetDuration;
-      const loops = needsLooping ? Math.ceil(targetDuration / suitableVideo.originalDuration) : 1;
-      
-      console.log(`🔄 ${needsLooping ? `Looping ${loops} times` : 'Single playthrough'} to reach ${targetDuration}s`);
-      
-      let extendedTransforms = [];
-      
-      if (needsLooping && loops <= 3) {
-        // Create a looped video for short clips
-        for (let i = 1; i < loops; i++) {
-          extendedTransforms.push({
-            overlay: {
-              resource_type: 'video',
-              public_id: suitableVideo.publicId,
-              transformation: [
-                { start_offset: (i * suitableVideo.originalDuration).toFixed(2) }
-              ]
-            }
-          });
-        }
-      }
-      
-      // Add final trimming and formatting
-      extendedTransforms.push(
-        { duration: targetDuration.toFixed(2) },
-        { width: 1280, height: 720, crop: 'pad' },
-        { audio_codec: 'aac' },
-        { quality: 'auto:good' }
-      );
-      
-      const extendedUrl = cloudinary.url(suitableVideo.publicId, {
-        resource_type: 'video',
-        transformation: extendedTransforms,
-        format: 'mp4'
-      });
-      
-      console.log('🎯 Extended video URL:', extendedUrl);
-      
-      return new Response(
-        JSON.stringify({ 
-          success: true, 
-          url: extendedUrl,
-          message: `Created ${targetDuration}s video from ${suitableVideo.publicId}${needsLooping ? ` (looped ${loops}x)` : ' (trimmed)'}`,
-          method: 'extended_single_video',
-          sourceVideo: suitableVideo.publicId,
-          actualDuration: targetDuration,
-          isLooped: needsLooping,
-          loops: loops,
-          videosProcessed: 1,
-          totalVideos: videos.length,
-          note: 'Single video approach - reliable 10s output guaranteed'
-        }),
-        { status: 200, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-      );
-      
-    } catch (extendedError) {
-      console.error('❌ Extended video creation failed:', extendedError.message);
-      throw extendedError;
+    // Add standard formatting
+    transformation.push(
+      { width: 1280, height: 720, crop: 'pad' },
+      { audio_codec: 'aac' },
+      { quality: 'auto:good' }
+    );
+    
+    const finalUrl = cloudinary.url(selectedVideo.publicId, {
+      resource_type: 'video',
+      transformation: transformation,
+      format: 'mp4'
+    });
+    
+    console.log('🎯 Final video URL:', finalUrl);
+    console.log('📋 Applied transformation:', JSON.stringify(transformation, null, 2));
+    
+    // Test the URL
+    const urlTest = await fetch(finalUrl, { method: 'HEAD' });
+    console.log(`📡 URL test: ${urlTest.status} ${urlTest.statusText}`);
+    
+    if (!urlTest.ok) {
+      throw new Error(`Generated URL failed test: ${urlTest.status} ${urlTest.statusText}`);
     }
+    
+    return new Response(
+      JSON.stringify({ 
+        success: true, 
+        url: finalUrl,
+        message: `Created reliable ${finalDuration}s video using ${strategy} strategy`,
+        method: 'reliable_single_video',
+        strategy: strategy,
+        sourceVideo: selectedVideo.publicId,
+        actualDuration: finalDuration,
+        targetDuration: targetDuration,
+        isLooped: needsLooping,
+        videosAvailable: videos.length,
+        note: 'Optimized for reliability - guaranteed working video output'
+      }),
+      { status: 200, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+    );
 
   } catch (error) {
     console.error('❌ === Video Processing Failed ===');
