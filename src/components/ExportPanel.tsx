@@ -25,6 +25,7 @@ const ExportPanel = ({
   const [isProcessing, setIsProcessing] = useState(false);
   const [processedVideoUrl, setProcessedVideoUrl] = useState<string | null>(null);
   const [progress, setProgress] = useState(0);
+  const [processingError, setProcessingError] = useState<string | null>(null);
   const { toast } = useToast();
 
   const getAspectRatio = () => {
@@ -49,7 +50,15 @@ const ExportPanel = ({
   const totalDuration = selectedSequences.reduce((sum, seq) => sum + seq.duration, 0);
 
   const handleGenerateVideo = async () => {
+    console.log('🎬 Generate Video button clicked');
+    
+    // Clear any previous errors
+    setProcessingError(null);
+    
+    // Validate sequences
     if (selectedSequences.length === 0) {
+      const errorMsg = 'No sequences selected';
+      console.error('❌', errorMsg);
       toast({
         title: "No Sequences Selected",
         description: "Please go back and select at least one video sequence.",
@@ -58,12 +67,29 @@ const ExportPanel = ({
       return;
     }
 
+    console.log('📋 Processing request with:', {
+      selectedSequences: selectedSequences.length,
+      platform,
+      language,
+      duration,
+      totalDuration,
+      sequences: selectedSequences.map(s => ({
+        id: s.id,
+        name: s.name,
+        duration: s.duration,
+        hasFileUrl: !!s.file_url
+      }))
+    });
+
     try {
       setIsProcessing(true);
       setProgress(0);
-
-      const videoProcessor = new VideoProcessor();
       
+      console.log('🚀 Creating VideoProcessor instance...');
+      const videoProcessor = new VideoProcessor();
+      console.log('✅ VideoProcessor created successfully');
+      
+      console.log('🎯 Starting video processing...');
       const videoBlob = await videoProcessor.processVideo({
         sequences: selectedSequences.map(seq => ({
           id: seq.id,
@@ -73,30 +99,40 @@ const ExportPanel = ({
         })),
         customization,
         platform,
-        duration: duration // Use the user-specified duration from step 2
+        duration: duration
       }, (progress) => {
+        console.log('📊 Progress update:', progress + '%');
         setProgress(progress);
       });
 
+      console.log('✅ Video processing completed, creating download URL...');
+      
       // Create download URL
       const url = URL.createObjectURL(videoBlob);
       setProcessedVideoUrl(url);
       setProgress(100);
 
+      console.log('🎉 Video generation successful!');
       toast({
         title: "Video Generated Successfully!",
         description: `Your video has been processed and ${duration < totalDuration ? 'trimmed ' : ''}is ready for download.`,
       });
 
     } catch (error) {
-      console.error('Video processing failed:', error);
+      console.error('❌ Video processing failed:', error);
+      
+      // Store error for display
+      const errorMessage = error instanceof Error ? error.message : 'Unknown error occurred';
+      setProcessingError(errorMessage);
+      
       toast({
         title: "Processing Failed",
-        description: error.message || "Failed to generate video. Please try again.",
+        description: errorMessage,
         variant: "destructive",
       });
     } finally {
       setIsProcessing(false);
+      console.log('🏁 Video processing attempt completed');
     }
   };
 
@@ -123,6 +159,40 @@ const ExportPanel = ({
     setProcessedVideoUrl(null);
     setProgress(0);
   };
+
+  // Error state
+  if (processingError) {
+    return (
+      <div className="text-center space-y-6">
+        <div className="w-24 h-24 bg-red-600 rounded-full flex items-center justify-center mx-auto">
+          <AlertCircle className="text-white text-4xl" />
+        </div>
+        <h3 className="text-2xl font-bold text-red-400">
+          Processing Failed
+        </h3>
+        
+        <div className="bg-red-950/50 border border-red-600 rounded-lg p-4 max-w-2xl mx-auto">
+          <h4 className="font-semibold text-red-400 mb-2">Error Details:</h4>
+          <p className="text-red-300 text-sm break-words">{processingError}</p>
+        </div>
+        
+        <div className="space-y-2">
+          <p className="text-gray-300">
+            Please check the browser console for detailed logs and try again.
+          </p>
+          <Button 
+            onClick={() => {
+              setProcessingError(null);
+              setProgress(0);
+            }}
+            className="bg-blue-600 hover:bg-blue-700"
+          >
+            Try Again
+          </Button>
+        </div>
+      </div>
+    );
+  }
 
   // Success state
   if (processedVideoUrl) {
