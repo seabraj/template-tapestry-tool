@@ -58,13 +58,14 @@ serve(async (req) => {
     if (publicIds.length === 1) {
       // Single video - just optimize and format, optionally trim
       const publicId = publicIds[0];
-      let transformations = ['q_auto:good', 'f_mp4'];
+      let transformations = ['q_auto:good'];
       
       if (targetDuration) {
-        // Use proper trimming syntax: du_<duration> for duration
         transformations.push(`du_${targetDuration}`);
         console.log(`✂️ Trimming single video to ${targetDuration}s`);
       }
+      
+      transformations.push('f_mp4');
       
       const singleVideoUrl = `https://res.cloudinary.com/${cloudName}/video/upload/${transformations.join(',')}/${publicId}.mp4`;
       console.log('🎬 Single video URL generated:', singleVideoUrl);
@@ -84,25 +85,18 @@ serve(async (req) => {
       );
     }
 
-    // Multiple videos - try concatenation approaches
+    // Multiple videos - try proper concatenation using Cloudinary's video_concat parameter
     console.log('🔗 Starting video concatenation process...');
     
-    // Method 1: Using l_video overlays with fl_splice (Cloudinary's recommended approach for concatenation)
-    console.log('🔄 Trying Method 1 (overlay concatenation with fl_splice)...');
+    // Method 1: Using video_concat parameter (Cloudinary's recommended approach)
+    console.log('🔄 Trying Method 1 (video_concat parameter)...');
     
-    const baseVideo = publicIds[0];
-    const additionalVideos = publicIds.slice(1);
-    
-    console.log(`🎯 Base video: ${baseVideo}`);
-    console.log(`➕ Additional videos: ${additionalVideos.join(', ')}`);
-    
-    // Build overlay concatenation URL
+    // Build the video_concat parameter value
+    const videoList = publicIds.map(id => `video:${id}`).join('|');
     let transformations = ['q_auto:good'];
     
-    // Add each additional video as an overlay
-    for (const videoId of additionalVideos) {
-      transformations.push(`l_video:${videoId}/fl_splice`);
-    }
+    // Add video concatenation
+    transformations.push(`video_concat:${videoList}`);
     
     // Add duration trimming if specified
     if (targetDuration) {
@@ -113,12 +107,13 @@ serve(async (req) => {
     // Add final format
     transformations.push('f_mp4');
     
-    const method1Url = `https://res.cloudinary.com/${cloudName}/video/upload/${transformations.join(',')}/${baseVideo}.mp4`;
+    // Use the first video as the base
+    const method1Url = `https://res.cloudinary.com/${cloudName}/video/upload/${transformations.join(',')}/${publicIds[0]}.mp4`;
     console.log(`🎯 Method 1 URL: ${method1Url}`);
 
     // Test Method 1
     try {
-      console.log('🔍 Testing Method 1 (overlay concatenation)...');
+      console.log('🔍 Testing Method 1 (video_concat parameter)...');
       const testResponse = await fetch(method1Url, { 
         method: 'HEAD',
         headers: { 'User-Agent': 'Supabase-Edge-Function/1.0' }
@@ -132,11 +127,11 @@ serve(async (req) => {
           JSON.stringify({
             success: true,
             url: method1Url,
-            message: `Successfully concatenated ${publicIds.length} videos using overlay method${targetDuration ? ` and trimmed to ${targetDuration}s` : ''}`,
+            message: `Successfully concatenated ${publicIds.length} videos using video_concat${targetDuration ? ` and trimmed to ${targetDuration}s` : ''}`,
             metadata: {
               videoCount: publicIds.length,
               targetDuration: targetDuration,
-              method: 'overlay_concatenation'
+              method: 'video_concat'
             }
           }),
           {
@@ -151,14 +146,20 @@ serve(async (req) => {
       console.log('❌ Method 1 test failed:', error);
     }
     
-    // Method 2: Simple concatenation without overlays (just video list)
-    console.log('🔄 Trying Method 2 (simple concatenation)...');
+    // Method 2: Using transformation chain approach
+    console.log('🔄 Trying Method 2 (transformation chain)...');
     
-    // Reset transformations for Method 2
+    // Build transformation chain for concatenation
+    const baseVideo = publicIds[0];
+    const additionalVideos = publicIds.slice(1);
+    
     transformations = ['q_auto:good'];
     
-    // Try concatenating by listing all videos in the URL path
-    const allVideos = publicIds.join('/');
+    // Add each video as a layer with fl_splice
+    for (const videoId of additionalVideos) {
+      transformations.push(`l_video:${videoId}`);
+      transformations.push('fl_splice');
+    }
     
     // Add duration trimming if specified
     if (targetDuration) {
@@ -168,12 +169,12 @@ serve(async (req) => {
     // Add final format
     transformations.push('f_mp4');
     
-    const method2Url = `https://res.cloudinary.com/${cloudName}/video/upload/${transformations.join(',')}/${allVideos}.mp4`;
+    const method2Url = `https://res.cloudinary.com/${cloudName}/video/upload/${transformations.join(',')}/${baseVideo}.mp4`;
     console.log(`🎯 Method 2 URL: ${method2Url}`);
     
     // Test Method 2
     try {
-      console.log('🔍 Testing Method 2 (simple concatenation)...');
+      console.log('🔍 Testing Method 2 (transformation chain)...');
       const testResponse = await fetch(method2Url, { 
         method: 'HEAD',
         headers: { 'User-Agent': 'Supabase-Edge-Function/1.0' }
@@ -187,11 +188,11 @@ serve(async (req) => {
           JSON.stringify({
             success: true,
             url: method2Url,
-            message: `Successfully concatenated ${publicIds.length} videos using simple method${targetDuration ? ` and trimmed to ${targetDuration}s` : ''}`,
+            message: `Successfully concatenated ${publicIds.length} videos using transformation chain${targetDuration ? ` and trimmed to ${targetDuration}s` : ''}`,
             metadata: {
               videoCount: publicIds.length,
               targetDuration: targetDuration,
-              method: 'simple_concatenation'
+              method: 'transformation_chain'
             }
           }),
           {
@@ -206,14 +207,15 @@ serve(async (req) => {
       console.log('❌ Method 2 test failed:', error);
     }
     
-    // Method 3: Using fl_splice with all videos listed
-    console.log('🔄 Trying Method 3 (fl_splice with video list)...');
+    // Method 3: Try simple concatenation with pipe separator
+    console.log('🔄 Trying Method 3 (pipe separator concatenation)...');
     
+    // Try concatenating with pipe separator in a single transformation
     transformations = ['q_auto:good'];
     
-    // Build video list for fl_splice
-    const videoList = publicIds.join(',');
-    transformations.push(`fl_splice/l_video:${videoList}`);
+    // Build concatenation string
+    const pipeList = publicIds.join('|');
+    transformations.push(`l_video:${pipeList}`);
     
     if (targetDuration) {
       transformations.push(`du_${targetDuration}`);
@@ -226,7 +228,7 @@ serve(async (req) => {
     
     // Test Method 3
     try {
-      console.log('🔍 Testing Method 3 (fl_splice with video list)...');
+      console.log('🔍 Testing Method 3 (pipe separator)...');
       const testResponse = await fetch(method3Url, { 
         method: 'HEAD',
         headers: { 'User-Agent': 'Supabase-Edge-Function/1.0' }
@@ -240,11 +242,11 @@ serve(async (req) => {
           JSON.stringify({
             success: true,
             url: method3Url,
-            message: `Successfully concatenated ${publicIds.length} videos using fl_splice method${targetDuration ? ` and trimmed to ${targetDuration}s` : ''}`,
+            message: `Successfully concatenated ${publicIds.length} videos using pipe separator${targetDuration ? ` and trimmed to ${targetDuration}s` : ''}`,
             metadata: {
               videoCount: publicIds.length,
               targetDuration: targetDuration,
-              method: 'fl_splice_concatenation'
+              method: 'pipe_separator'
             }
           }),
           {
@@ -259,14 +261,20 @@ serve(async (req) => {
       console.log('❌ Method 3 test failed:', error);
     }
     
-    // All methods failed - return PROPERLY TRIMMED first video as fallback
-    console.log('⚠️ All concatenation methods failed, falling back to TRIMMED first video');
+    // All concatenation methods failed - create a proportionally trimmed first video
+    console.log('⚠️ All concatenation methods failed, using proportionally trimmed first video');
     
     const fallbackVideo = publicIds[0];
     let fallbackTransformations = ['q_auto:good'];
     
-    // ENSURE trimming is applied to fallback
-    if (targetDuration) {
+    // Calculate proportional duration for first video if we have target duration
+    if (targetDuration && publicIds.length > 1) {
+      // For proportional trimming, we assume each video should get equal time
+      const proportionalDuration = Math.max(1, Math.floor(targetDuration / publicIds.length));
+      fallbackTransformations.push(`du_${proportionalDuration}`);
+      console.log(`🔧 Applying proportional duration of ${proportionalDuration}s to first video (${targetDuration}s total / ${publicIds.length} videos)`);
+    } else if (targetDuration) {
+      // Single video or no proportional logic needed
       fallbackTransformations.push(`du_${targetDuration}`);
       console.log(`🔧 Applying ${targetDuration}s duration to fallback video`);
     }
@@ -300,12 +308,13 @@ serve(async (req) => {
       JSON.stringify({
         success: true,
         url: fallbackUrl,
-        message: `Concatenation methods failed, processed first video${targetDuration ? ` and trimmed to ${targetDuration}s` : ''} as fallback`,
+        message: `Concatenation failed, using proportionally trimmed first video (${targetDuration ? Math.floor(targetDuration / publicIds.length) : 'full'}s from first clip)`,
         metadata: {
           videoCount: 1,
           originalRequest: publicIds.length,
-          method: 'fallback_with_trimming',
-          targetDuration: targetDuration
+          method: 'proportional_fallback',
+          targetDuration: targetDuration,
+          actualDuration: targetDuration ? Math.floor(targetDuration / publicIds.length) : undefined
         }
       }),
       {
