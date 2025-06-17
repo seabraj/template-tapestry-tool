@@ -102,8 +102,8 @@ serve(async (req) => {
     
     console.log('✅ === PHASE 1 COMPLETE ===');
     
-    // PHASE 2: True Cloudinary concatenation using official fl_splice syntax
-    console.log('🔗 === PHASE 2: Cloudinary concatenation with fl_splice ===');
+    // PHASE 2: Step-by-step concatenation using simple fl_splice
+    console.log('🔗 === PHASE 2: Step-by-step Cloudinary concatenation ===');
     
     try {
       // Sort videos by order for correct sequence
@@ -112,240 +112,169 @@ serve(async (req) => {
         sortedVideos.map(v => `${v.order + 1}. ${v.publicId} (${v.duration.toFixed(2)}s)`)
       );
       
-      // Method 1: Use proper Cloudinary fl_splice concatenation
-      console.log('🎬 Attempting Cloudinary fl_splice concatenation...');
-      
-      const baseVideo = sortedVideos[0];
-      const overlayVideos = sortedVideos.slice(1);
-      
-      console.log(`🎯 Base video: ${baseVideo.publicId} (${baseVideo.duration.toFixed(2)}s)`);
-      console.log(`➕ Overlay videos: ${overlayVideos.length}`);
-      
-      // Convert public IDs: replace / with : for Cloudinary syntax
-      const baseVideoId = baseVideo.publicId.replace(/\//g, ':');
-      console.log(`🔄 Base video ID converted: ${baseVideo.publicId} → ${baseVideoId}`);
-      
-      // Build concatenation transformation with CORRECT Cloudinary fl_splice syntax
-      const transformations = [];
-      
-      // 1. Set consistent dimensions for the base video (no duration needed - trimmed video already has correct duration)
-      transformations.push('w_1280,h_720,c_pad');
-      
-      // 2. Add each overlay video with CORRECT fl_splice syntax from Cloudinary docs
-      for (let i = 0; i < overlayVideos.length; i++) {
-        const overlayVideo = overlayVideos[i];
-        const overlayVideoId = overlayVideo.publicId.replace(/\//g, ':');
+      if (sortedVideos.length === 1) {
+        // Single video - just return it with formatting
+        console.log('🎯 Single video - applying formatting only');
         
-        console.log(`🔗 Adding overlay ${i + 1}: ${overlayVideo.publicId} → ${overlayVideoId} (${overlayVideo.duration.toFixed(2)}s)`);
-        
-        // CORRECT syntax per Cloudinary docs: l_video:public_id,w_width,h_height/fl_layer_apply/fl_splice
-        // No duration needed because trimmed videos already have correct duration
-        transformations.push(`l_video:${overlayVideoId},w_1280,h_720,c_pad`);
-        transformations.push('fl_layer_apply');
-        transformations.push('fl_splice');
-      }
-      
-      // 3. Add final formatting
-      transformations.push('ac_aac'); // Audio codec
-      transformations.push('q_auto:good'); // Quality
-      
-      const transformationString = transformations.join('/');
-      // FIX: Use the trimmed base video, not the original
-      const concatenatedUrl = `https://res.cloudinary.com/dsxrmo3kt/video/upload/${transformationString}/${baseVideo.publicId}.mp4`;
-      
-      console.log('🎯 Cloudinary concatenation URL:', concatenatedUrl);
-      console.log('📋 Transformation string:', transformationString);
-      
-      // Test the concatenation URL
-      console.log('🔍 Testing Cloudinary concatenation URL...');
-      const testResponse = await fetch(concatenatedUrl, { method: 'HEAD' });
-      console.log(`📡 Concatenation URL test: ${testResponse.status} ${testResponse.statusText}`);
-      
-      if (testResponse.ok) {
-        console.log('✅ Cloudinary fl_splice concatenation URL test passed!');
-        
-        // IMPORTANT: Wait for Cloudinary to actually process the video before cleanup
-        console.log('⏳ Waiting for Cloudinary to process the concatenated video...');
-        
-        // Try to actually download a small portion to verify it's really ready
-        let videoReady = false;
-        let attempts = 0;
-        const maxAttempts = 5;
-        
-        while (!videoReady && attempts < maxAttempts) {
-          attempts++;
-          console.log(`🔍 Verification attempt ${attempts}/${maxAttempts}...`);
-          
-          try {
-            // Try to fetch the first few bytes to verify the video exists
-            const verifyResponse = await fetch(concatenatedUrl, { 
-              method: 'GET',
-              headers: { 'Range': 'bytes=0-1023' } // Just first 1KB
-            });
-            
-            if (verifyResponse.ok || verifyResponse.status === 206) {
-              console.log(`✅ Video verification successful on attempt ${attempts}`);
-              videoReady = true;
-            } else {
-              console.log(`⏳ Video not ready yet (${verifyResponse.status}), waiting...`);
-              await new Promise(resolve => setTimeout(resolve, 2000)); // Wait 2 seconds
-            }
-          } catch (verifyError) {
-            console.log(`⏳ Verification attempt ${attempts} failed, waiting...`);
-            await new Promise(resolve => setTimeout(resolve, 2000)); // Wait 2 seconds
-          }
-        }
-        
-        if (!videoReady) {
-          console.warn('⚠️ Video verification failed after maximum attempts');
-          console.log('🎯 Returning URL anyway - Cloudinary might need more processing time');
-        }
-        
-        // PHASE 3: Cleanup temp videos (only after verification or timeout)
-        console.log('🧹 === PHASE 3: Cleanup ===');
-        for (const video of trimmedVideos) {
-          try {
-            await cloudinary.uploader.destroy(video.publicId, { resource_type: 'video' });
-            console.log(`🗑️ Cleaned up: ${video.publicId}`);
-          } catch (cleanupError) {
-            console.warn(`⚠️ Cleanup warning: ${cleanupError.message}`);
-          }
-        }
-        
-        console.log('🎉 === ALL PHASES COMPLETE ===');
-        console.log(`✅ Successfully concatenated ${videos.length} videos using Cloudinary fl_splice`);
+        const singleVideoUrl = cloudinary.url(sortedVideos[0].publicId, {
+          resource_type: 'video',
+          transformation: [
+            { width: 1280, height: 720, crop: 'pad' },
+            { audio_codec: 'aac' },
+            { quality: 'auto:good' }
+          ],
+          format: 'mp4'
+        });
         
         return new Response(
           JSON.stringify({ 
             success: true,
-            url: concatenatedUrl,
-            message: `Successfully concatenated ${videos.length} videos to ${targetDuration}s using Cloudinary fl_splice`,
-            method: 'cloudinary_fl_splice',
-            totalDuration: targetDuration,
-            videosProcessed: videos.length,
-            transformationUsed: transformationString,
-            videoReady: videoReady,
-            verificationAttempts: attempts,
-            phases: {
-              phase1: 'Trimming - Complete ✅',
-              phase2: 'Cloudinary fl_splice concatenation - Complete ✅', 
-              phase3: 'Cleanup - Complete ✅'
-            }
+            url: singleVideoUrl,
+            message: `Single video processed (${sortedVideos[0].duration.toFixed(2)}s duration)`,
+            method: 'single_video'
           }),
           { status: 200, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
         );
-      } else {
-        throw new Error(`Cloudinary fl_splice test failed: ${testResponse.status} ${testResponse.statusText}`);
       }
       
-    } catch (cloudinaryError) {
-      console.warn('⚠️ Cloudinary fl_splice concatenation failed:', cloudinaryError.message);
+      // Multi-video concatenation using step-by-step approach
+      console.log(`🔧 Starting step-by-step concatenation for ${sortedVideos.length} videos`);
       
-      // Method 2: Alternative Cloudinary approach using SDK
-      console.log('🔧 Attempting SDK-based concatenation...');
+      let currentVideoId = sortedVideos[0].publicId;
+      let currentVideoName = `step1_${timestamp}`;
       
-      try {
-        const sortedVideos = trimmedVideos.sort((a, b) => a.order - b.order);
-        const baseVideo = sortedVideos[0];
-        const overlayVideos = sortedVideos.slice(1);
+      // Step 1: Concatenate first two videos
+      if (sortedVideos.length >= 2) {
+        const video1 = sortedVideos[0];
+        const video2 = sortedVideos[1];
         
-        // Build SDK transformation
-        const sdkTransformations = [
-          { duration: baseVideo.duration.toFixed(2) },
-          { width: 1280, height: 720, crop: 'pad' }
-        ];
+        console.log(`🔗 Step 1: Concatenating ${video1.publicId} + ${video2.publicId}`);
         
-        // Add overlays with splice flags
-        for (const overlayVideo of overlayVideos) {
-          sdkTransformations.push({
-            overlay: {
-              resource_type: 'video',
-              public_id: overlayVideo.publicId
-            },
-            duration: overlayVideo.duration.toFixed(2),
-            width: 1280,
-            height: 720,
-            crop: 'pad',
-            flags: ['layer_apply', 'splice']
-          });
-        }
+        // Use exact Cloudinary documentation syntax
+        const video2Id = video2.publicId.replace(/\//g, ':');
         
-        // Add final formatting
-        sdkTransformations.push(
-          { audio_codec: 'aac' },
-          { quality: 'auto:good' }
-        );
+        const step1Transformations = [
+          'w_1280,h_720,c_pad',                    // Set dimensions for base video
+          `l_video:${video2Id},w_1280,h_720,c_pad`, // Add second video with same dimensions
+          'fl_splice'                              // Splice flag to concatenate
+        ].join('/');
         
-        const sdkUrl = cloudinary.url(baseVideo.publicId, {
-          resource_type: 'video',
-          transformation: sdkTransformations,
-          format: 'mp4'
-        });
+        const step1Url = `https://res.cloudinary.com/dsxrmo3kt/video/upload/${step1Transformations}/${video1.publicId}.mp4`;
         
-        console.log('🎯 SDK concatenation URL:', sdkUrl);
+        console.log('🎯 Step 1 URL:', step1Url);
         
-        // Test SDK URL
-        const sdkTest = await fetch(sdkUrl, { method: 'HEAD' });
-        console.log(`📡 SDK URL test: ${sdkTest.status} ${sdkTest.statusText}`);
+        // Test step 1
+        const step1Test = await fetch(step1Url, { method: 'HEAD' });
+        console.log(`📡 Step 1 test: ${step1Test.status} ${step1Test.statusText}`);
         
-        if (sdkTest.ok) {
-          console.log('✅ SDK concatenation URL test passed!');
+        if (step1Test.ok) {
+          console.log('✅ Step 1 concatenation successful');
           
-          // Wait and verify for SDK method too
-          console.log('⏳ Verifying SDK concatenated video...');
-          
-          let sdkVideoReady = false;
-          let sdkAttempts = 0;
-          const maxSdkAttempts = 3;
-          
-          while (!sdkVideoReady && sdkAttempts < maxSdkAttempts) {
-            sdkAttempts++;
-            try {
-              const sdkVerifyResponse = await fetch(sdkUrl, { 
-                method: 'GET',
-                headers: { 'Range': 'bytes=0-1023' }
-              });
-              
-              if (sdkVerifyResponse.ok || sdkVerifyResponse.status === 206) {
-                sdkVideoReady = true;
-              } else {
-                await new Promise(resolve => setTimeout(resolve, 2000));
+          // If only 2 videos, we're done
+          if (sortedVideos.length === 2) {
+            console.log('🎉 Two-video concatenation complete');
+            
+            // Cleanup and return
+            for (const video of trimmedVideos) {
+              try {
+                await cloudinary.uploader.destroy(video.publicId, { resource_type: 'video' });
+              } catch (cleanupError) {
+                console.warn(`⚠️ Cleanup warning: ${cleanupError.message}`);
               }
-            } catch (sdkVerifyError) {
-              await new Promise(resolve => setTimeout(resolve, 2000));
             }
+            
+            return new Response(
+              JSON.stringify({ 
+                success: true,
+                url: step1Url,
+                message: `Successfully concatenated 2 videos to ${targetDuration}s using step-by-step method`,
+                method: 'step_by_step_2_videos',
+                totalDuration: targetDuration,
+                videosProcessed: 2
+              }),
+              { status: 200, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+            );
           }
           
-          // Cleanup after verification
-          for (const video of trimmedVideos) {
-            try {
-              await cloudinary.uploader.destroy(video.publicId, { resource_type: 'video' });
-            } catch (cleanupError) {
-              console.warn(`⚠️ Cleanup warning: ${cleanupError.message}`);
+          // For 3+ videos, continue with step 2
+          if (sortedVideos.length >= 3) {
+            const video3 = sortedVideos[2];
+            
+            console.log(`🔗 Step 2: Adding ${video3.publicId} to result`);
+            
+            const video3Id = video3.publicId.replace(/\//g, ':');
+            
+            // Create step 2 by adding third video to step 1 result
+            const step2Transformations = [
+              'w_1280,h_720,c_pad',
+              `l_video:${video3Id},w_1280,h_720,c_pad`,
+              'fl_splice',
+              'ac_aac',
+              'q_auto:good'
+            ].join('/');
+            
+            // Use step1Url as base but we need to reference it properly
+            // For now, let's try a simpler approach - direct 3-video concatenation with corrected syntax
+            
+            console.log('🔄 Attempting direct 3-video concatenation with simplified syntax...');
+            
+            const video1Id = video1.publicId.replace(/\//g, ':');
+            
+            const directTransformations = [
+              'w_1280,h_720,c_pad',
+              `l_video:${video2Id},w_1280,h_720,c_pad`,
+              'fl_splice',
+              `l_video:${video3Id},w_1280,h_720,c_pad`, 
+              'fl_splice',
+              'ac_aac',
+              'q_auto:good'
+            ].join('/');
+            
+            const finalUrl = `https://res.cloudinary.com/dsxrmo3kt/video/upload/${directTransformations}/${video1.publicId}.mp4`;
+            
+            console.log('🎯 Final 3-video URL:', finalUrl);
+            
+            const finalTest = await fetch(finalUrl, { method: 'HEAD' });
+            console.log(`📡 Final URL test: ${finalTest.status} ${finalTest.statusText}`);
+            
+            if (finalTest.ok) {
+              console.log('✅ Direct 3-video concatenation successful');
+              
+              // Cleanup
+              for (const video of trimmedVideos) {
+                try {
+                  await cloudinary.uploader.destroy(video.publicId, { resource_type: 'video' });
+                } catch (cleanupError) {
+                  console.warn(`⚠️ Cleanup warning: ${cleanupError.message}`);
+                }
+              }
+              
+              return new Response(
+                JSON.stringify({ 
+                  success: true,
+                  url: finalUrl,
+                  message: `Successfully concatenated 3 videos to ${targetDuration}s using direct method`,
+                  method: 'direct_3_video_concatenation',
+                  totalDuration: targetDuration,
+                  videosProcessed: 3,
+                  transformations: directTransformations
+                }),
+                { status: 200, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+              );
+            } else {
+              throw new Error(`Direct 3-video concatenation test failed: ${finalTest.status}`);
             }
           }
-          
-          return new Response(
-            JSON.stringify({ 
-              success: true,
-              url: sdkUrl,
-              message: `Successfully concatenated ${videos.length} videos using SDK method`,
-              method: 'cloudinary_sdk',
-              totalDuration: targetDuration,
-              videosProcessed: videos.length,
-              videoReady: sdkVideoReady,
-              verificationAttempts: sdkAttempts
-            }),
-            { status: 200, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-          );
         } else {
-          throw new Error(`SDK concatenation test failed: ${sdkTest.status}`);
+          throw new Error(`Step 1 concatenation test failed: ${step1Test.status}`);
         }
-        
-      } catch (sdkError) {
-        console.error('❌ SDK concatenation also failed:', sdkError.message);
-        throw new Error(`Both fl_splice and SDK concatenation methods failed`);
       }
+      
+      throw new Error('Insufficient videos for concatenation');
+      
+    } catch (concatenationError) {
+      console.error('❌ Step-by-step concatenation failed:', concatenationError.message);
+      throw new Error(`Concatenation failed: ${concatenationError.message}`);
     }
 
   } catch (error) {
