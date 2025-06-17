@@ -85,35 +85,28 @@ serve(async (req) => {
       );
     }
 
-    // Multiple videos - try proper concatenation using Cloudinary's video_concat parameter
+    // Multiple videos - try various concatenation approaches
     console.log('🔗 Starting video concatenation process...');
     
-    // Method 1: Using video_concat parameter (Cloudinary's recommended approach)
-    console.log('🔄 Trying Method 1 (video_concat parameter)...');
+    // Method 1: Using video_concat with simpler syntax
+    console.log('🔄 Trying Method 1 (video_concat with colon syntax)...');
     
-    // Build the video_concat parameter value
-    const videoList = publicIds.map(id => `video:${id}`).join('|');
+    const videoIds = publicIds.join(':');
     let transformations = ['q_auto:good'];
+    transformations.push(`video_concat:${videoIds}`);
     
-    // Add video concatenation
-    transformations.push(`video_concat:${videoList}`);
-    
-    // Add duration trimming if specified
     if (targetDuration) {
       transformations.push(`du_${targetDuration}`);
       console.log(`✂️ Will trim concatenated result to ${targetDuration}s`);
     }
     
-    // Add final format
     transformations.push('f_mp4');
     
-    // Use the first video as the base
     const method1Url = `https://res.cloudinary.com/${cloudName}/video/upload/${transformations.join(',')}/${publicIds[0]}.mp4`;
     console.log(`🎯 Method 1 URL: ${method1Url}`);
 
-    // Test Method 1
     try {
-      console.log('🔍 Testing Method 1 (video_concat parameter)...');
+      console.log('🔍 Testing Method 1 (video_concat colon syntax)...');
       const testResponse = await fetch(method1Url, { 
         method: 'HEAD',
         headers: { 'User-Agent': 'Supabase-Edge-Function/1.0' }
@@ -131,7 +124,7 @@ serve(async (req) => {
             metadata: {
               videoCount: publicIds.length,
               targetDuration: targetDuration,
-              method: 'video_concat'
+              method: 'video_concat_colon'
             }
           }),
           {
@@ -146,35 +139,30 @@ serve(async (req) => {
       console.log('❌ Method 1 test failed:', error);
     }
     
-    // Method 2: Using transformation chain approach
-    console.log('🔄 Trying Method 2 (transformation chain)...');
+    // Method 2: Using l_video with fl_splice for each additional video
+    console.log('🔄 Trying Method 2 (overlay with fl_splice)...');
     
-    // Build transformation chain for concatenation
     const baseVideo = publicIds[0];
     const additionalVideos = publicIds.slice(1);
     
     transformations = ['q_auto:good'];
     
-    // Add each video as a layer with fl_splice
     for (const videoId of additionalVideos) {
       transformations.push(`l_video:${videoId}`);
       transformations.push('fl_splice');
     }
     
-    // Add duration trimming if specified
     if (targetDuration) {
       transformations.push(`du_${targetDuration}`);
     }
     
-    // Add final format
     transformations.push('f_mp4');
     
     const method2Url = `https://res.cloudinary.com/${cloudName}/video/upload/${transformations.join(',')}/${baseVideo}.mp4`;
     console.log(`🎯 Method 2 URL: ${method2Url}`);
     
-    // Test Method 2
     try {
-      console.log('🔍 Testing Method 2 (transformation chain)...');
+      console.log('🔍 Testing Method 2 (overlay splice)...');
       const testResponse = await fetch(method2Url, { 
         method: 'HEAD',
         headers: { 'User-Agent': 'Supabase-Edge-Function/1.0' }
@@ -188,11 +176,11 @@ serve(async (req) => {
           JSON.stringify({
             success: true,
             url: method2Url,
-            message: `Successfully concatenated ${publicIds.length} videos using transformation chain${targetDuration ? ` and trimmed to ${targetDuration}s` : ''}`,
+            message: `Successfully concatenated ${publicIds.length} videos using overlay splice${targetDuration ? ` and trimmed to ${targetDuration}s` : ''}`,
             metadata: {
               videoCount: publicIds.length,
               targetDuration: targetDuration,
-              method: 'transformation_chain'
+              method: 'overlay_splice'
             }
           }),
           {
@@ -207,15 +195,16 @@ serve(async (req) => {
       console.log('❌ Method 2 test failed:', error);
     }
     
-    // Method 3: Try simple concatenation with pipe separator
-    console.log('🔄 Trying Method 3 (pipe separator concatenation)...');
+    // Method 3: Using fl_concat with multiple l_video layers
+    console.log('🔄 Trying Method 3 (fl_concat with layers)...');
     
-    // Try concatenating with pipe separator in a single transformation
     transformations = ['q_auto:good'];
     
-    // Build concatenation string
-    const pipeList = publicIds.join('|');
-    transformations.push(`l_video:${pipeList}`);
+    // Add each video as a layer, then use fl_concat
+    for (let i = 1; i < publicIds.length; i++) {
+      transformations.push(`l_video:${publicIds[i]}`);
+    }
+    transformations.push('fl_concat');
     
     if (targetDuration) {
       transformations.push(`du_${targetDuration}`);
@@ -223,12 +212,11 @@ serve(async (req) => {
     
     transformations.push('f_mp4');
     
-    const method3Url = `https://res.cloudinary.com/${cloudName}/video/upload/${transformations.join(',')}/${baseVideo}.mp4`;
+    const method3Url = `https://res.cloudinary.com/${cloudName}/video/upload/${transformations.join(',')}/${publicIds[0]}.mp4`;
     console.log(`🎯 Method 3 URL: ${method3Url}`);
     
-    // Test Method 3
     try {
-      console.log('🔍 Testing Method 3 (pipe separator)...');
+      console.log('🔍 Testing Method 3 (fl_concat layers)...');
       const testResponse = await fetch(method3Url, { 
         method: 'HEAD',
         headers: { 'User-Agent': 'Supabase-Edge-Function/1.0' }
@@ -242,11 +230,11 @@ serve(async (req) => {
           JSON.stringify({
             success: true,
             url: method3Url,
-            message: `Successfully concatenated ${publicIds.length} videos using pipe separator${targetDuration ? ` and trimmed to ${targetDuration}s` : ''}`,
+            message: `Successfully concatenated ${publicIds.length} videos using fl_concat${targetDuration ? ` and trimmed to ${targetDuration}s` : ''}`,
             metadata: {
               videoCount: publicIds.length,
               targetDuration: targetDuration,
-              method: 'pipe_separator'
+              method: 'fl_concat_layers'
             }
           }),
           {
@@ -261,7 +249,113 @@ serve(async (req) => {
       console.log('❌ Method 3 test failed:', error);
     }
     
-    // All concatenation methods failed - create a proportionally trimmed first video
+    // Method 4: Simple comma-separated video list with fl_concat
+    console.log('🔄 Trying Method 4 (comma-separated fl_concat)...');
+    
+    const videoList = publicIds.join(',');
+    transformations = ['q_auto:good'];
+    transformations.push(`videos:${videoList}`);
+    transformations.push('fl_concat');
+    
+    if (targetDuration) {
+      transformations.push(`du_${targetDuration}`);
+    }
+    
+    transformations.push('f_mp4');
+    
+    const method4Url = `https://res.cloudinary.com/${cloudName}/video/upload/${transformations.join(',')}/${publicIds[0]}.mp4`;
+    console.log(`🎯 Method 4 URL: ${method4Url}`);
+    
+    try {
+      console.log('🔍 Testing Method 4 (comma-separated concat)...');
+      const testResponse = await fetch(method4Url, { 
+        method: 'HEAD',
+        headers: { 'User-Agent': 'Supabase-Edge-Function/1.0' }
+      });
+      
+      console.log(`📊 Method 4 response status: ${testResponse.status}`);
+      
+      if (testResponse.ok) {
+        console.log('✅ Method 4 successful');
+        return new Response(
+          JSON.stringify({
+            success: true,
+            url: method4Url,
+            message: `Successfully concatenated ${publicIds.length} videos using comma-separated concat${targetDuration ? ` and trimmed to ${targetDuration}s` : ''}`,
+            metadata: {
+              videoCount: publicIds.length,
+              targetDuration: targetDuration,
+              method: 'comma_separated_concat'
+            }
+          }),
+          {
+            status: 200,
+            headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+          }
+        );
+      } else {
+        console.log(`❌ Method 4 failed: ${testResponse.status}`);
+      }
+    } catch (error) {
+      console.log('❌ Method 4 test failed:', error);
+    }
+
+    // Method 5: Try video stitching approach
+    console.log('🔄 Trying Method 5 (video stitching)...');
+    
+    transformations = ['q_auto:good'];
+    
+    // Build a sequence of videos using offsets
+    for (let i = 1; i < publicIds.length; i++) {
+      transformations.push(`l_video:${publicIds[i]}`);
+      transformations.push('fl_splice');
+      transformations.push('so_auto'); // automatic start offset
+    }
+    
+    if (targetDuration) {
+      transformations.push(`du_${targetDuration}`);
+    }
+    
+    transformations.push('f_mp4');
+    
+    const method5Url = `https://res.cloudinary.com/${cloudName}/video/upload/${transformations.join(',')}/${publicIds[0]}.mp4`;
+    console.log(`🎯 Method 5 URL: ${method5Url}`);
+    
+    try {
+      console.log('🔍 Testing Method 5 (video stitching)...');
+      const testResponse = await fetch(method5Url, { 
+        method: 'HEAD',
+        headers: { 'User-Agent': 'Supabase-Edge-Function/1.0' }
+      });
+      
+      console.log(`📊 Method 5 response status: ${testResponse.status}`);
+      
+      if (testResponse.ok) {
+        console.log('✅ Method 5 successful');
+        return new Response(
+          JSON.stringify({
+            success: true,
+            url: method5Url,
+            message: `Successfully concatenated ${publicIds.length} videos using video stitching${targetDuration ? ` and trimmed to ${targetDuration}s` : ''}`,
+            metadata: {
+              videoCount: publicIds.length,
+              targetDuration: targetDuration,
+              method: 'video_stitching'
+            }
+          }),
+          {
+            status: 200,
+            headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+          }
+        );
+      } else {
+        console.log(`❌ Method 5 failed: ${testResponse.status}`);
+      }
+    } catch (error) {
+      console.log('❌ Method 5 test failed:', error);
+    }
+    
+    // All concatenation methods failed - use proportionally trimmed first video
     console.log('⚠️ All concatenation methods failed, using proportionally trimmed first video');
     
     const fallbackVideo = publicIds[0];
