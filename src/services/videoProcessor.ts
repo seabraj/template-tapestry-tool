@@ -4,7 +4,7 @@ import { trim } from '@cloudinary/url-gen/actions/videoEdit';
 import { auto } from '@cloudinary/url-gen/qualifiers/quality';
 import { format } from '@cloudinary/url-gen/actions/delivery';
 import { concatenate } from '@cloudinary/url-gen/actions/videoEdit';
-import { source } from '@cloudinary/url-gen/qualifiers/concatenate';
+import { source } from '@cloudinary/url-gen/qualifiers/source';
 
 export interface VideoProcessingOptions {
   sequences: Array<{
@@ -227,7 +227,8 @@ export class VideoProcessor {
       if (publicIds.length > 1) {
         console.log('🔗 Adding concatenation for remaining videos...');
         
-        const concatenateSources = publicIds.slice(1).map((publicId, index) => {
+        // Create sources for concatenation
+        const sources = publicIds.slice(1).map((publicId, index) => {
           const videoIndex = index + 1; // +1 because we sliced from index 1
           const currentTrimData = trimData[videoIndex];
           
@@ -239,17 +240,16 @@ export class VideoProcessor {
           
           // Create video source with trimming if needed
           if (currentTrimData.trimmedDuration < currentTrimData.originalDuration) {
-            // For concatenated videos, we need to create a transformation URL
-            const trimmedVideo = this.cloudinary.video(publicId)
-              .videoEdit(trim().duration(currentTrimData.trimmedDuration));
-            return source(trimmedVideo);
+            // Create a transformation string for trimmed video
+            return `video:${publicId}/du_${currentTrimData.trimmedDuration}`;
           } else {
-            return source(publicId);
+            return `video:${publicId}`;
           }
         });
         
-        // Apply concatenation
-        baseVideo.videoEdit(concatenate(...concatenateSources));
+        // Apply concatenation using the correct syntax
+        const concatenationTransform = sources.join(',');
+        baseVideo.videoEdit(concatenate().sources(concatenationTransform));
       }
       
       // Apply quality and format
