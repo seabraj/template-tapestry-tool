@@ -77,7 +77,7 @@ const Index = () => {
   const { toast } = useToast();
   const { assets, loading, error } = useVideoAssets();
 
-  const totalSteps = 4;
+  const totalSteps = 5;
 
   const handleNextStep = () => {
     if (currentStep < totalSteps) {
@@ -97,10 +97,11 @@ const Index = () => {
 
   const getStepDescription = (step: number) => {
     switch (step) {
-      case 1: return 'Select your target platform and preferences';
-      case 2: return 'Choose and arrange your video sequences';
-      case 3: return 'Customize your video appearance';
-      case 4: return 'Export and process your final video';
+      case 1: return 'Choose your target platform';
+      case 2: return 'Select language and duration preferences';
+      case 3: return 'Choose and arrange your video sequences';
+      case 4: return 'Customize your video appearance';
+      case 5: return 'Generate and download your final video';
       default: return '';
     }
   };
@@ -108,9 +109,10 @@ const Index = () => {
   const getStepIcon = (step: number) => {
     switch (step) {
       case 1: return Settings;
-      case 2: return Play;
-      case 3: return Sparkles;
-      case 4: return Upload;
+      case 2: return Settings;
+      case 3: return Play;
+      case 4: return Sparkles;
+      case 5: return Upload;
       default: return Settings;
     }
   };
@@ -173,7 +175,7 @@ const Index = () => {
       <div className="bg-gray-900 border-b border-gray-800">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-4">
           <div className="flex items-center justify-between">
-            {[1, 2, 3, 4].map((step) => {
+            {[1, 2, 3, 4, 5].map((step) => {
               const StepIcon = getStepIcon(step);
               const isActive = step === currentStep;
               const isCompleted = step < currentStep;
@@ -189,8 +191,8 @@ const Index = () => {
                   }`}>
                     <StepIcon className="h-5 w-5" />
                   </div>
-                  {step < 4 && (
-                    <div className={`w-24 h-0.5 ml-4 ${
+                  {step < 5 && (
+                    <div className={`w-16 h-0.5 ml-4 ${
                       step < currentStep ? 'bg-green-600' : 'bg-gray-700'
                     }`} />
                   )}
@@ -210,10 +212,19 @@ const Index = () => {
               {currentStep === 1 && (
                 <div className="space-y-8">
                   <div className="text-center">
-                    <h2 className="text-2xl font-bold text-white mb-2">Platform & Settings</h2>
-                    <p className="text-gray-400">Choose your target platform and video preferences</p>
+                    <h2 className="text-2xl font-bold text-white mb-2">Choose Platform</h2>
+                    <p className="text-gray-400">Select your target platform for optimal formatting</p>
                   </div>
                   <PlatformSelector selected={platform} onSelect={setPlatform} />
+                </div>
+              )}
+
+              {currentStep === 2 && (
+                <div className="space-y-8">
+                  <div className="text-center">
+                    <h2 className="text-2xl font-bold text-white mb-2">Configure Settings</h2>
+                    <p className="text-gray-400">Set language and duration preferences</p>
+                  </div>
                   <LanguageDurationSelector 
                     language={language} 
                     duration={duration}
@@ -223,7 +234,7 @@ const Index = () => {
                 </div>
               )}
 
-              {currentStep === 2 && (
+              {currentStep === 3 && (
                 <div className="space-y-8">
                   <div className="text-center">
                     <h2 className="text-2xl font-bold text-white mb-2">Video Sequences</h2>
@@ -237,7 +248,7 @@ const Index = () => {
                 </div>
               )}
 
-              {currentStep === 3 && (
+              {currentStep === 4 && (
                 <div className="space-y-8">
                   <div className="text-center">
                     <h2 className="text-2xl font-bold text-white mb-2">Customization</h2>
@@ -252,11 +263,11 @@ const Index = () => {
                 </div>
               )}
 
-              {currentStep === 4 && (
+              {currentStep === 5 && (
                 <div className="space-y-8">
                   <div className="text-center">
-                    <h2 className="text-2xl font-bold text-white mb-2">Export & Process</h2>
-                    <p className="text-gray-400">Generate your final video with Cloudinary</p>
+                    <h2 className="text-2xl font-bold text-white mb-2">Export & Generate</h2>
+                    <p className="text-gray-400">Review your settings and generate your final video</p>
                   </div>
                   <ExportPanel
                     platform={platform}
