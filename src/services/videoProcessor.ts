@@ -1,3 +1,4 @@
+
 import { supabase } from '@/integrations/supabase/client';
 import { Cloudinary } from '@cloudinary/url-gen';
 import { trim } from '@cloudinary/url-gen/actions/videoEdit';
@@ -205,31 +206,78 @@ export class VideoProcessor {
     try {
       console.log('🔧 Building concatenation URL for', sequences.length, 'videos...');
       
-      // For multiple videos, we'll use a simpler approach
-      // Create a list of video URLs and let the edge function handle concatenation
-      const videoUrls = sequences.map((seq, index) => {
+      // For Cloudinary concatenation, we need to use a more manual approach with URL transformations
+      // First, let's gather all the video public IDs and their trim values
+      const videoDetails = sequences.map((seq, index) => {
         const publicId = this.extractCloudinaryPublicId(seq.file_url);
         console.log(`📝 Video ${index + 1} public ID:`, publicId);
         
-        const video = this.cloudinary.video(publicId);
-        
-        // Apply trimming if needed
-        if (trimData[index].trimmedDuration < trimData[index].originalDuration) {
-          console.log(`✂️ Trimming video ${index + 1}: ${trimData[index].originalDuration}s → ${trimData[index].trimmedDuration.toFixed(2)}s`);
-          video.videoEdit(trim().duration(trimData[index].trimmedDuration));
-        }
-        
-        // Apply quality and format
-        video.quality(auto()).delivery(format('mp4'));
-        
-        return video.toURL();
+        return {
+          publicId,
+          trimDuration: trimData[index].trimmedDuration
+        };
       });
       
-      console.log('✅ Generated individual video URLs:', videoUrls);
+      // We'll use the base URL from Cloudinary but construct the transformation manually
+      const baseUrl = `https://res.cloudinary.com/dsxrmo3kt/video/upload/`;
       
-      // For now, return the first video URL - we'll need to implement proper concatenation
-      // via the edge function or use a different approach
-      return videoUrls[0];
+      // Create the concatenation transformation string using fl_splice
+      let transformationUrl = '';
+      
+      // Start with the first video as base
+      const firstVideo = videoDetails[0];
+      transformationUrl = `${baseUrl}`;
+      
+      // Add trim for first video if needed
+      if (trimData[0].trimmedDuration < trimData[0].originalDuration) {
+        console.log(`✂️ Trimming first video: ${trimData[0].originalDuration}s → ${trimData[0].trimmedDuration.toFixed(2)}s`);
+        transformationUrl += `du_${firstVideo.trimDuration.toFixed(2)},`;
+      }
+      
+      // Add quality and format settings
+      transformationUrl += `q_auto/`;
+      
+      // Add the first video public ID
+      transformationUrl += `${firstVideo.publicId}`;
+      
+      // Only add concatenation logic if there are multiple videos
+      if (videoDetails.length > 1) {
+        // Add videos after the first one using layer (l_) directives with trimming if needed
+        const additionalVideos = videoDetails.slice(1).map((video, idx) => {
+          const realIdx = idx + 1; // actual index in the sequences array
+          
+          console.log(`🎬 Adding video ${realIdx + 1} to concatenation chain:`, {
+            publicId: video.publicId,
+            trimmedDuration: video.trimDuration
+          });
+          
+          let layerParam = `l_video:${video.publicId}`;
+          
+          // Add trim duration if needed
+          if (trimData[realIdx].trimmedDuration < trimData[realIdx].originalDuration) {
+            console.log(`✂️ Trimming video ${realIdx + 1}: ${trimData[realIdx].originalDuration}s → ${trimData[realIdx].trimmedDuration.toFixed(2)}s`);
+            layerParam += `:du_${video.trimDuration.toFixed(2)}`;
+          }
+          
+          // The fl_splice parameter tells Cloudinary to concatenate videos
+          layerParam += `/fl_splice`;
+          
+          return layerParam;
+        });
+        
+        // Add all layer parameters to the URL
+        if (additionalVideos.length > 0) {
+          transformationUrl += `/${additionalVideos.join('/')}`;
+        }
+      }
+      
+      // Add format transformation if not already included
+      if (!transformationUrl.includes('/f_')) {
+        transformationUrl += `/f_mp4`;
+      }
+      
+      console.log('✅ Final concatenation URL generated:', transformationUrl);
+      return transformationUrl;
       
     } catch (error) {
       console.error('❌ Failed to build concatenation URL:', error);
