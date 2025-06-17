@@ -31,7 +31,7 @@ export interface VideoProcessingOptions {
 
 export class VideoProcessor {
   constructor() {
-    console.log('🎬 Initializing VideoProcessor for edge function processing...');
+    console.log('🎬 Initializing VideoProcessor for Cloudinary processing...');
   }
 
   async processVideo(options: VideoProcessingOptions, onProgress?: (progress: number) => void): Promise<Blob> {
@@ -52,16 +52,16 @@ export class VideoProcessor {
         throw new Error('Invalid target duration provided');
       }
 
-      return await this.processVideoWithEdgeFunction(options, onProgress);
+      return await this.processVideoWithCloudinary(options, onProgress);
     } catch (error) {
       console.error('❌ processVideo failed:', error);
       throw error;
     }
   }
 
-  private async processVideoWithEdgeFunction(options: VideoProcessingOptions, onProgress?: (progress: number) => void): Promise<Blob> {
+  private async processVideoWithCloudinary(options: VideoProcessingOptions, onProgress?: (progress: number) => void): Promise<Blob> {
     try {
-      console.log('🔧 Starting Edge Function video processing...');
+      console.log('🔧 Starting Cloudinary video processing...');
       onProgress?.(10);
 
       // Validate and filter sequences
@@ -80,54 +80,37 @@ export class VideoProcessor {
       console.log(`📊 Total duration: ${totalDuration}s, Target: ${options.duration}s, Needs trimming: ${needsTrimming}`);
       onProgress?.(40);
 
-      // Prepare sequences with order information
-      const sequencesWithOrder = validSequences.map((seq, index) => ({
-        id: seq.id,
-        name: seq.name,
-        duration: seq.duration,
-        file_url: seq.file_url,
-        originalOrder: index
-      }));
-
-      // Call the edge function
-      console.log('📡 Calling process-video edge function...');
+      // Call the cloudinary concatenation edge function
+      console.log('📡 Calling cloudinary-concatenate edge function...');
       onProgress?.(50);
 
-      const { data, error } = await supabase.functions.invoke('process-video', {
+      const { data, error } = await supabase.functions.invoke('cloudinary-concatenate', {
         body: {
-          sequences: sequencesWithOrder,
-          customization: options.customization,
+          publicIds: validSequences.map(seq => this.extractPublicIdFromUrl(seq.file_url)),
           platform: options.platform,
-          duration: options.duration
+          targetDuration: needsTrimming ? options.duration : undefined
         }
       });
 
       if (error) {
-        console.error('❌ Edge function error:', error);
-        throw new Error(`Edge function failed: ${error.message}`);
+        console.error('❌ Cloudinary concatenation error:', error);
+        throw new Error(`Cloudinary concatenation failed: ${error.message}`);
       }
 
       if (!data?.success) {
-        console.error('❌ Edge function returned unsuccessful result:', data);
-        throw new Error(data?.error || 'Video processing failed');
+        console.error('❌ Cloudinary concatenation returned unsuccessful result:', data);
+        throw new Error(data?.error || 'Video concatenation failed');
       }
 
-      console.log('✅ Edge function completed successfully:', {
-        useStorage: data.useStorage,
-        filename: data.filename,
+      console.log('✅ Cloudinary concatenation completed successfully:', {
+        url: data.url,
         message: data.message
       });
       onProgress?.(75);
 
       // Download the processed video
-      let videoBlob: Blob;
-      
-      if (data.useStorage && data.downloadUrl) {
-        console.log('📥 Downloading video from Supabase Storage:', data.downloadUrl);
-        videoBlob = await this.downloadFromStorage(data.downloadUrl);
-      } else {
-        throw new Error('No valid download method available from edge function response');
-      }
+      console.log('📥 Downloading processed video from:', data.url);
+      const videoBlob = await this.downloadFromUrl(data.url);
 
       onProgress?.(100);
       console.log('✅ Video processing completed successfully');
@@ -135,7 +118,7 @@ export class VideoProcessor {
       return videoBlob;
 
     } catch (error) {
-      console.error('❌ Edge function processing failed:', error);
+      console.error('❌ Cloudinary processing failed:', error);
       throw new Error(`Video processing failed: ${error.message}`);
     }
   }
@@ -180,15 +163,44 @@ export class VideoProcessor {
     return validSequences;
   }
 
-  private async downloadFromStorage(url: string): Promise<Blob> {
+  private extractPublicIdFromUrl(cloudinaryUrl: string): string {
     try {
-      console.log('📥 Starting download from storage:', url);
+      // Extract public ID from Cloudinary URL
+      // URL format: https://res.cloudinary.com/cloud_name/video/upload/v123456789/folder/public_id.mp4
+      const urlParts = cloudinaryUrl.split('/');
+      const uploadIndex = urlParts.findIndex(part => part === 'upload');
+      
+      if (uploadIndex === -1) {
+        throw new Error('Invalid Cloudinary URL format');
+      }
+
+      // Get everything after 'upload' and before the file extension
+      const pathAfterUpload = urlParts.slice(uploadIndex + 1).join('/');
+      
+      // Remove version if present (starts with 'v' followed by numbers)
+      const pathWithoutVersion = pathAfterUpload.replace(/^v\d+\//, '');
+      
+      // Remove file extension
+      const publicId = pathWithoutVersion.replace(/\.[^/.]+$/, '');
+      
+      console.log(`📋 Extracted public ID: ${publicId} from URL: ${cloudinaryUrl}`);
+      return publicId;
+      
+    } catch (error) {
+      console.error('❌ Failed to extract public ID from URL:', cloudinaryUrl, error);
+      throw new Error(`Invalid Cloudinary URL: ${cloudinaryUrl}`);
+    }
+  }
+
+  private async downloadFromUrl(url: string): Promise<Blob> {
+    try {
+      console.log('📥 Starting download from URL:', url);
       
       const response = await fetch(url);
       
       if (!response.ok) {
         const errorText = await response.text().catch(() => 'Unknown error');
-        console.error(`❌ Storage download failed with status ${response.status}:`, errorText);
+        console.error(`❌ Video download failed with status ${response.status}:`, errorText);
         throw new Error(`Failed to download video: HTTP ${response.status} - ${response.statusText}`);
       }
 
@@ -200,17 +212,17 @@ export class VideoProcessor {
       }
 
       const videoBlob = await response.blob();
-      console.log('✅ Video downloaded successfully from storage, size:', videoBlob.size, 'bytes');
+      console.log('✅ Video downloaded successfully, size:', videoBlob.size, 'bytes');
       
       return videoBlob;
       
     } catch (error) {
-      console.error('❌ Storage download failed:', error);
-      throw new Error(`Storage download failed: ${error.message}`);
+      console.error('❌ Video download failed:', error);
+      throw new Error(`Video download failed: ${error.message}`);
     }
   }
 
-  getProcessingMode(): 'edge_function' {
-    return 'edge_function';
+  getProcessingMode(): 'cloudinary' {
+    return 'cloudinary';
   }
 }
