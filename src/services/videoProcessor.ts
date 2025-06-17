@@ -38,6 +38,43 @@ export class VideoProcessor {
     return this.processVideoWithCloudinary(options, onProgress);
   }
 
+  private extractCloudinaryPublicId(url: string): string {
+    console.log('🔍 Extracting public ID from URL:', url);
+    
+    // Remove any query parameters first
+    const cleanUrl = url.split('?')[0];
+    
+    // Pattern 1: Standard Cloudinary URL with version
+    // https://res.cloudinary.com/CLOUD_NAME/video/upload/v123456/folder/public_id.ext
+    let match = cleanUrl.match(/\/upload\/v\d+\/(.+)\.(mp4|mov|avi|webm|mkv)$/i);
+    if (match) {
+      const publicId = match[1];
+      console.log('✅ Extracted public ID (with version):', publicId);
+      return publicId;
+    }
+    
+    // Pattern 2: Cloudinary URL without version
+    // https://res.cloudinary.com/CLOUD_NAME/video/upload/folder/public_id.ext
+    match = cleanUrl.match(/\/upload\/(.+)\.(mp4|mov|avi|webm|mkv)$/i);
+    if (match) {
+      const publicId = match[1];
+      console.log('✅ Extracted public ID (no version):', publicId);
+      return publicId;
+    }
+    
+    // Pattern 3: Direct public ID format
+    // https://res.cloudinary.com/CLOUD_NAME/video/upload/public_id.ext
+    match = cleanUrl.match(/\/upload\/([^\/]+)\.(mp4|mov|avi|webm|mkv)$/i);
+    if (match) {
+      const publicId = match[1];
+      console.log('✅ Extracted public ID (direct):', publicId);
+      return publicId;
+    }
+    
+    console.error('❌ Could not extract public ID from URL:', url);
+    throw new Error(`Could not extract public ID from URL: ${url}`);
+  }
+
   private async processVideoWithCloudinary(options: VideoProcessingOptions, onProgress?: (progress: number) => void): Promise<Blob> {
     try {
       console.log('🚀 Starting Cloudinary video processing...', {
@@ -47,7 +84,7 @@ export class VideoProcessor {
       });
       onProgress?.(10);
 
-      // Validate sequences before sending and preserve order
+      // Validate sequences and preserve order
       const validSequences = options.sequences.filter((seq, index) => {
         if (!seq.file_url || !seq.file_url.startsWith('http')) {
           console.warn(`❌ Invalid sequence URL: ${seq.id} - ${seq.file_url}`);
@@ -67,28 +104,22 @@ export class VideoProcessor {
       onProgress?.(25);
 
       // Extract Cloudinary public IDs from the URLs
-      const publicIds = validSequences.map(seq => {
-        const url = seq.file_url;
-        // Extract public ID from Cloudinary URL
-        // Format: https://res.cloudinary.com/CLOUD_NAME/video/upload/v123456/folder/public_id.mp4
-        const match = url.match(/\/upload\/v\d+\/(.+)\.(mp4|mov|avi|webm)$/i);
-        if (match) {
-          return match[1]; // This is the public_id with folder
+      const publicIds = validSequences.map((seq, index) => {
+        try {
+          const publicId = this.extractCloudinaryPublicId(seq.file_url);
+          console.log(`📋 Sequence ${index + 1} (${seq.name}): ${publicId}`);
+          return publicId;
+        } catch (error) {
+          console.error(`❌ Failed to extract public ID for sequence ${seq.name}:`, error);
+          throw error;
         }
-        
-        // Fallback: try to extract from simpler format
-        const simpleMatch = url.match(/\/upload\/(.+)\.(mp4|mov|avi|webm)$/i);
-        if (simpleMatch) {
-          return simpleMatch[1];
-        }
-        
-        throw new Error(`Could not extract public ID from URL: ${url}`);
       });
 
-      console.log('📋 Extracted public IDs:', publicIds);
+      console.log('🎯 Final public IDs for concatenation:', publicIds);
       onProgress?.(50);
 
       // Call the Cloudinary concatenation edge function
+      console.log('🔗 Calling cloudinary-concatenate edge function...');
       const { data, error } = await supabase.functions.invoke('cloudinary-concatenate', {
         body: {
           publicIds,
