@@ -40,112 +40,68 @@ const LanguageDurationSelector = ({
   };
 
   return (
-    <div className="space-y-8">
-      <div className="text-center">
-        <h3 className="text-lg font-semibold mb-2">Configure Your Video</h3>
-        <p className="text-gray-600">Set the language and duration for your template</p>
-      </div>
+    <div className="grid grid-cols-1 md:grid-cols-2 gap-10">
+      {/* Language Selection */}
+      <Card className="bg-[#111] border-0 rounded-3xl p-10 relative overflow-hidden fade-in-up" style={{ animationDelay: '0.4s' }}>
+        <div className="absolute inset-0 bg-gradient-to-br from-orange-500/10 to-amber-500/10 pointer-events-none"></div>
+        <div className="absolute inset-0 border border-orange-500/20 rounded-3xl pointer-events-none"></div>
+        <CardContent className="p-0 relative z-10">
+          <h4 className="font-bold text-2xl mb-6 text-white tracking-tight">Language Selection</h4>
+          
+          <Select value={language} onValueChange={(value: Language) => onLanguageChange(value)}>
+            <SelectTrigger className="w-full h-16 text-lg bg-white/5 border border-white/10 rounded-2xl px-6 text-white hover:border-orange-500/50 hover:bg-white/8 focus:border-orange-500/50 focus:bg-white/8">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent className="bg-[#111] border-white/20 rounded-2xl">
+              {languages.map((lang) => (
+                <SelectItem key={lang.code} value={lang.code} className="text-lg py-4 text-white hover:bg-white/10 focus:bg-white/10">
+                  <div className="flex items-center space-x-3">
+                    <span className="text-xl">{lang.flag}</span>
+                    <span>{lang.name}</span>
+                  </div>
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+          
+          <p className="text-sm text-white/60 mt-3">
+            This affects text overlays, captions, and voice-over language
+          </p>
+        </CardContent>
+      </Card>
 
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
-        {/* Language Selection */}
-        <Card className="border-2 border-gray-200">
-          <CardContent className="p-6">
-            <h4 className="font-semibold text-lg mb-4 flex items-center">
-              🌐 Language Selection
-            </h4>
-            
-            <Select value={language} onValueChange={(value: Language) => onLanguageChange(value)}>
-              <SelectTrigger className="w-full h-12 text-lg">
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                {languages.map((lang) => (
-                  <SelectItem key={lang.code} value={lang.code} className="text-lg py-3">
-                    <div className="flex items-center space-x-3">
-                      <span className="text-xl">{lang.flag}</span>
-                      <span>{lang.name}</span>
-                    </div>
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-            
-            <p className="text-sm text-gray-600 mt-3">
-              This affects text overlays, captions, and voice-over language
-            </p>
-          </CardContent>
-        </Card>
-
-        {/* Duration Selection */}
-        <Card className="border-2 border-gray-200">
-          <CardContent className="p-6">
-            <h4 className="font-semibold text-lg mb-4 flex items-center">
-              ⏱️ Video Duration
-            </h4>
-            
-            <div className="space-y-6">
-              <div className="text-center">
-                <div className="text-3xl font-bold text-blue-600 mb-1">
-                  {getDurationLabel(duration)}
-                </div>
-                <div className="text-sm text-gray-500">
-                  {getDurationCategory(duration)}
-                </div>
-              </div>
-              
-              <Slider
-                value={[duration]}
-                onValueChange={(value) => onDurationChange(value[0])}
-                max={120}
-                min={10}
-                step={5}
-                className="w-full"
-              />
-              
-              <div className="flex justify-between text-xs text-gray-500">
-                <span>10s</span>
-                <span>30s</span>
-                <span>60s</span>
-                <span>120s</span>
-              </div>
+      {/* Duration Selection */}
+      <Card className="bg-[#111] border-0 rounded-3xl p-10 relative overflow-hidden fade-in-up" style={{ animationDelay: '0.5s' }}>
+        <div className="absolute inset-0 bg-gradient-to-br from-pink-500/10 to-purple-500/10 pointer-events-none"></div>
+        <div className="absolute inset-0 border border-pink-500/20 rounded-3xl pointer-events-none"></div>
+        <CardContent className="p-0 relative z-10">
+          <h4 className="font-bold text-2xl mb-6 text-white tracking-tight">Video Duration</h4>
+          
+          <div className="text-center mb-10">
+            <div className="text-7xl font-black gradient-text leading-none mb-2 tracking-tight">
+              {getDurationLabel(duration)}
             </div>
+            <div className="text-lg text-white/60 italic">
+              {getDurationCategory(duration)}
+            </div>
+          </div>
+          
+          <div className="space-y-6">
+            <Slider
+              value={[duration]}
+              onValueChange={(value) => onDurationChange(value[0])}
+              max={120}
+              min={10}
+              step={5}
+              className="w-full"
+            />
             
-            <p className="text-sm text-gray-600 mt-3">
-              Longer videos allow for more detailed storytelling
-            </p>
-          </CardContent>
-        </Card>
-      </div>
-
-      {/* Quick Presets */}
-      <Card className="bg-gradient-to-r from-blue-50 to-purple-50 border-blue-200">
-        <CardContent className="p-6">
-          <h4 className="font-semibold mb-4">⚡ Quick Presets</h4>
-          <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-            {[
-              { duration: 15, label: 'Quick Ad', desc: 'Perfect for ads' },
-              { duration: 30, label: 'Social Post', desc: 'Ideal for feeds' },
-              { duration: 60, label: 'Tutorial', desc: 'How-to content' },
-              { duration: 90, label: 'Story', desc: 'Detailed narrative' },
-            ].map((preset) => (
-              <button
-                key={preset.duration}
-                onClick={() => onDurationChange(preset.duration)}
-                className={`
-                  p-3 rounded-lg border-2 transition-all text-left
-                  ${duration === preset.duration 
-                    ? 'border-blue-500 bg-blue-100' 
-                    : 'border-gray-200 bg-white hover:border-gray-300'
-                  }
-                `}
-              >
-                <div className="font-medium text-sm">{preset.label}</div>
-                <div className="text-xs text-gray-600">{preset.desc}</div>
-                <div className="text-xs font-medium text-blue-600 mt-1">
-                  {getDurationLabel(preset.duration)}
-                </div>
-              </button>
-            ))}
+            <div className="flex justify-between text-xs text-white/40">
+              <span>10s</span>
+              <span>30s</span>
+              <span>60s</span>
+              <span>120s</span>
+            </div>
           </div>
         </CardContent>
       </Card>

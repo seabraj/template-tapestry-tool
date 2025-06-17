@@ -115,11 +115,11 @@ const Index = () => {
 
   if (loading) {
     return (
-      <div className="min-h-screen bg-gray-950 flex items-center justify-center">
+      <div className="min-h-screen bg-[#0a0a0a] flex items-center justify-center">
         <div className="text-center space-y-4">
-          <div className="animate-spin rounded-full h-16 w-16 border-b-2 border-blue-400 mx-auto"></div>
+          <div className="animate-spin rounded-full h-16 w-16 border-b-2 border-orange-400 mx-auto"></div>
           <h2 className="text-xl font-semibold text-white">Loading Video Library...</h2>
-          <p className="text-gray-400">Fetching your video assets from Cloudinary</p>
+          <p className="text-white/60">Fetching your video assets from Cloudinary</p>
         </div>
       </div>
     );
@@ -127,12 +127,12 @@ const Index = () => {
 
   if (error) {
     return (
-      <div className="min-h-screen bg-gray-950 flex items-center justify-center">
-        <Card className="bg-gray-900 border-gray-800 max-w-md">
+      <div className="min-h-screen bg-[#0a0a0a] flex items-center justify-center">
+        <Card className="bg-[#111] border-white/20 max-w-md">
           <CardContent className="p-6 text-center">
             <h2 className="text-xl font-semibold text-red-400 mb-2">Error Loading Library</h2>
-            <p className="text-gray-300 mb-4">{error}</p>
-            <Button onClick={() => window.location.reload()} className="bg-blue-600 hover:bg-blue-700">
+            <p className="text-white/80 mb-4">{error}</p>
+            <Button onClick={() => window.location.reload()} className="bg-orange-600 hover:bg-orange-700">
               Retry
             </Button>
           </CardContent>
@@ -142,35 +142,31 @@ const Index = () => {
   }
 
   return (
-    <div className="min-h-screen bg-gray-950">
+    <div className="min-h-screen bg-[#0a0a0a]">
       {/* Header */}
-      <div className="bg-gray-900 border-b border-gray-800">
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-          <div className="flex items-center justify-between h-16">
-            <div className="flex items-center space-x-4">
-              <div className="w-10 h-10 bg-gradient-to-r from-blue-600 to-purple-600 rounded-xl flex items-center justify-center">
-                <Play className="text-white h-5 w-5" />
-              </div>
-              <div>
-                <h1 className="text-xl font-bold text-white">Video Creator</h1>
-                <p className="text-sm text-gray-400">Professional video processing</p>
-              </div>
+      <div className="max-w-7xl mx-auto px-8 py-8">
+        <div className="flex items-center justify-between mb-20">
+          <div className="flex items-center space-x-4">
+            <div className="w-12 h-12 logo-gradient rounded-2xl flex items-center justify-content text-white font-bold text-xl">
+              ▶
             </div>
-            <Button 
-              onClick={() => window.open('/admin', '_blank')} 
-              variant="outline" 
-              className="border-gray-700 text-gray-300 hover:bg-gray-800"
-            >
-              Admin Panel
-            </Button>
+            <div className="text-white text-lg font-medium">
+              / itMatters
+            </div>
           </div>
+          <Button 
+            onClick={() => window.open('/admin', '_blank')} 
+            variant="outline" 
+            className="border-white/20 text-white hover:bg-white/5 hover:border-white/40 rounded-xl px-6 py-3 font-medium transition-all duration-300"
+          >
+            <span className="mr-2">⚙</span>
+            Admin Panel
+          </Button>
         </div>
-      </div>
 
-      {/* Progress Steps */}
-      <div className="bg-gray-900 border-b border-gray-800">
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-4">
-          <div className="flex items-center justify-between">
+        {/* Progress Steps */}
+        <div className="mb-20">
+          <div className="flex items-center justify-between max-w-2xl mx-auto">
             {[1, 2, 3, 4, 5].map((step) => {
               const StepIcon = getStepIcon(step);
               const isActive = step === currentStep;
@@ -178,18 +174,18 @@ const Index = () => {
               
               return (
                 <div key={step} className="flex items-center">
-                  <div className={`flex items-center justify-center w-10 h-10 rounded-full border-2 transition-all ${
+                  <div className={`flex items-center justify-center w-12 h-12 rounded-full border-2 transition-all duration-300 ${
                     isActive 
-                      ? 'bg-blue-600 border-blue-600 text-white' 
+                      ? 'bg-orange-500 border-orange-500 text-white shadow-lg shadow-orange-500/50' 
                       : isCompleted 
-                        ? 'bg-green-600 border-green-600 text-white'
-                        : 'border-gray-600 text-gray-400'
+                        ? 'bg-green-500 border-green-500 text-white'
+                        : 'border-white/20 text-white/40'
                   }`}>
                     <StepIcon className="h-5 w-5" />
                   </div>
                   {step < 5 && (
-                    <div className={`w-16 h-0.5 ml-4 ${
-                      step < currentStep ? 'bg-green-600' : 'bg-gray-700'
+                    <div className={`w-16 h-0.5 ml-4 transition-all duration-300 ${
+                      step < currentStep ? 'bg-green-500' : 'bg-white/20'
                     }`} />
                   )}
                 </div>
@@ -197,59 +193,59 @@ const Index = () => {
             })}
           </div>
         </div>
-      </div>
 
-      {/* Main Content */}
-      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
-        <div className="space-y-8">
+        {/* Main Content */}
+        <div className="space-y-20">
           {/* Step Content */}
-          <Card className="bg-gray-900 border-gray-800">
-            <CardContent className="p-8">
-              {currentStep === 1 && (
-                <div className="space-y-8">
-                  <div className="text-center">
-                    <h2 className="text-2xl font-bold text-white mb-2">Choose Platform</h2>
-                    <p className="text-gray-400">Select your target platform for optimal formatting</p>
-                  </div>
-                  <PlatformSelector selected={platform} onSelect={setPlatform} />
+          <div className="">
+            {currentStep === 1 && (
+              <div className="space-y-12">
+                <div className="text-center">
+                  <h2 className="text-4xl font-bold text-white mb-4 tracking-tight">Choose Platform</h2>
+                  <p className="text-white/60 text-lg">Select your target platform for optimal formatting</p>
                 </div>
-              )}
+                <PlatformSelector selected={platform} onSelect={setPlatform} />
+              </div>
+            )}
 
-              {currentStep === 2 && (
-                <div className="space-y-8">
-                  <div className="text-center">
-                    <h2 className="text-2xl font-bold text-white mb-2">Configure Settings</h2>
-                    <p className="text-gray-400">Set language and duration preferences</p>
-                  </div>
-                  <LanguageDurationSelector 
-                    language={language} 
-                    duration={duration}
-                    onLanguageChange={setLanguage}
-                    onDurationChange={setDuration}
-                  />
+            {currentStep === 2 && (
+              <div className="space-y-12">
+                <div className="text-center">
+                  <h2 className="text-4xl font-bold text-white mb-4 tracking-tight">Configure Settings</h2>
+                  <p className="text-white/60 text-lg">Set language and duration preferences</p>
                 </div>
-              )}
+                <LanguageDurationSelector 
+                  language={language} 
+                  duration={duration}
+                  onLanguageChange={setLanguage}
+                  onDurationChange={setDuration}
+                />
+              </div>
+            )}
 
-              {currentStep === 3 && (
-                <div className="space-y-8">
-                  <div className="text-center">
-                    <h2 className="text-2xl font-bold text-white mb-2">Video Sequences</h2>
-                    <p className="text-gray-400">Select and arrange your video clips</p>
-                  </div>
+            {currentStep === 3 && (
+              <div className="space-y-12">
+                <div className="text-center">
+                  <h2 className="text-4xl font-bold text-white mb-4 tracking-tight">Video Sequences</h2>
+                  <p className="text-white/60 text-lg">Select and arrange your video clips</p>
+                </div>
+                <div className="bg-[#111] border border-white/10 rounded-3xl p-8">
                   <SequenceManager
                     platform={platform}
                     sequences={sequences}
                     onSequencesChange={setSequences}
                   />
                 </div>
-              )}
+              </div>
+            )}
 
-              {currentStep === 4 && (
-                <div className="space-y-8">
-                  <div className="text-center">
-                    <h2 className="text-2xl font-bold text-white mb-2">Customization</h2>
-                    <p className="text-gray-400">Add overlays and styling to your video</p>
-                  </div>
+            {currentStep === 4 && (
+              <div className="space-y-12">
+                <div className="text-center">
+                  <h2 className="text-4xl font-bold text-white mb-4 tracking-tight">Customization</h2>
+                  <p className="text-white/60 text-lg">Add overlays and styling to your video</p>
+                </div>
+                <div className="bg-[#111] border border-white/10 rounded-3xl p-8">
                   <CustomizationPanel
                     settings={customization}
                     onSettingsChange={setCustomization}
@@ -257,14 +253,16 @@ const Index = () => {
                     platform={platform}
                   />
                 </div>
-              )}
+              </div>
+            )}
 
-              {currentStep === 5 && (
-                <div className="space-y-8">
-                  <div className="text-center">
-                    <h2 className="text-2xl font-bold text-white mb-2">Export & Generate</h2>
-                    <p className="text-gray-400">Review your settings and generate your final video</p>
-                  </div>
+            {currentStep === 5 && (
+              <div className="space-y-12">
+                <div className="text-center">
+                  <h2 className="text-4xl font-bold text-white mb-4 tracking-tight">Export & Generate</h2>
+                  <p className="text-white/60 text-lg">Review your settings and generate your final video</p>
+                </div>
+                <div className="bg-[#111] border border-white/10 rounded-3xl p-8">
                   <ExportPanel
                     platform={platform}
                     language={language}
@@ -273,23 +271,23 @@ const Index = () => {
                     customization={customization}
                   />
                 </div>
-              )}
-            </CardContent>
-          </Card>
+              </div>
+            )}
+          </div>
 
           {/* Navigation */}
-          <div className="flex justify-between">
+          <div className="flex justify-between items-center">
             <Button
               onClick={handlePrevStep}
               disabled={currentStep === 1}
               variant="outline"
-              className="border-gray-700 text-gray-300 hover:bg-gray-800 disabled:opacity-50"
+              className="border-white/20 text-white hover:bg-white/5 hover:border-white/40 disabled:opacity-30 disabled:hover:bg-transparent disabled:hover:border-white/20 rounded-xl px-8 py-3 font-medium transition-all duration-300"
             >
               Previous
             </Button>
             
             <div className="text-center">
-              <p className="text-sm text-gray-400">
+              <p className="text-sm text-white/40">
                 Step {currentStep} of {totalSteps}
               </p>
             </div>
@@ -297,7 +295,7 @@ const Index = () => {
             <Button
               onClick={handleNextStep}
               disabled={currentStep === totalSteps}
-              className="bg-blue-600 hover:bg-blue-700 disabled:opacity-50"
+              className="bg-gradient-to-r from-orange-500 to-pink-500 hover:from-orange-600 hover:to-pink-600 disabled:opacity-30 disabled:hover:from-orange-500 disabled:hover:to-pink-500 rounded-xl px-8 py-3 font-medium transition-all duration-300 shadow-lg"
             >
               {currentStep === totalSteps ? 'Complete' : 'Next'}
             </Button>
