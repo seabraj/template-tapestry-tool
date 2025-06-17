@@ -44,14 +44,14 @@ const PlatformSelector = ({ selected, onSelect }: PlatformSelectorProps) => {
           style={{ animationDelay: `${(index + 1) * 0.1}s` }}
           onClick={() => onSelect(platform.id)}
         >
-          <CardContent className="p-6 text-center">
+          <CardContent className="p-6 text-center relative">
             <div className="inline-block bg-white/10 text-white px-3 py-1.5 rounded-lg text-xs font-medium uppercase tracking-wider mb-6">
               Video Format
             </div>
             
             <div className="flex justify-center mb-6 h-[120px] items-center">
               <div className={`
-                border-2 border-white/30 rounded-lg bg-white/5 flex items-center justify-center
+                border-2 border-white/30 rounded-2xl bg-white/5 flex items-center justify-center
                 text-sm font-semibold text-white/70 transition-all duration-300 relative
                 ${platform.frameClass}
                 ${selected === platform.id || 'hover:border-white/80 hover:bg-white/10 hover:text-white/90'}
@@ -63,7 +63,7 @@ const PlatformSelector = ({ selected, onSelect }: PlatformSelectorProps) => {
             
             <h4 className="font-bold text-2xl mb-4 text-white tracking-tight">{platform.name}</h4>
             
-            <div className="flex justify-center">
+            <div className="flex justify-end">
               <div className="text-white/60 text-lg transition-colors duration-300">
                 →
               </div>

@@ -1,3 +1,4 @@
+
 import { useState } from 'react';
 import { useToast } from '@/hooks/use-toast';
 import { useVideoAssets } from '@/hooks/useVideoAssets';
@@ -128,11 +129,11 @@ const Index = () => {
   if (error) {
     return (
       <div className="min-h-screen bg-[#0a0a0a] flex items-center justify-center">
-        <Card className="bg-[#111] border-white/20 max-w-md">
+        <Card className="bg-[#111] border-white/20 max-w-md rounded-3xl">
           <CardContent className="p-6 text-center">
             <h2 className="text-xl font-semibold text-red-400 mb-2">Error Loading Library</h2>
             <p className="text-white/80 mb-4">{error}</p>
-            <Button onClick={() => window.location.reload()} className="bg-orange-600 hover:bg-orange-700">
+            <Button onClick={() => window.location.reload()} className="bg-orange-600 hover:bg-orange-700 rounded-xl">
               Retry
             </Button>
           </CardContent>
@@ -147,7 +148,7 @@ const Index = () => {
       <div className="max-w-7xl mx-auto px-8 py-8">
         <div className="flex items-center justify-between mb-20">
           <div className="flex items-center space-x-4">
-            <div className="w-12 h-12 logo-gradient rounded-2xl flex items-center justify-content text-white font-bold text-xl">
+            <div className="w-12 h-12 logo-gradient rounded-2xl flex items-center justify-center text-white font-bold text-xl">
               ▶
             </div>
             <div className="text-white text-lg font-medium">
