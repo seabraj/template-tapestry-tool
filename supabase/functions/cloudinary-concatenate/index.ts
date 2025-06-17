@@ -8,7 +8,7 @@ const corsHeaders = {
 
 interface ConcatenationRequest {
   publicIds: string[];
-  cloudName: string;
+  cloudName?: string;
 }
 
 serve(async (req) => {
@@ -43,14 +43,12 @@ serve(async (req) => {
       );
     }
 
-    const { publicIds, cloudName } = requestData;
+    const { publicIds } = requestData;
+    // Use hardcoded cloud name
+    const cloudName = 'dsxrmo3kt';
     
     if (!publicIds?.length) {
       throw new Error('No video public IDs provided');
-    }
-    
-    if (!cloudName) {
-      throw new Error('Cloud name is required');
     }
 
     console.log(`📊 Processing ${publicIds.length} videos for concatenation`);

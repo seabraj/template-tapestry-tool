@@ -5,12 +5,8 @@ interface CloudinaryConfig {
 }
 
 export const getCloudinaryConfig = (): CloudinaryConfig => {
-  const cloudName = import.meta.env.VITE_CLOUDINARY_CLOUD_NAME;
-  const uploadPreset = import.meta.env.VITE_CLOUDINARY_UPLOAD_PRESET;
-
-  if (!cloudName || !uploadPreset) {
-    throw new Error('Cloudinary configuration missing. Please set VITE_CLOUDINARY_CLOUD_NAME and VITE_CLOUDINARY_UPLOAD_PRESET environment variables.');
-  }
+  const cloudName = 'dsxrmo3kt';
+  const uploadPreset = 'video_concatenation_preset';
 
   return {
     cloudName,
