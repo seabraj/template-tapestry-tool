@@ -76,25 +76,25 @@ export class VideoProcessor {
 
       console.log(`✅ Validated ${validSequences.length} sequence(s)`);
       onProgress?.(25);
-
-      // Calculate total duration for progress tracking
-      const totalDuration = validSequences.reduce((sum, seq) => sum + seq.duration, 0);
-      const needsTrimming = options.duration < totalDuration;
-
-      console.log(`📊 Total duration: ${totalDuration}s, Target: ${options.duration}s, Needs trimming: ${needsTrimming}`);
+      
       onProgress?.(40);
 
       // Call the enhanced cloudinary concatenation edge function
-      console.log('📡 Calling enhanced cloudinary-concatenate edge function...');
+      console.log('📡 Calling cloudinary-concatenate edge function with manifest-based approach...');
       onProgress?.(50);
 
+      // --- THIS IS THE CORRECTED PART ---
       const { data, error } = await supabase.functions.invoke('cloudinary-concatenate', {
         body: {
-          publicIds: validSequences.map(seq => this.extractPublicIdFromUrl(seq.file_url)),
-          platform: options.platform,
-          targetDuration: needsTrimming ? options.duration : undefined
+          // The backend now expects an array of 'videos' with publicId and duration
+          videos: validSequences.map(seq => ({
+            publicId: this.extractPublicIdFromUrl(seq.file_url),
+            duration: seq.duration
+          })),
+          targetDuration: options.duration
         }
       });
+      // --- END OF CORRECTION ---
 
       if (error) {
         console.error('❌ Cloudinary concatenation error:', error);
@@ -109,9 +109,6 @@ export class VideoProcessor {
       console.log('✅ Cloudinary concatenation completed successfully:', {
         url: data.url,
         message: data.message,
-        method: data.metadata?.method,
-        actualDuration: data.metadata?.actualDuration,
-        proportionalCalculation: data.metadata?.proportionalCalculation
       });
       onProgress?.(75);
 
@@ -156,7 +153,6 @@ export class VideoProcessor {
         return false;
       }
 
-      // Test if it's a Cloudinary URL
       if (!seq.file_url.includes('cloudinary.com')) {
         console.warn(`❌ Sequence ${seq.id} is not a Cloudinary URL: ${seq.file_url}`);
         return false;
@@ -172,8 +168,6 @@ export class VideoProcessor {
 
   private extractPublicIdFromUrl(cloudinaryUrl: string): string {
     try {
-      // Extract public ID from Cloudinary URL
-      // URL format: https://res.cloudinary.com/cloud_name/video/upload/v123456789/folder/public_id.mp4
       const urlParts = cloudinaryUrl.split('/');
       const uploadIndex = urlParts.findIndex(part => part === 'upload');
       
@@ -181,13 +175,8 @@ export class VideoProcessor {
         throw new Error('Invalid Cloudinary URL format');
       }
 
-      // Get everything after 'upload' and before the file extension
       const pathAfterUpload = urlParts.slice(uploadIndex + 1).join('/');
-      
-      // Remove version if present (starts with 'v' followed by numbers)
       const pathWithoutVersion = pathAfterUpload.replace(/^v\d+\//, '');
-      
-      // Remove file extension
       const publicId = pathWithoutVersion.replace(/\.[^/.]+$/, '');
       
       console.log(`📋 Extracted public ID: ${publicId} from URL: ${cloudinaryUrl}`);

@@ -6,8 +6,7 @@ const corsHeaders = {
   'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
 };
 
-// --- Configure Cloudinary Admin API ---
-// We still need the config for the SDK to sign URLs if needed in the future.
+// Configure Cloudinary Admin API for uploading the manifest
 try {
   cloudinary.config({
     cloud_name: 'dsxrmo3kt',
@@ -16,12 +15,18 @@ try {
     secure: true,
   });
   console.log('✅ Cloudinary SDK configured successfully.');
-} catch(e) {
+} catch (e) {
   console.error('❌ Failed to configure Cloudinary SDK.', e);
 }
 
+// The frontend will now send the video object with its duration
+interface VideoInfo {
+  publicId: string;
+  duration: number;
+}
+
 interface ConcatenationRequest {
-  publicIds: string[];
+  videos: VideoInfo[];
   targetDuration: number;
 }
 
@@ -31,74 +36,60 @@ serve(async (req) => {
   }
 
   try {
-    console.log('🎬 === Cloudinary Video Concatenation Started ===');
+    console.log('🎬 === Cloudinary Manifest Concatenation Started ===');
     
-    const { publicIds, targetDuration } = await req.json() as ConcatenationRequest;
+    const { videos, targetDuration } = await req.json() as ConcatenationRequest;
     const cloudName = 'dsxrmo3kt';
     
-    if (!publicIds?.length) throw new Error('No video public IDs provided');
+    if (!videos?.length) throw new Error('No videos provided');
     if (!targetDuration || targetDuration <= 0) throw new Error('A valid target duration is required.');
 
-    console.log(`📊 Processing ${publicIds.length} videos. Target duration: ${targetDuration}s`);
+    console.log(`📊 Processing ${videos.length} videos. Target duration: ${targetDuration}s`);
 
-    // --- FINAL ROBUST SOLUTION using on-the-fly variables ---
-    
-    const transformations = [];
-    
-    // 1. Define a variable for the final target duration
-    const targetDurationVar = `$finalDuration_to_f_${targetDuration}`;
-    transformations.push(targetDurationVar);
-    
-    // 2. Define variables for each video's original duration using 'idu' (initial duration)
-    const durationVars = publicIds.map((id, i) => `$d${i}_to_i_idu`);
-    
-    // 3. To use 'idu' for each video, they must be part of a transformation chain.
-    // We will build this chain using layers.
-    
-    // Define the total duration variable by summing the individual duration variables
-    const totalDurationVar = `$totalDuration_to_f_${durationVars.map(v => v.split('_')[0]).join('_add_')}`;
-    
-    // --- Build the Transformation Chain ---
-    // Start with a base canvas and quality settings
-    transformations.push('w_1280,h_720,c_pad,q_auto:good');
-    
-    // Add the first video as the base layer, with its duration variable defined.
-    transformations.push(`l_video:${publicIds[0]}/${durationVars[0]}`);
-    
-    // Add subsequent videos as layers, each defining its own duration variable
-    for (let i = 1; i < publicIds.length; i++) {
-        transformations.push(`l_video:${publicIds[i]}/${durationVars[i]}/fl_layer_apply`);
-    }
+    // --- MANIFEST-BASED SOLUTION ---
 
-    // Now that all durations are in variables, calculate the total
-    transformations.push(totalDurationVar);
-
-    // Now, create the final video by splicing the layers again, but this time with proportional trimming.
-    // This requires a second "pass" in the transformation string.
+    // 1. Calculate total duration from the reliable data sent from the frontend
+    const totalOriginalDuration = videos.reduce((sum, v) => sum + v.duration, 0);
+    if (totalOriginalDuration <= 0) throw new Error('Total duration of source videos is zero.');
+    console.log(`⏱️ Total original duration: ${totalOriginalDuration.toFixed(2)}s`);
     
-    // Trim the first video proportionally
-    const firstVideoTrim = `l_video:${publicIds[0]},du_($finalDuration_mul_$d0)_div_$totalDuration`;
-    transformations.push(firstVideoTrim);
+    // 2. Build the manifest entries with proportional trimming
+    const manifest = {
+      entries: videos.map(video => {
+        const proportionalDuration = (video.duration / totalOriginalDuration) * targetDuration;
+        return {
+          public_id: video.publicId,
+          transform: `du_${proportionalDuration.toFixed(2)}` // Simple duration trim
+        };
+      })
+    };
     
-    // Splice subsequent videos, trimmed proportionally
-    for (let i = 1; i < publicIds.length; i++) {
-        const subsequentTrim = `l_video:${publicIds[i]},du_($finalDuration_mul_$d${i})_div_$totalDuration,fl_splice`;
-        transformations.push(subsequentTrim);
-    }
+    console.log('📝 Generated Manifest:', JSON.stringify(manifest, null, 2));
 
-    // Apply all layer transformations
-    transformations.push('fl_layer_apply');
+    // 3. Upload the manifest as a raw JSON file to Cloudinary
+    const manifestString = JSON.stringify(manifest);
+    const uploadResult = await cloudinary.uploader.upload(
+      `data:text/plain;base64,${btoa(manifestString)}`, 
+      { resource_type: 'raw', use_filename: true, unique_filename: true }
+    );
+    
+    const manifestPublicId = uploadResult.public_id;
+    console.log(`📄 Manifest uploaded successfully with public ID: ${manifestPublicId}`);
 
-    // Generate the final URL using a base canvas, with comma-separated transformations
-    const finalUrl = `https://res.cloudinary.com/${cloudName}/video/upload/${transformations.join(',')}/e_colorize,co_black/w_1,h_1/f_mp4/canvas.mp4`;
+    // 4. Generate the final, simple URL using the manifest
+    const finalUrl = cloudinary.url(`${manifestPublicId}.json`, {
+      resource_type: 'video',
+      transformation: [
+        { width: 1280, height: 720, crop: 'pad', audio_codec: 'aac' },
+        { effect: 'concatenate:manifest_json' },
+        { fetch_format: 'mp4' }
+      ]
+    });
+
     console.log('🎯 Final URL generated:', finalUrl);
 
     return new Response(
-      JSON.stringify({
-        success: true,
-        url: finalUrl,
-        message: `Successfully generated proportional video URL for ${publicIds.length} videos.`,
-      }),
+      JSON.stringify({ success: true, url: finalUrl }),
       { status: 200, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
     );
 
