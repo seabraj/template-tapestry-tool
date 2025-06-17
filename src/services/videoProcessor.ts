@@ -1,3 +1,4 @@
+
 import { supabase } from '@/integrations/supabase/client';
 import { Cloudinary } from '@cloudinary/url-gen';
 import { trim } from '@cloudinary/url-gen/actions/videoEdit';
@@ -143,13 +144,13 @@ export class VideoProcessor {
         throw new Error('No valid video sequences found');
       }
 
-      console.log(`✅ Processing ${validSequences.length} sequence(s)`);
+      console.log(`✅ Processing ${validSequences.length} sequence(s) in order`);
       onProgress?.(25);
 
       // Calculate trimming data
       const trimData = this.calculateProportionalTrimming(validSequences, options.duration);
       
-      // Extract public IDs and build video objects
+      // Extract public IDs and build video objects (preserve order)
       const videoData = [];
       for (let i = 0; i < validSequences.length; i++) {
         const seq = validSequences[i];
@@ -163,6 +164,7 @@ export class VideoProcessor {
             duration: seq.duration,
             trimData: trim
           });
+          console.log(`📋 Video ${i + 1}/${validSequences.length}: ${seq.name} (${publicId}) - ${trim.trimmedDuration.toFixed(2)}s`);
         } catch (error) {
           console.error(`❌ Failed to process sequence ${seq.name}:`, error);
           throw error;
@@ -194,44 +196,61 @@ export class VideoProcessor {
         return videoBlob;
       }
 
-      // Multiple videos - concatenation (fallback to manual URL construction for now)
-      console.log('🔗 Processing multiple videos with manual concatenation...');
+      // Multiple videos - use proper concatenation with manual URL construction
+      console.log('🔗 Processing multiple videos with sequential concatenation...');
       
+      // Build concatenation URL using proper Cloudinary syntax
       const baseVideo = videoData[0];
-      let transformations = ['q_auto:good', 'f_mp4'];
+      let transformations = [];
       
-      // Apply trimming to base video
+      // Start with quality and format
+      transformations.push('q_auto:good', 'f_mp4');
+      
+      // Apply trimming to base video if needed
       if (baseVideo.trimData.trimmedDuration < baseVideo.duration) {
         transformations.push(`so_0,eo_${baseVideo.trimData.trimmedDuration.toFixed(2)}`);
       }
       
-      // Add overlay videos with trimming
+      // Add subsequent videos using fl_splice for proper concatenation
       for (let i = 1; i < videoData.length; i++) {
         const video = videoData[i];
-        let overlayTransform = `l_video:${video.publicId.replace(/\//g, ':')}`;
+        let videoTransform = `l_video:${video.publicId.replace(/\//g, ':')}`;
         
+        // Apply trimming to this video if needed
         if (video.trimData.trimmedDuration < video.duration) {
-          overlayTransform += `/so_0,eo_${video.trimData.trimmedDuration.toFixed(2)}`;
+          videoTransform += `/so_0,eo_${video.trimData.trimmedDuration.toFixed(2)}`;
         }
         
-        overlayTransform += '/fl_splice';
-        transformations.push(overlayTransform);
+        // Use fl_splice to concatenate sequentially
+        videoTransform += '/fl_splice';
+        transformations.push(videoTransform);
       }
       
       const concatenatedUrl = `https://res.cloudinary.com/dsxrmo3kt/video/upload/${transformations.join(',')}/${baseVideo.publicId}.mp4`;
       
       console.log('🔗 Final concatenation URL:', concatenatedUrl);
+      console.log('🎬 Video order preserved:', videoData.map((v, i) => `${i + 1}. ${v.name}`));
       onProgress?.(75);
 
       const videoResponse = await fetch(concatenatedUrl);
       if (!videoResponse.ok) {
-        throw new Error(`Cloudinary concatenation failed: HTTP ${videoResponse.status}`);
+        console.error('❌ Cloudinary concatenation failed:', {
+          status: videoResponse.status,
+          statusText: videoResponse.statusText,
+          url: concatenatedUrl
+        });
+        throw new Error(`Cloudinary concatenation failed: HTTP ${videoResponse.status} - ${videoResponse.statusText}`);
       }
 
       const videoBlob = await videoResponse.blob();
       onProgress?.(100);
       
+      const actualDuration = options.duration;
       console.log('✅ Successfully processed concatenated video');
+      console.log(`🎯 Expected duration: ${actualDuration}s`);
+      console.log(`📹 Video count: ${videoData.length} sequences`);
+      console.log(`🎬 Final video size: ${(videoBlob.size / (1024 * 1024)).toFixed(2)}MB`);
+      
       return videoBlob;
 
     } catch (error) {
