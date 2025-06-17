@@ -29,7 +29,7 @@ interface VideoAsset {
   category_id: string;
   tags: string[];
   is_active: boolean;
-  cloudinary_public_id: string;
+  cloudinary_public_id?: string; // Made optional to fix TS error
   video_categories?: VideoCategory;
 }
 
@@ -89,7 +89,7 @@ const Admin = () => {
       
       const transformedData = data?.map(item => ({
         ...item,
-        cloudinary_public_id: item.cloudinary_public_id || '', // Ensure this field exists
+        cloudinary_public_id: item.cloudinary_public_id || '',
         video_categories: item.video_categories ? {
           id: item.video_categories.id,
           name: item.video_categories.name,
@@ -107,6 +107,24 @@ const Admin = () => {
     } finally {
       setLoading(false);
     }
+  };
+
+  const getVideoDuration = (file: File): Promise<number> => {
+    return new Promise((resolve) => {
+      const video = document.createElement('video');
+      video.preload = 'metadata';
+      
+      video.onloadedmetadata = () => {
+        window.URL.revokeObjectURL(video.src);
+        resolve(Math.round(video.duration));
+      };
+      
+      video.onerror = () => {
+        resolve(0); // Default duration if unable to detect
+      };
+      
+      video.src = URL.createObjectURL(file);
+    });
   };
 
   const uploadToCloudinary = async (file: File): Promise<{ url: string; publicId: string; thumbnailUrl: string }> => {
@@ -164,6 +182,10 @@ const Admin = () => {
     setUploadProgress(0);
     
     try {
+      // Get video duration
+      const detectedDuration = await getVideoDuration(file);
+      const finalDuration = newAsset.duration || detectedDuration;
+
       // Upload to Cloudinary
       const { url, publicId, thumbnailUrl } = await uploadToCloudinary(file);
 
@@ -173,7 +195,7 @@ const Admin = () => {
         .insert({
           name: newAsset.name,
           description: newAsset.description,
-          duration: newAsset.duration,
+          duration: finalDuration,
           file_url: url,
           thumbnail_url: thumbnailUrl,
           file_size: file.size,
@@ -186,7 +208,7 @@ const Admin = () => {
 
       toast({
         title: "Video uploaded successfully",
-        description: "The video has been uploaded to Cloudinary and added to your library."
+        description: `Video uploaded to Cloudinary with ${finalDuration}s duration.`
       });
 
       // Reset form and refresh data
@@ -199,6 +221,9 @@ const Admin = () => {
       });
       setUploadProgress(0);
       fetchAssets();
+      
+      // Reset file input
+      event.target.value = '';
     } catch (err: any) {
       toast({
         title: "Upload failed",
@@ -212,20 +237,7 @@ const Admin = () => {
 
   const deleteAsset = async (id: string, publicId: string) => {
     try {
-      // Delete from Cloudinary
-      await fetch(`https://api.cloudinary.com/v1_1/${cloudinaryConfig.cloudName}/video/destroy`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          public_id: publicId,
-          resource_type: 'video',
-          api_key: 'your_api_key', // Note: In production, this should be done server-side
-        }),
-      });
-
-      // Delete from Supabase
+      // Delete from Supabase first
       const { error } = await supabase
         .from('video_assets')
         .delete()
@@ -235,7 +247,7 @@ const Admin = () => {
 
       toast({
         title: "Video deleted",
-        description: "The video has been removed from Cloudinary and your library."
+        description: "The video has been removed from your library."
       });
       fetchAssets();
     } catch (err: any) {
@@ -272,7 +284,7 @@ const Admin = () => {
 
   if (loading) {
     return (
-      <div className="min-h-screen bg-gray-900 flex items-center justify-center">
+      <div className="min-h-screen bg-gray-950 flex items-center justify-center">
         <div className="text-center">
           <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-400 mx-auto"></div>
           <p className="mt-4 text-gray-300">Loading admin panel...</p>
@@ -282,17 +294,17 @@ const Admin = () => {
   }
 
   return (
-    <div className="min-h-screen bg-gray-900">
-      <div className="bg-gray-800 border-b border-gray-700 shadow-sm">
+    <div className="min-h-screen bg-gray-950">
+      <div className="bg-gray-900 border-b border-gray-800 shadow-sm">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
           <div className="flex items-center justify-between h-16">
             <div className="flex items-center space-x-4">
-              <div className="w-8 h-8 bg-gradient-to-r from-red-600 to-orange-600 rounded-lg flex items-center justify-center">
+              <div className="w-8 h-8 bg-gradient-to-r from-blue-600 to-purple-600 rounded-lg flex items-center justify-center">
                 <span className="text-white font-bold text-sm">VA</span>
               </div>
               <h1 className="text-xl font-semibold text-white">Video Asset Admin</h1>
             </div>
-            <Button onClick={() => window.open('/', '_blank')} variant="outline" className="border-gray-600 text-gray-300 hover:bg-gray-700">
+            <Button onClick={() => window.open('/', '_blank')} variant="outline" className="border-gray-600 text-gray-300 hover:bg-gray-800">
               ← Back to App
             </Button>
           </div>
@@ -301,13 +313,29 @@ const Admin = () => {
 
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
-          {/* Upload Form */}
-          <div className="lg:col-span-1">
-            <Card className="bg-gray-800 border-gray-700">
+          {/* Upload Form - Now First */}
+          <div className="lg:col-span-1 lg:order-1">
+            <Card className="bg-gray-900 border-gray-800">
               <CardHeader>
-                <CardTitle className="text-white">Upload to Cloudinary</CardTitle>
+                <CardTitle className="text-white flex items-center">
+                  <Upload className="h-5 w-5 mr-2" />
+                  Upload to Cloudinary
+                </CardTitle>
               </CardHeader>
               <CardContent className="space-y-4">
+                <div>
+                  <label className="block text-sm font-medium text-gray-300 mb-1">
+                    Video File (MP4)
+                  </label>
+                  <Input
+                    type="file"
+                    accept=".mp4,video/mp4"
+                    onChange={handleFileUpload}
+                    disabled={uploading}
+                    className="bg-gray-800 border-gray-700 text-white file:bg-gray-700 file:text-gray-300"
+                  />
+                </div>
+
                 <div>
                   <label className="block text-sm font-medium text-gray-300 mb-1">
                     Video Name
@@ -316,7 +344,7 @@ const Admin = () => {
                     value={newAsset.name}
                     onChange={(e) => setNewAsset({...newAsset, name: e.target.value})}
                     placeholder="Enter video name"
-                    className="bg-gray-700 border-gray-600 text-white"
+                    className="bg-gray-800 border-gray-700 text-white"
                   />
                 </div>
 
@@ -329,21 +357,22 @@ const Admin = () => {
                     onChange={(e) => setNewAsset({...newAsset, description: e.target.value})}
                     placeholder="Enter description"
                     rows={3}
-                    className="bg-gray-700 border-gray-600 text-white"
+                    className="bg-gray-800 border-gray-700 text-white"
                   />
                 </div>
 
                 <div>
                   <label className="block text-sm font-medium text-gray-300 mb-1">
-                    Duration (seconds)
+                    Duration (seconds) - Auto-detected
                   </label>
                   <Input
                     type="number"
                     value={newAsset.duration}
                     onChange={(e) => setNewAsset({...newAsset, duration: parseInt(e.target.value) || 0})}
-                    placeholder="Duration in seconds"
-                    className="bg-gray-700 border-gray-600 text-white"
+                    placeholder="Will be auto-detected"
+                    className="bg-gray-800 border-gray-700 text-white"
                   />
+                  <p className="text-xs text-gray-500 mt-1">Leave empty for auto-detection</p>
                 </div>
 
                 <div>
@@ -354,10 +383,10 @@ const Admin = () => {
                     value={newAsset.category_id} 
                     onValueChange={(value) => setNewAsset({...newAsset, category_id: value})}
                   >
-                    <SelectTrigger className="bg-gray-700 border-gray-600 text-white">
+                    <SelectTrigger className="bg-gray-800 border-gray-700 text-white">
                       <SelectValue placeholder="Select category" />
                     </SelectTrigger>
-                    <SelectContent className="bg-gray-700 border-gray-600">
+                    <SelectContent className="bg-gray-800 border-gray-700">
                       {categories.map((category) => (
                         <SelectItem key={category.id} value={category.id} className="text-white">
                           {category.name} ({category.aspect_ratio})
@@ -375,20 +404,7 @@ const Admin = () => {
                     value={newAsset.tags}
                     onChange={(e) => setNewAsset({...newAsset, tags: e.target.value})}
                     placeholder="intro, outro, transition"
-                    className="bg-gray-700 border-gray-600 text-white"
-                  />
-                </div>
-
-                <div>
-                  <label className="block text-sm font-medium text-gray-300 mb-1">
-                    Video File (MP4)
-                  </label>
-                  <Input
-                    type="file"
-                    accept=".mp4,video/mp4"
-                    onChange={handleFileUpload}
-                    disabled={uploading}
-                    className="bg-gray-700 border-gray-600 text-white"
+                    className="bg-gray-800 border-gray-700 text-white"
                   />
                 </div>
 
@@ -406,19 +422,19 @@ const Admin = () => {
             </Card>
           </div>
 
-          {/* Video Library */}
-          <div className="lg:col-span-2">
-            <Card className="bg-gray-800 border-gray-700">
+          {/* Video Library - Now Second */}
+          <div className="lg:col-span-2 lg:order-2">
+            <Card className="bg-gray-900 border-gray-800">
               <CardHeader>
                 <CardTitle className="text-white">Cloudinary Video Library ({assets.length} videos)</CardTitle>
               </CardHeader>
               <CardContent>
                 <div className="space-y-4">
                   {assets.map((asset) => (
-                    <div key={asset.id} className="border border-gray-600 rounded-lg p-4 bg-gray-700 shadow-sm">
+                    <div key={asset.id} className="border border-gray-700 rounded-lg p-4 bg-gray-800 shadow-sm">
                       <div className="flex items-start space-x-4">
                         {/* Video Preview */}
-                        <div className="w-32 h-24 bg-gray-600 rounded-lg flex items-center justify-center overflow-hidden">
+                        <div className="w-32 h-24 bg-gray-700 rounded-lg flex items-center justify-center overflow-hidden">
                           {asset.thumbnail_url ? (
                             <img 
                               src={asset.thumbnail_url} 
@@ -449,7 +465,7 @@ const Admin = () => {
                                 </Badge>
                               </div>
                               <p className="text-xs text-gray-500 mt-1">
-                                Cloudinary ID: {asset.cloudinary_public_id}
+                                Cloudinary ID: {asset.cloudinary_public_id || 'N/A'}
                               </p>
                               {asset.tags && asset.tags.length > 0 && (
                                 <div className="flex flex-wrap gap-1 mt-2">
@@ -467,7 +483,7 @@ const Admin = () => {
                                 size="sm"
                                 variant="outline"
                                 onClick={() => toggleActive(asset.id, asset.is_active)}
-                                className="border-gray-600 text-gray-300 hover:bg-gray-600"
+                                className="border-gray-600 text-gray-300 hover:bg-gray-700"
                               >
                                 {asset.is_active ? 'Deactivate' : 'Activate'}
                               </Button>
@@ -475,15 +491,15 @@ const Admin = () => {
                                 size="sm"
                                 variant="outline"
                                 onClick={() => window.open(asset.file_url, '_blank')}
-                                className="border-gray-600 text-gray-300 hover:bg-gray-600"
+                                className="border-gray-600 text-gray-300 hover:bg-gray-700"
                               >
                                 <Play className="h-4 w-4" />
                               </Button>
                               <Button
                                 size="sm"
                                 variant="destructive"
-                                onClick={() => deleteAsset(asset.id, asset.cloudinary_public_id)}
-                                className="bg-red-700 hover:bg-red-800"
+                                onClick={() => deleteAsset(asset.id, asset.cloudinary_public_id || '')}
+                                className="bg-red-600 hover:bg-red-700"
                               >
                                 <Trash2 className="h-4 w-4" />
                               </Button>
