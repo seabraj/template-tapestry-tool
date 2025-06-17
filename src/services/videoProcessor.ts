@@ -31,11 +31,11 @@ export interface VideoProcessingOptions {
 
 export class VideoProcessor {
   constructor() {
-    console.log('🎬 VideoProcessor initialized for Cloudinary fl_splice concatenation');
+    console.log('🎬 VideoProcessor initialized for Cloudinary concatenation');
   }
 
   async processVideo(options: VideoProcessingOptions, onProgress?: (progress: number) => void): Promise<Blob> {
-    return this.processVideoWithCloudinarySplice(options, onProgress);
+    return this.processVideoWithCloudinaryConcatenation(options, onProgress);
   }
 
   private extractCloudinaryPublicId(url: string): string {
@@ -75,9 +75,9 @@ export class VideoProcessor {
     throw new Error(`Could not extract public ID from URL: ${url}`);
   }
 
-  private async processVideoWithCloudinarySplice(options: VideoProcessingOptions, onProgress?: (progress: number) => void): Promise<Blob> {
+  private async processVideoWithCloudinaryConcatenation(options: VideoProcessingOptions, onProgress?: (progress: number) => void): Promise<Blob> {
     try {
-      console.log('🚀 Starting Cloudinary fl_splice video concatenation...', {
+      console.log('🚀 Starting Cloudinary video concatenation...', {
         sequences: options.sequences.length,
         platform: options.platform,
         duration: options.duration
@@ -140,30 +140,29 @@ export class VideoProcessor {
         return videoBlob;
       }
 
-      // Multiple videos - concatenate using fl_splice
-      console.log('🔗 Creating fl_splice concatenation URL for multiple videos...');
+      // Multiple videos - use proper concatenation
+      console.log('🔗 Creating proper concatenation URL for multiple videos...');
       
+      // Build the concatenation URL using Cloudinary's video concatenation feature
+      // Format: /video/upload/l_video:publicId2,fl_splice,fl_layer_apply/l_video:publicId3,fl_splice,fl_layer_apply/baseVideo.ext
       const baseVideo = videoPublicIds[0];
       const transformations = ['q_auto:good', 'f_mp4'];
       
-      // Add each subsequent video using fl_splice for proper concatenation
+      // Add each subsequent video using proper concatenation syntax
       for (let i = 1; i < videoPublicIds.length; i++) {
         const video = videoPublicIds[i];
-        const escapedPublicId = video.public_id.replace(/\//g, ':');
         
-        // Use fl_splice for true sequential concatenation
-        transformations.push(`l_video:${escapedPublicId}`);
-        transformations.push('fl_splice');
-        transformations.push('fl_layer_apply');
+        // Use proper concatenation format: l_video:publicId,fl_splice,fl_layer_apply
+        transformations.push(`l_video:${video.public_id.replace(/\//g, ':')},fl_splice,fl_layer_apply`);
         
-        console.log(`📎 Splicing ${video.name} using fl_splice`);
+        console.log(`📎 Adding video ${video.name} for concatenation`);
       }
       
-      // Build the final concatenation URL with fl_splice
+      // Build the final concatenation URL
       const transformationString = transformations.join('/');
       const concatenatedUrl = `https://res.cloudinary.com/dsxrmo3kt/video/upload/${transformationString}/${baseVideo.public_id}.mp4`;
       
-      console.log(`🎯 Generated fl_splice concatenation URL with ${videoPublicIds.length} videos`);
+      console.log(`🎯 Generated concatenation URL with ${videoPublicIds.length} videos`);
       console.log(`🔗 Concatenation URL: ${concatenatedUrl}`);
       
       onProgress?.(75);
@@ -174,28 +173,38 @@ export class VideoProcessor {
         const videoResponse = await fetch(concatenatedUrl);
         
         if (!videoResponse.ok) {
-          console.error(`❌ Cloudinary fl_splice failed: HTTP ${videoResponse.status}`);
+          console.error(`❌ Cloudinary concatenation failed: HTTP ${videoResponse.status}`);
+          
+          // Log response details for debugging
+          const responseText = await videoResponse.text();
+          console.error('Response details:', {
+            status: videoResponse.status,
+            statusText: videoResponse.statusText,
+            headers: Object.fromEntries(videoResponse.headers.entries()),
+            body: responseText
+          });
+          
           throw new Error(`Cloudinary concatenation failed: HTTP ${videoResponse.status} ${videoResponse.statusText}`);
         }
 
         const videoBlob = await videoResponse.blob();
         onProgress?.(100);
         
-        console.log('✅ Successfully downloaded fl_splice concatenated video:', {
+        console.log('✅ Successfully downloaded concatenated video:', {
           size: videoBlob.size,
           type: videoBlob.type,
-          method: 'fl_splice'
+          duration: 'checking...'
         });
         
         return videoBlob;
         
       } catch (downloadError) {
-        console.error('❌ Failed to download fl_splice concatenated video:', downloadError);
+        console.error('❌ Failed to download concatenated video:', downloadError);
         throw new Error(`Video concatenation failed: ${downloadError.message}`);
       }
 
     } catch (error) {
-      console.error('❌ Cloudinary fl_splice video processing failed:', error);
+      console.error('❌ Cloudinary video processing failed:', error);
       throw new Error(`Video processing failed: ${error.message}`);
     }
   }
