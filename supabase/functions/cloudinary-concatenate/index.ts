@@ -73,13 +73,14 @@ serve(async (req) => {
     // --- THIS IS THE CORRECTED PART ---
     // Manually build the URL with the correct syntax for manifest-based concatenation.
     const transformations = [
-      'w_1280,h_720,c_pad',                             // Set dimensions for the final video
-      `l_video:raw:upload:${manifestPublicId}.json`,    // Specify the manifest as a video layer
-      'fl_splice',                                      // Use the splice flag to concatenate from the manifest
-      'q_auto:good'                                     // Set a good quality level
+      'w_1280,h_720,c_pad,ac_aac',                    // Set dimensions and audio codec for the final video
+      `l_video:raw:upload:${manifestPublicId}.json`,  // Specify the manifest as a video layer
+      'fl_splice',                                    // Use the splice flag to concatenate from the manifest
+      'q_auto:good'                                   // Set a good quality level
     ].join('/');
 
-    const finalUrl = `https://res.cloudinary.com/${cloudName}/video/upload/${transformations}/final_video.mp4`;
+    // THE FIX: Use `canvas` as the base public ID for the URL.
+    const finalUrl = `https://res.cloudinary.com/${cloudName}/video/upload/${transformations}/canvas.mp4`;
     // --- END OF CORRECTION ---
 
     console.log('🎯 Final URL generated:', finalUrl);
