@@ -1,3 +1,4 @@
+
 import { useState, useEffect } from 'react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -28,7 +29,7 @@ interface VideoAsset {
   category_id: string;
   tags: string[];
   is_active: boolean;
-  cloudinary_public_id?: string; // Made optional to fix TS error
+  cloudinary_public_id?: string;
   video_categories?: VideoCategory;
 }
 
