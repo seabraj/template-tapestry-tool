@@ -70,12 +70,12 @@ serve(async (req) => {
     const manifestPublicId = uploadResult.public_id;
     console.log(`📄 Manifest uploaded successfully with public ID: ${manifestPublicId}`);
 
-    // --- THIS IS THE CORRECTED PART ---
-    // Re-ordered the transformations to the correct sequence.
+    // --- THIS IS THE CORRECTED URL LOGIC ---
+    // The order of transformations is now correct.
     const transformations = [
       `l_video:raw:upload:${manifestPublicId}.json`,  // 1. Specify the manifest as a video layer
       'fl_splice',                                    // 2. Splice it to create the concatenated video
-      'w_1280,h_720,c_pad,ac_aac',                     // 3. Apply sizing, padding, and audio codec to the result
+      'w_1280,h_720,c_pad,ac_aac',                     // 3. Apply sizing and audio codec to the result
       'q_auto:good'                                   // 4. Set final quality
     ].join('/');
 
