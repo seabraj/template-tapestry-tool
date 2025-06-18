@@ -21,13 +21,19 @@ function debugLog(message: string, data?: any) {
   }
 }
 
+// Helper function to create a delay
+function delay(ms: number) {
+  return new Promise(resolve => setTimeout(resolve, ms));
+}
+
 serve(async (req) => {
   if (req.method === 'OPTIONS') {
     return new Response(null, { headers: corsHeaders });
   }
 
+  const temporaryAssetIds = new Set<string>();
   try {
-    debugLog("=== PRODUCTION VIDEO PROCESSING (ITERATIVE) ===");
+    debugLog("=== PRODUCTION VIDEO PROCESSING (ITERATIVE + DELAY) ===");
     const requestBody = await req.json();
     const { videos, targetDuration } = requestBody;
 
@@ -46,14 +52,12 @@ serve(async (req) => {
       const video = videos[i];
       const proportionalDuration = (video.duration / totalOriginalDuration) * targetDuration;
       const trimmedId = `p1_trimmed_${i}_${timestamp}`;
-      
+      temporaryAssetIds.add(trimmedId);
+
       const trimmedUrl = cloudinary.url(video.publicId, {
         resource_type: 'video',
         transformation: [{ duration: proportionalDuration.toFixed(6) }]
       });
-
-      // Added debug log for the trimming URL as requested
-      debugLog(`[Phase 1] Generated transformation URL for asset ${trimmedId}`, { url: trimmedUrl });
       
       const uploadResult = await cloudinary.uploader.upload(trimmedUrl, {
         resource_type: 'video',
@@ -62,7 +66,7 @@ serve(async (req) => {
       });
       createdAssets.push({ publicId: uploadResult.public_id, order: i });
     }
-    debugLog(`--- PHASE 1 COMPLETE: ${createdAssets.length} trimmed assets created. ---`, createdAssets);
+    debugLog(`--- PHASE 1 COMPLETE: ${createdAssets.length} trimmed assets created. ---`);
     
     // ====================================================================
     // PHASE 2: ITERATIVE CONCATENATION
@@ -74,9 +78,8 @@ serve(async (req) => {
 
     for (let i = 1; i < sortedAssets.length; i++) {
       const overlayVideoId = sortedAssets[i].publicId;
-      debugLog(`[Phase 2] Iteration ${i}: Concatenating ${baseVideoId} + ${overlayVideoId}`);
+      debugLog(`[Phase 2] Iteration ${i}: Preparing to concatenate ${baseVideoId} + ${overlayVideoId}`);
       
-      // 1. Build the URL for a simple, two-video concatenation.
       const concatUrl = cloudinary.url(baseVideoId, {
           resource_type: 'video',
           transformation: [
@@ -86,10 +89,9 @@ serve(async (req) => {
           ],
           format: 'mp4'
       });
-      debugLog(`[Phase 2] Generated intermediate concat URL for iteration ${i}`, { url: concatUrl });
       
-      // 2. Use the reliable `uploader.upload` method to save this result as a new asset.
       const newPublicId = `p2_intermediate_${i-1}_${timestamp}`;
+      temporaryAssetIds.add(newPublicId);
       
       const result = await cloudinary.uploader.upload(concatUrl, {
           resource_type: 'video',
@@ -97,9 +99,13 @@ serve(async (req) => {
           overwrite: true,
       });
       
-      // 3. The new base for the *next* iteration is the asset we just created.
-      baseVideoId = result.public_id; 
-      debugLog(`[Phase 2] Iteration ${i}: Created intermediate asset ${baseVideoId}`);
+      baseVideoId = result.public_id;
+      debugLog(`[Phase 2] Iteration ${i}: Created intermediate asset ${baseVideoId}.`);
+      
+      // --- THE FIX: Wait for 5 seconds before the next loop ---
+      // This gives Cloudinary time to propagate the new asset across its system.
+      debugLog(`[Phase 2] Waiting for 5 seconds for asset to propagate...`);
+      await delay(5000); // 5 second delay
     }
 
     const finalVideoPublicId = baseVideoId;
@@ -111,26 +117,28 @@ serve(async (req) => {
     debugLog(`--- PHASE 2 COMPLETE: Final video is ${finalVideoPublicId} ---`, { finalUrl });
 
     // ====================================================================
-    // PHASE 3: CLEANUP (DISABLED FOR NOW)
+    // PHASE 3: CLEANUP
     // ====================================================================
-    debugLog("--- SKIPPING PHASE 3: Cleanup is disabled for debugging. ---");
-
-    // ====================================================================
-    // FINAL RESPONSE
-    // ====================================================================
-    const finalResponse = { 
-        success: true,
-        message: `Phase 2 complete. Final video created successfully. Cleanup disabled.`,
-        url: finalUrl,
-    };
+    debugLog("--- STARTING PHASE 3: CLEANUP ---");
+    temporaryAssetIds.delete(finalVideoPublicId);
+    if (temporaryAssetIds.size > 0) {
+      const idsToDelete = Array.from(temporaryAssetIds);
+      debugLog(`[Phase 3] Deleting ${idsToDelete.length} temporary assets...`, idsToDelete);
+      await cloudinary.api.delete_resources(idsToDelete, { resource_type: 'video' });
+    }
     
-    return new Response(JSON.stringify(finalResponse), {
+    // FINAL RESPONSE
+    return new Response(JSON.stringify({ success: true, url: finalUrl }), {
         headers: { ...corsHeaders, "Content-Type": "application/json" },
         status: 200
     });
 
   } catch (error) {
     debugLog(`❌ FATAL ERROR`, { message: error.message, stack: error.stack });
+    if (temporaryAssetIds.size > 0) {
+        debugLog(`Attempting cleanup after error...`);
+        await cloudinary.api.delete_resources(Array.from(temporaryAssetIds), { resource_type: 'video' });
+    }
     return new Response(JSON.stringify({ success: false, error: error.message }), {
       status: 500,
       headers: { ...corsHeaders, "Content-Type": "application/json" },
