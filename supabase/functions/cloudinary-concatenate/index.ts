@@ -367,16 +367,19 @@ async function processVideo(
 
       const finalUrl = finalVideoResult.secure_url;
       
+      // DO NOT add final video to cleanup list - this is the output we want to keep
+      infoLog(`Final video created and will be preserved: ${finalVideoPublicId}`);
+      
       progressTracker.sendProgress({
         phase: 'concatenation',
         progress: 80,
         message: 'Video concatenation completed successfully',
-        details: { method: 'url_concatenation', finalUrl },
+        details: { method: 'url_concatenation', finalUrl, finalVideoId: finalVideoPublicId },
         timestamp: new Date().toISOString()
       });
 
       // ====================================================================
-      // PHASE 3: ENHANCED CLEANUP
+      // PHASE 3: ENHANCED CLEANUP (ONLY TEMP FILES)
       // ====================================================================
       progressTracker.sendProgress({
         phase: 'cleanup',
@@ -386,90 +389,107 @@ async function processVideo(
       });
 
       if (temporaryAssetIds.size > 0) {
-        const idsToDelete = Array.from(temporaryAssetIds);
-        infoLog(`Starting cleanup process for ${idsToDelete.length} temporary assets`, idsToDelete);
+        // Filter to only delete temporary trimmed files, NOT final videos
+        const idsToDelete = Array.from(temporaryAssetIds).filter(id => 
+          id.startsWith('p1_trimmed_') || id.startsWith('p2_manifest_')
+        );
         
-        try {
-          // Wait longer for assets to be fully processed and available for deletion
-          infoLog('Waiting 5 seconds for assets to be fully processed...');
-          await new Promise(resolve => setTimeout(resolve, 5000));
-          
-          let successCount = 0;
-          let failCount = 0;
-          
-          // Delete assets one by one with detailed logging and retries
-          for (const assetId of idsToDelete) {
-            let deleted = false;
-            let lastError = null;
+        // Do NOT delete p2_final_video_* files - these are the final outputs
+        const finalVideoIds = Array.from(temporaryAssetIds).filter(id => 
+          id.startsWith('p2_final_video_')
+        );
+        
+        infoLog(`Cleanup strategy: Delete ${idsToDelete.length} temp files, keep ${finalVideoIds.length} final videos`, {
+          toDelete: idsToDelete,
+          toKeep: finalVideoIds
+        });
+        
+        if (idsToDelete.length > 0) {
+          try {
+            // Wait longer for assets to be fully processed and available for deletion
+            infoLog('Waiting 5 seconds for temp assets to be fully processed...');
+            await new Promise(resolve => setTimeout(resolve, 5000));
             
-            // Try up to 3 times for each asset
-            for (let attempt = 1; attempt <= 3; attempt++) {
-              try {
-                infoLog(`Cleanup attempt ${attempt}/3 for asset: ${assetId}`);
-                
-                const result = await cloudinary.api.delete_resources([assetId], { 
-                  resource_type: 'video',
-                  invalidate: true // Force cache invalidation
-                });
-                
-                infoLog(`Deletion API response for ${assetId}:`, result);
-                
-                // Check if actually deleted
-                if (result.deleted && result.deleted[assetId] === 'deleted') {
-                  successCount++;
-                  deleted = true;
-                  infoLog(`✅ Successfully deleted: ${assetId}`);
-                  break;
-                } else if (result.deleted && result.deleted[assetId] === 'not_found') {
-                  successCount++;
-                  deleted = true;
-                  infoLog(`✅ Asset not found (already deleted?): ${assetId}`);
-                  break;
-                } else {
-                  lastError = `Unexpected deletion result: ${JSON.stringify(result)}`;
-                  warnLog(`Attempt ${attempt} failed for ${assetId}:`, lastError);
-                }
-                
-              } catch (deleteError) {
-                lastError = deleteError.message;
-                warnLog(`Attempt ${attempt} failed for ${assetId}:`, deleteError.message);
-                
-                // Wait before retry
-                if (attempt < 3) {
-                  await new Promise(resolve => setTimeout(resolve, 2000));
+            let successCount = 0;
+            let failCount = 0;
+            
+            // Delete only temporary assets one by one with detailed logging and retries
+            for (const assetId of idsToDelete) {
+              let deleted = false;
+              let lastError = null;
+              
+              // Try up to 3 times for each temp asset
+              for (let attempt = 1; attempt <= 3; attempt++) {
+                try {
+                  infoLog(`Cleanup attempt ${attempt}/3 for temp asset: ${assetId}`);
+                  
+                  const result = await cloudinary.api.delete_resources([assetId], { 
+                    resource_type: assetId.startsWith('p2_manifest_') ? 'raw' : 'video',
+                    invalidate: true // Force cache invalidation
+                  });
+                  
+                  infoLog(`Deletion API response for ${assetId}:`, result);
+                  
+                  // Check if actually deleted
+                  if (result.deleted && result.deleted[assetId] === 'deleted') {
+                    successCount++;
+                    deleted = true;
+                    infoLog(`✅ Successfully deleted temp asset: ${assetId}`);
+                    break;
+                  } else if (result.deleted && result.deleted[assetId] === 'not_found') {
+                    successCount++;
+                    deleted = true;
+                    infoLog(`✅ Temp asset not found (already deleted?): ${assetId}`);
+                    break;
+                  } else {
+                    lastError = `Unexpected deletion result: ${JSON.stringify(result)}`;
+                    warnLog(`Attempt ${attempt} failed for ${assetId}:`, lastError);
+                  }
+                  
+                } catch (deleteError) {
+                  lastError = deleteError.message;
+                  warnLog(`Attempt ${attempt} failed for ${assetId}:`, deleteError.message);
+                  
+                  // Wait before retry
+                  if (attempt < 3) {
+                    await new Promise(resolve => setTimeout(resolve, 2000));
+                  }
                 }
               }
+              
+              if (!deleted) {
+                failCount++;
+                errorLog(`❌ Failed to delete temp asset after 3 attempts: ${assetId}`, lastError);
+              }
+              
+              // Small delay between assets
+              await new Promise(resolve => setTimeout(resolve, 500));
             }
             
-            if (!deleted) {
-              failCount++;
-              errorLog(`❌ Failed to delete asset after 3 attempts: ${assetId}`, lastError);
-            }
+            infoLog(`Cleanup summary: ${successCount}/${idsToDelete.length} temp assets deleted`, {
+              successCount,
+              failCount,
+              totalTempAssets: idsToDelete.length,
+              keptFinalVideos: finalVideoIds.length,
+              successRate: `${((successCount / idsToDelete.length) * 100).toFixed(1)}%`
+            });
             
-            // Small delay between assets
-            await new Promise(resolve => setTimeout(resolve, 500));
+          } catch (cleanupError) {
+            errorLog("Cleanup process failed", {
+              error: cleanupError.message,
+              stack: cleanupError.stack,
+              tempAssetsToDelete: idsToDelete
+            });
           }
-          
-          infoLog(`Cleanup summary: ${successCount}/${idsToDelete.length} assets deleted successfully`, {
-            successCount,
-            failCount,
-            totalAssets: idsToDelete.length,
-            successRate: `${((successCount / idsToDelete.length) * 100).toFixed(1)}%`
-          });
-          
-        } catch (cleanupError) {
-          errorLog("Cleanup process failed", {
-            error: cleanupError.message,
-            stack: cleanupError.stack,
-            assetsToDelete: idsToDelete
-          });
+        } else {
+          infoLog("No temporary assets to clean up");
         }
       }
       
       progressTracker.sendProgress({
         phase: 'cleanup',
         progress: 95,
-        message: 'Cleanup completed',
+        message: 'Cleanup completed - temp files removed, final videos preserved',
         timestamp: new Date().toISOString()
       });
 
@@ -538,36 +558,44 @@ async function processVideo(
 
       const finalUrl = finalVideoResult.secure_url;
       
+      // DO NOT add final video to cleanup list - this is the output we want to keep
+      infoLog(`Final video created via manifest and will be preserved: ${finalVideoPublicId}`);
+      
       progressTracker.sendProgress({
         phase: 'concatenation',
         progress: 80,
         message: 'Video concatenation completed via manifest method',
-        details: { method: 'manifest_concatenation', finalUrl },
+        details: { method: 'manifest_concatenation', finalUrl, finalVideoId: finalVideoPublicId },
         timestamp: new Date().toISOString()
       });
 
-      // Cleanup with improved deletion
+      // Cleanup with improved deletion - only temp files
       temporaryAssetIds.add(manifestPublicId);
       if (temporaryAssetIds.size > 0) {
         // Wait for assets to be fully processed
         await new Promise(resolve => setTimeout(resolve, 2000));
         
-        const videoIdsToDelete = Array.from(temporaryAssetIds).filter(id => id !== finalVideoPublicId && !id.includes('manifest'));
+        // Only delete temp files, NOT final videos
+        const tempVideoIds = Array.from(temporaryAssetIds).filter(id => 
+          id.startsWith('p1_trimmed_') && id !== finalVideoPublicId
+        );
+        
+        infoLog(`Manifest cleanup: Will delete ${tempVideoIds.length} temp files, keeping final video ${finalVideoPublicId}`);
         
         try {
-          // Delete video assets
-          if (videoIdsToDelete.length > 0) {
-            for (const videoId of videoIdsToDelete) {
+          // Delete temp video assets only
+          if (tempVideoIds.length > 0) {
+            for (const videoId of tempVideoIds) {
               try {
                 await cloudinary.api.delete_resources([videoId], { resource_type: 'video' });
-                debugLog(`Successfully deleted video asset: ${videoId}`);
+                debugLog(`Successfully deleted temp video asset: ${videoId}`);
               } catch (err) {
-                warnLog(`Failed to delete video asset: ${videoId}`, err.message);
+                warnLog(`Failed to delete temp video asset: ${videoId}`, err.message);
               }
             }
           }
           
-          // Delete manifest asset
+          // Delete manifest asset (always temp)
           try {
             await cloudinary.api.delete_resources([manifestPublicId], { resource_type: 'raw' });
             debugLog(`Successfully deleted manifest: ${manifestPublicId}`);
@@ -575,12 +603,13 @@ async function processVideo(
             warnLog(`Failed to delete manifest: ${manifestPublicId}`, err.message);
           }
           
-          infoLog("Manifest method cleanup completed");
+          infoLog("Manifest method cleanup completed - temp files deleted, final video preserved");
         } catch (cleanupError) {
           errorLog("Manifest cleanup failed", {
             error: cleanupError.message,
-            videoAssets: videoIdsToDelete,
-            manifestAsset: manifestPublicId
+            tempVideoAssets: tempVideoIds,
+            manifestAsset: manifestPublicId,
+            keptFinalVideo: finalVideoPublicId
           });
         }
       }
@@ -605,28 +634,33 @@ async function processVideo(
     }
 
   } catch (error) {
-    // Cleanup on error with improved deletion
+    // Cleanup on error with improved deletion - only temp files
     if (temporaryAssetIds.size > 0) {
       try {
-        const idsToDelete = Array.from(temporaryAssetIds);
-        infoLog(`Attempting cleanup after error: ${idsToDelete.length} assets`);
+        // Only delete temp files on error, not final videos
+        const tempIdsToDelete = Array.from(temporaryAssetIds).filter(id => 
+          id.startsWith('p1_trimmed_') || id.startsWith('p2_manifest_')
+        );
         
-        // Delete assets individually for better error handling
-        for (const assetId of idsToDelete) {
+        infoLog(`Error cleanup: attempting to delete ${tempIdsToDelete.length} temp assets`, tempIdsToDelete);
+        
+        // Delete temp assets individually for better error handling
+        for (const assetId of tempIdsToDelete) {
           try {
-            await cloudinary.api.delete_resources([assetId], { resource_type: 'video' });
+            const resourceType = assetId.startsWith('p2_manifest_') ? 'raw' : 'video';
+            await cloudinary.api.delete_resources([assetId], { resource_type: resourceType });
             debugLog(`Error cleanup: deleted ${assetId}`);
           } catch (deleteErr) {
             warnLog(`Error cleanup: failed to delete ${assetId}`, deleteErr.message);
           }
         }
         
-        infoLog("Error cleanup completed");
+        infoLog("Error cleanup completed - temp files cleaned up");
       } catch (cleanupError) {
         errorLog("Cleanup after error also failed:", {
           originalError: error.message,
           cleanupError: cleanupError.message,
-          assetsToDelete: Array.from(temporaryAssetIds)
+          tempAssetsToDelete: Array.from(temporaryAssetIds)
         });
       }
     }
