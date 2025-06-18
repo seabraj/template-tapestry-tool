@@ -28,7 +28,7 @@ serve(async (req) => {
 
   const temporaryAssetIds = new Set<string>();
   try {
-    debugLog("=== PRODUCTION VIDEO PROCESSING (MANIFEST METHOD V2) ===");
+    debugLog("=== PRODUCTION VIDEO PROCESSING (MANIFEST METHOD V3) ===");
     const requestBody = await req.json();
     const { videos, targetDuration } = requestBody;
 
@@ -69,25 +69,21 @@ serve(async (req) => {
     const sortedAssets = createdAssets.sort((a, b) => a.order - b.order);
     const publicIdsToConcat = sortedAssets.map(asset => asset.publicId);
 
-    // 1. Create the concatenation manifest using the CORRECT method name
     const manifestPublicId = `p2_manifest_${timestamp}`;
     temporaryAssetIds.add(manifestPublicId);
 
     // --- THE FIX IS HERE ---
-    // The correct method is `create_manifest`.
-    await cloudinary.uploader.create_manifest({
+    // The correct method is `cloudinary.create_video_manifest`, NOT on the uploader object.
+    await cloudinary.create_video_manifest({
         public_ids: publicIdsToConcat,
         public_id: manifestPublicId,
-        overwrite: true,
-        type: 'video' // Specify manifest type for videos
+        overwrite: true
     });
     debugLog(`[Phase 2] Created video concatenation manifest: ${manifestPublicId}`);
 
     // 2. Generate the URL for the final video by transforming the manifest
     const finalUrl = cloudinary.url(manifestPublicId, {
         resource_type: 'video',
-        // --- RESOLUTION FIX IS HERE ---
-        // Changed to 1920x1080 as requested
         transformation: [
             { width: 1920, height: 1080, crop: 'pad' },
             { audio_codec: 'aac', quality: 'auto:good' }
@@ -103,7 +99,6 @@ serve(async (req) => {
     if (temporaryAssetIds.size > 0) {
       const idsToDelete = Array.from(temporaryAssetIds);
       debugLog(`[Phase 3] Deleting ${idsToDelete.length} temporary assets...`, idsToDelete);
-      // Run cleanup in the background without waiting
       cloudinary.api.delete_resources(idsToDelete, { resource_type: 'video' });
     }
     
