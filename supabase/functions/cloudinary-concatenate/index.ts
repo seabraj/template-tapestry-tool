@@ -376,7 +376,7 @@ async function processVideo(
       });
 
       // ====================================================================
-      // PHASE 3: CLEANUP
+      // PHASE 3: ENHANCED CLEANUP
       // ====================================================================
       progressTracker.sendProgress({
         phase: 'cleanup',
@@ -387,39 +387,78 @@ async function processVideo(
 
       if (temporaryAssetIds.size > 0) {
         const idsToDelete = Array.from(temporaryAssetIds);
-        debugLog(`Attempting to delete ${idsToDelete.length} temporary assets`, idsToDelete);
+        infoLog(`Starting cleanup process for ${idsToDelete.length} temporary assets`, idsToDelete);
         
         try {
-          // Wait a moment for assets to be fully processed before deletion
-          await new Promise(resolve => setTimeout(resolve, 2000));
+          // Wait longer for assets to be fully processed and available for deletion
+          infoLog('Waiting 5 seconds for assets to be fully processed...');
+          await new Promise(resolve => setTimeout(resolve, 5000));
           
-          // Delete assets one by one for better error handling
-          const deletionResults = [];
+          let successCount = 0;
+          let failCount = 0;
+          
+          // Delete assets one by one with detailed logging and retries
           for (const assetId of idsToDelete) {
-            try {
-              const result = await cloudinary.api.delete_resources([assetId], { 
-                resource_type: 'video'
-              });
-              deletionResults.push({ assetId, result, success: true });
-              debugLog(`Successfully deleted: ${assetId}`, result);
-            } catch (deleteError) {
-              deletionResults.push({ assetId, error: deleteError.message, success: false });
-              warnLog(`Failed to delete asset: ${assetId}`, deleteError.message);
+            let deleted = false;
+            let lastError = null;
+            
+            // Try up to 3 times for each asset
+            for (let attempt = 1; attempt <= 3; attempt++) {
+              try {
+                infoLog(`Cleanup attempt ${attempt}/3 for asset: ${assetId}`);
+                
+                const result = await cloudinary.api.delete_resources([assetId], { 
+                  resource_type: 'video',
+                  invalidate: true // Force cache invalidation
+                });
+                
+                infoLog(`Deletion API response for ${assetId}:`, result);
+                
+                // Check if actually deleted
+                if (result.deleted && result.deleted[assetId] === 'deleted') {
+                  successCount++;
+                  deleted = true;
+                  infoLog(`✅ Successfully deleted: ${assetId}`);
+                  break;
+                } else if (result.deleted && result.deleted[assetId] === 'not_found') {
+                  successCount++;
+                  deleted = true;
+                  infoLog(`✅ Asset not found (already deleted?): ${assetId}`);
+                  break;
+                } else {
+                  lastError = `Unexpected deletion result: ${JSON.stringify(result)}`;
+                  warnLog(`Attempt ${attempt} failed for ${assetId}:`, lastError);
+                }
+                
+              } catch (deleteError) {
+                lastError = deleteError.message;
+                warnLog(`Attempt ${attempt} failed for ${assetId}:`, deleteError.message);
+                
+                // Wait before retry
+                if (attempt < 3) {
+                  await new Promise(resolve => setTimeout(resolve, 2000));
+                }
+              }
             }
+            
+            if (!deleted) {
+              failCount++;
+              errorLog(`❌ Failed to delete asset after 3 attempts: ${assetId}`, lastError);
+            }
+            
+            // Small delay between assets
+            await new Promise(resolve => setTimeout(resolve, 500));
           }
           
-          const successCount = deletionResults.filter(r => r.success).length;
-          const failCount = deletionResults.filter(r => !r.success).length;
-          
-          infoLog(`Cleanup completed: ${successCount} deleted, ${failCount} failed`, {
+          infoLog(`Cleanup summary: ${successCount}/${idsToDelete.length} assets deleted successfully`, {
+            successCount,
+            failCount,
             totalAssets: idsToDelete.length,
-            successfulDeletions: successCount,
-            failedDeletions: failCount,
-            results: deletionResults
+            successRate: `${((successCount / idsToDelete.length) * 100).toFixed(1)}%`
           });
           
         } catch (cleanupError) {
-          errorLog("Cleanup failed, but final video was created successfully", {
+          errorLog("Cleanup process failed", {
             error: cleanupError.message,
             stack: cleanupError.stack,
             assetsToDelete: idsToDelete
