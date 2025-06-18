@@ -1,4 +1,4 @@
-// UPDATED videoProcessor.ts with exact duration detection
+// Minimal cleanup of working videoProcessor.ts
 import { supabase } from '@/integrations/supabase/client';
 
 export interface VideoProcessingOptions {
@@ -23,7 +23,7 @@ interface VideoWithExactDuration {
 
 export class VideoProcessor {
   constructor() {
-    console.log('🎬 Initializing VideoProcessor with exact duration detection...');
+    console.log('🎬 VideoProcessor initialized');
   }
 
   async processVideo(options: VideoProcessingOptions, onProgress?: (progress: number) => void): Promise<Blob> {
@@ -129,8 +129,7 @@ export class VideoProcessor {
         console.log(`✅ ${seq.name}:`, {
           originalDuration: seq.duration.toFixed(3),
           exactDuration: exactDuration.toFixed(6),
-          difference: durationDiff.toFixed(6),
-          accuracyImprovement: durationDiff > 0.01 ? 'significant' : 'minor'
+          difference: durationDiff.toFixed(6)
         });
 
       } catch (error) {
@@ -165,16 +164,11 @@ export class VideoProcessor {
       total: videosWithExactDurations.length,
       exactDetections: exactCount,
       fallbackUsed: fallbackCount,
-      successRate: `${((exactCount / videosWithExactDurations.length) * 100).toFixed(1)}%`,
-      errors: errors.length > 0 ? errors : 'None'
+      successRate: `${((exactCount / videosWithExactDurations.length) * 100).toFixed(1)}%`
     });
 
     if (videosWithExactDurations.length === 0) {
       throw new Error('Failed to process any videos. Check video URLs and network connection.');
-    }
-
-    if (errors.length > 0) {
-      console.warn('⚠️ Some videos used fallback durations. For maximum precision, ensure all video URLs are accessible.');
     }
 
     return videosWithExactDurations;
