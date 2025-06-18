@@ -6,6 +6,15 @@ const corsHeaders = {
   'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
 };
 
+// Enhanced logging function
+function debugLog(message: string, data?: any) {
+  const timestamp = new Date().toISOString();
+  console.log(`[${timestamp}] ${message}`);
+  if (data) {
+    console.log(`[${timestamp}] Data:`, JSON.stringify(data, null, 2));
+  }
+}
+
 cloudinary.config({
   cloud_name: 'dsxrmo3kt',
   api_key: Deno.env.get('CLOUDINARY_API_KEY'),
