@@ -30,6 +30,15 @@ export class VideoProcessor {
       // Step 2: Detect exact durations
       console.log('🔍 Detecting exact durations...');
       const videosWithExactDurations = await this.detectExactDurations(validSequences, onProgress);
+      
+      console.log('🎯 DURATION DETECTION RESULTS:', videosWithExactDurations);
+      console.log('🎯 Each video check:', videosWithExactDurations.map(v => ({
+        publicId: v.publicId,
+        duration: v.duration,
+        durationType: typeof v.duration,
+        isValid: !!(v.duration && v.duration > 0)
+      })));
+      
       onProgress?.(35);
 
       // Step 3: Process videos
@@ -38,7 +47,13 @@ export class VideoProcessor {
         targetDuration: options.duration
       };
 
-      console.log('📡 Processing videos with exact durations');
+      console.log('📡 FINAL REQUEST BODY:', JSON.stringify(requestBody, null, 2));
+      console.log('📡 REQUEST VIDEOS CHECK:', requestBody.videos.map(v => ({
+        publicId: v.publicId, 
+        duration: v.duration,
+        type: typeof v.duration
+      })));
+      
       onProgress?.(40);
       
       const { data, error } = await supabase.functions.invoke('cloudinary-concatenate', {
@@ -82,14 +97,19 @@ export class VideoProcessor {
 
       try {
         const publicId = this.extractPublicIdFromUrl(seq.file_url);
-        const exactDuration = await this.detectSingleVideoDuration(seq.file_url);
+        console.log(`🔍 Detecting duration for: ${seq.name} (${publicId})`);
         
-        videosWithExactDurations.push({
+        const exactDuration = await this.detectSingleVideoDuration(seq.file_url);
+        console.log(`📊 Detected: ${exactDuration} for ${seq.name}`);
+        
+        const videoData = {
           publicId: publicId,
           duration: exactDuration
-        });
-
-        console.log(`✅ ${seq.name}: ${exactDuration.toFixed(3)}s`);
+        };
+        
+        videosWithExactDurations.push(videoData);
+        console.log(`✅ ${seq.name}: ${exactDuration.toFixed(3)}s - Added to array`);
+        console.log(`📋 Video data structure:`, videoData);
         
       } catch (error) {
         console.error(`❌ Duration detection failed for ${seq.name}:`, error);
@@ -98,6 +118,13 @@ export class VideoProcessor {
     }
 
     console.log(`✅ Exact durations detected for all ${videosWithExactDurations.length} videos`);
+    console.log('🎯 FINAL ARRAY:', videosWithExactDurations);
+    console.log('🎯 FINAL ARRAY CHECK:', videosWithExactDurations.map(v => ({
+      publicId: v.publicId,
+      duration: v.duration,
+      valid: !!(v.duration && v.duration > 0)
+    })));
+    
     return videosWithExactDurations;
   }
 
