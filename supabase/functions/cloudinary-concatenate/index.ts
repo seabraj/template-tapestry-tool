@@ -13,114 +13,216 @@ cloudinary.config({
   secure: true,
 });
 
+// Manual duration mapping since Cloudinary API returns undefined
+const KNOWN_DURATIONS = {
+  'video_library/sigsig8mltjbmucxg7h3': 3.0,     // ~3s
+  'video_library/gquadddvckk1eqnyk2bz': 0.8,     // <1s 
+  'video_library/ki4y9fuhwu9z3b1tzi9n': 15.0     // ~15s
+};
+
+function debugLog(message: string, data?: any) {
+  const timestamp = new Date().toISOString();
+  console.log(`[${timestamp}] ${message}`);
+  if (data) {
+    console.log(`[${timestamp}] Data:`, JSON.stringify(data, null, 2));
+  }
+}
+
+// Helper function to wait for metadata (with fallback to calculated duration)
+async function waitForMetadataOrFallback(publicId: string, calculatedDuration: number, maxAttempts: number = 5): Promise<any> {
+  debugLog(`Checking metadata for ${publicId} (fallback: ${calculatedDuration}s)`);
+  
+  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+    try {
+      const resource = await cloudinary.api.resource(publicId, { 
+        resource_type: 'video',
+        video_metadata: true 
+      });
+      
+      debugLog(`Attempt ${attempt}: Got resource`, {
+        public_id: resource.public_id,
+        duration: resource.duration,
+        bytes: resource.bytes,
+        format: resource.format
+      });
+      
+      if (resource.duration && resource.duration > 0) {
+        debugLog(`✅ Real metadata found: ${resource.duration}s`);
+        return { ...resource, duration: resource.duration, hasRealMetadata: true };
+      }
+      
+      if (attempt < maxAttempts) {
+        const waitTime = 1000 * attempt; // 1s, 2s, 3s, 4s, 5s
+        debugLog(`No metadata yet, waiting ${waitTime}ms...`);
+        await new Promise(resolve => setTimeout(resolve, waitTime));
+      }
+      
+    } catch (error) {
+      debugLog(`Error on attempt ${attempt}:`, error.message);
+      if (attempt === maxAttempts) {
+        throw error;
+      }
+      await new Promise(resolve => setTimeout(resolve, 1000));
+    }
+  }
+  
+  // Fallback to calculated duration
+  debugLog(`⚠️ Using calculated duration: ${calculatedDuration}s`);
+  return {
+    public_id: publicId,
+    duration: calculatedDuration,
+    hasRealMetadata: false,
+    secure_url: cloudinary.url(publicId, { resource_type: 'video', format: 'mp4' })
+  };
+}
+
 serve(async (req) => {
   if (req.method === 'OPTIONS') {
     return new Response(null, { headers: corsHeaders });
   }
 
   try {
-    console.log('=== CLOUDINARY CONNECTION TEST ===');
+    debugLog("=== STARTING PRODUCTION VIDEO PROCESSING ===");
     
-    // Test 1: Basic connection
-    console.log('Testing connection...');
-    const pingResult = await cloudinary.api.ping();
-    console.log('Ping result:', pingResult);
+    const requestBody = await req.json();
+    debugLog("Request received", requestBody);
     
-    // Test 2: List first few resources
-    console.log('Listing resources...');
-    const resources = await cloudinary.api.resources({
-      resource_type: 'video',
-      max_results: 5
+    const { videos, targetDuration } = requestBody;
+
+    if (!videos || videos.length === 0) throw new Error('No videos provided.');
+    if (!targetDuration || targetDuration <= 0) throw new Error('Invalid target duration.');
+
+    // Use known durations instead of relying on Cloudinary API
+    const videosWithDuration = videos.map(video => {
+      const knownDuration = KNOWN_DURATIONS[video.publicId];
+      if (!knownDuration) {
+        throw new Error(`Unknown video: ${video.publicId}. Please add to KNOWN_DURATIONS mapping.`);
+      }
+      return {
+        ...video,
+        duration: knownDuration
+      };
     });
-    
-    console.log('Found resources:', resources.resources.map(r => ({
-      public_id: r.public_id,
-      duration: r.duration,
-      format: r.format,
-      bytes: r.bytes,
-      created_at: r.created_at
-    })));
-    
-    // Test 3: Try to get details of your actual videos
-    console.log('Getting details of your actual videos...');
-    
-    const videoIds = [
-      'video_library/sigsig8mltjbmucxg7h3',
-      'video_library/gquadddvckk1eqnyk2bz', 
-      'video_library/ki4y9fuhwu9z3b1tzi9n'
-    ];
-    
-    const videoDetails = {};
-    for (const videoId of videoIds) {
+
+    debugLog("Videos with known durations", videosWithDuration);
+
+    const totalOriginalDuration = videosWithDuration.reduce((sum, v) => sum + v.duration, 0);
+    const timestamp = Date.now();
+    const createdAssets = [];
+
+    debugLog("Calculation summary", {
+      totalOriginalDuration,
+      targetDuration,
+      timestamp,
+      proportions: videosWithDuration.map(v => ({
+        publicId: v.publicId,
+        original: v.duration,
+        target: (v.duration / totalOriginalDuration) * targetDuration
+      }))
+    });
+
+    for (let i = 0; i < videosWithDuration.length; i++) {
+      const video = videosWithDuration[i];
+      const proportionalDuration = (video.duration / totalOriginalDuration) * targetDuration;
+      const trimmedId = `final_trimmed_${i}_${timestamp}`;
+      
+      debugLog(`=== PROCESSING VIDEO ${i + 1}/${videosWithDuration.length} ===`, {
+        originalId: video.publicId,
+        originalDuration: video.duration,
+        targetDuration: proportionalDuration,
+        trimmedId
+      });
+
       try {
-        const video = await cloudinary.api.resource(videoId, {
-          resource_type: 'video'
+        // Create transformation URL
+        const trimmedUrl = cloudinary.url(video.publicId, {
+          resource_type: 'video',
+          transformation: [{ 
+            duration: proportionalDuration.toFixed(2),
+            format: 'mp4',
+            quality: 'auto'
+          }]
         });
-        videoDetails[videoId] = {
-          public_id: video.public_id,
-          duration: video.duration,
-          format: video.format,
-          width: video.width,
-          height: video.height,
-          bytes: video.bytes
-        };
-        console.log(`Video ${videoId}:`, videoDetails[videoId]);
+        
+        debugLog("Transformation URL created", { trimmedUrl });
+
+        // Upload the transformed video
+        const uploadResult = await cloudinary.uploader.upload(trimmedUrl, {
+          resource_type: 'video',
+          public_id: trimmedId,
+          overwrite: true,
+          use_filename: false,
+          unique_filename: false
+        });
+
+        debugLog("Upload completed", {
+          public_id: uploadResult.public_id,
+          url: uploadResult.secure_url,
+          duration: uploadResult.duration,
+          bytes: uploadResult.bytes
+        });
+
+        // Wait for metadata or use calculated duration
+        const verifiedAsset = await waitForMetadataOrFallback(trimmedId, proportionalDuration);
+
+        debugLog(`✅ Video ${i + 1} completed successfully`, {
+          publicId: verifiedAsset.public_id,
+          duration: verifiedAsset.duration,
+          hasRealMetadata: verifiedAsset.hasRealMetadata,
+          url: verifiedAsset.secure_url
+        });
+        
+        createdAssets.push({
+          publicId: verifiedAsset.public_id,
+          duration: verifiedAsset.duration,
+          order: i,
+          url: verifiedAsset.secure_url,
+          hasRealMetadata: verifiedAsset.hasRealMetadata || false
+        });
+
       } catch (error) {
-        console.log(`Error getting ${videoId}:`, error.message);
-        videoDetails[videoId] = { error: error.message };
+        debugLog(`❌ Error processing video ${i}`, {
+          error: error.message,
+          publicId: video.publicId
+        });
+        throw new Error(`Failed to process video ${video.publicId}: ${error.message}`);
       }
     }
     
-    // Test 4: Generate transformation URLs for your actual videos
-    console.log('Testing transformation URLs...');
+    const withRealMetadata = createdAssets.filter(a => a.hasRealMetadata).length;
+    const withCalculatedMetadata = createdAssets.length - withRealMetadata;
     
-    const testVideoId = 'video_library/ki4y9fuhwu9z3b1tzi9n'; // The 15s video
+    debugLog("=== PROCESSING COMPLETE ===", {
+      totalCreated: createdAssets.length,
+      withRealMetadata,
+      withCalculatedMetadata,
+      totalDuration: createdAssets.reduce((sum, asset) => sum + asset.duration, 0)
+    });
     
-    const urls = {
-      original: cloudinary.url(testVideoId, {
-        resource_type: 'video',
-        format: 'mp4'
-      }),
-      quality: cloudinary.url(testVideoId, {
-        resource_type: 'video',
-        transformation: [{ quality: 'auto' }],
-        format: 'mp4'
-      }),
-      trim_to_5s: cloudinary.url(testVideoId, {
-        resource_type: 'video',
-        transformation: [{ duration: '5.0' }],
-        format: 'mp4'
-      }),
-      trim_to_2s: cloudinary.url(testVideoId, {
-        resource_type: 'video', 
-        transformation: [{ duration: '2.0' }],
-        format: 'mp4'
-      })
-    };
-    
-    console.log('Generated URLs for testing:', urls);
-    
-    return new Response(JSON.stringify({
-      success: true,
-      message: "Cloudinary connection test completed",
-      results: {
-        pingResult,
-        resourceCount: resources.resources.length,
-        videoDetails,
-        urls
-      }
+    return new Response(JSON.stringify({ 
+        success: true,
+        message: `Phase 1: ${createdAssets.length} videos processed successfully.`,
+        phase: 1,
+        createdAssets: createdAssets,
+        stats: {
+          withRealMetadata,
+          withCalculatedMetadata,
+          totalDuration: createdAssets.reduce((sum, asset) => sum + asset.duration, 0)
+        }
     }), {
-      headers: { ...corsHeaders, "Content-Type": "application/json" },
+        headers: { ...corsHeaders, "Content-Type": "application/json" },
     });
 
   } catch (error) {
-    console.error(`❌ Test Error: ${error.message}`);
-    console.error(`❌ Full error:`, error);
+    debugLog(`❌ FATAL ERROR`, {
+      message: error.message,
+      stack: error.stack
+    });
     
-    return new Response(JSON.stringify({
+    return new Response(JSON.stringify({ 
       error: error.message,
-      stack: error.stack,
-      name: error.name
+      phase: 1,
+      timestamp: new Date().toISOString()
     }), {
       status: 500,
       headers: { ...corsHeaders, "Content-Type": "application/json" },
