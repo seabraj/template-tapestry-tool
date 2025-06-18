@@ -1,14 +1,12 @@
-// FINAL code for: cloudinary-concatenate/index.ts
-
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
-import { v2 as cloudinary } from 'npm:cloudinary@^1.41.1';
+import { v2 as cloudinary } from 'npm:cloudinary@^1.41.1'; // We keep this for the config setup
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
   'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
 };
 
-// Configure Cloudinary
+// Configure Cloudinary - this part is still necessary
 cloudinary.config({
   cloud_name: 'dsxrmo3kt',
   api_key: Deno.env.get('CLOUDINARY_API_KEY'),
@@ -33,40 +31,40 @@ serve(async (req) => {
     const firstVideo = videos[0];
     const firstVideoProportionalDuration = (firstVideo.duration / totalOriginalDuration) * targetDuration;
 
-    // Start building the transformation array for the Cloudinary SDK
-    const transformations = [
-      // First, set the dimensions and trim the base video
-      { width: 1280, height: 720, crop: 'pad' },
-      { duration: firstVideoProportionalDuration.toFixed(2) },
-    ];
+    // --- MANUAL URL STRING CONSTRUCTION ---
+    const transformationParts = [];
 
-    // --- THIS IS THE CORRECTED LOOP ---
-    // Loop through the rest of the videos and add them as overlays to be spliced
+    // 1. Add base transformations for the FIRST video
+    transformationParts.push(`w_1280,h_720,c_pad,du_${firstVideoProportionalDuration.toFixed(2)}`);
+
+    // 2. Loop through SUBSEQUENT videos to build the overlay and splice chain
     for (let i = 1; i < videos.length; i++) {
       const subsequentVideo = videos[i];
       const subsequentVideoProportionalDuration = (subsequentVideo.duration / totalOriginalDuration) * targetDuration;
 
-      // Manually build the transformation string for the overlay video
-      const overlayTransformationString = `c_pad,h_720,w_1280,du_${subsequentVideoProportionalDuration.toFixed(2)}`;
-
-      // Manually build the full overlay identifier, including its transformations
-      const overlayIdentifier = `video:${subsequentVideo.publicId.replace(/\//g, ':')},${overlayTransformationString}`;
+      // A. Add the overlay layer, specifying the video public ID
+      transformationParts.push(`l_video:${subsequentVideo.publicId.replace(/\//g, ':')}`);
       
-      // Add the overlay layer using the manually built string, then add the splice flag
-      transformations.push({ overlay: overlayIdentifier });
-      transformations.push({ flags: 'splice' });
+      // B. Apply sizing transformations TO THAT a new layer
+      transformationParts.push(`w_1280,h_720,c_pad`);
+      
+      // C. Apply the duration trim specifically TO THAT LAYER using the layer_apply flag
+      transformationParts.push(`fl_layer_apply,du_${subsequentVideoProportionalDuration.toFixed(2)}`);
+      
+      // D. Splice the now-transformed layer onto the main video
+      transformationParts.push(`fl_splice`);
     }
 
-    // Add final overall transformations
-    transformations.push({ audio_codec: 'aac' }, { quality: 'auto:good' });
+    // 3. Add final global transformations for the output video
+    transformationParts.push(`ac_aac,q_auto:good`);
 
-    // Let the Cloudinary SDK generate the final, complex URL
-    const finalUrl = cloudinary.url(firstVideo.publicId, {
-      resource_type: 'video',
-      transformation: transformations,
-      format: 'mp4',
-    });
+    // 4. Join all transformation parts with slashes
+    const transformationString = transformationParts.join('/');
 
+    // 5. Manually construct the final, complete URL
+    const finalUrl = `https://res.cloudinary.com/dsxrmo3kt/video/upload/${transformationString}/${firstVideo.publicId}.mp4`;
+
+    // 6. Return the manually built URL
     return new Response(JSON.stringify({ success: true, url: finalUrl }), {
       headers: { ...corsHeaders, "Content-Type": "application/json" },
     });
