@@ -40,30 +40,27 @@ serve(async (req) => {
       { duration: firstVideoProportionalDuration.toFixed(2) },
     ];
 
+    // --- THIS IS THE CORRECTED LOOP ---
     // Loop through the rest of the videos and add them as overlays to be spliced
     for (let i = 1; i < videos.length; i++) {
       const subsequentVideo = videos[i];
       const subsequentVideoProportionalDuration = (subsequentVideo.duration / totalOriginalDuration) * targetDuration;
 
-      // Define the video overlay, including its own trim transformation
-      const overlayOptions = {
-        resource_type: 'video',
-        public_id: subsequentVideo.publicId,
-        transformation: [
-            { width: 1280, height: 720, crop: 'pad' },
-            { duration: subsequentVideoProportionalDuration.toFixed(2) }
-        ]
-      };
+      // Manually build the transformation string for the overlay video
+      const overlayTransformationString = `c_pad,h_720,w_1280,du_${subsequentVideoProportionalDuration.toFixed(2)}`;
+
+      // Manually build the full overlay identifier, including its transformations
+      const overlayIdentifier = `video:${subsequentVideo.publicId.replace(/\//g, ':')},${overlayTransformationString}`;
       
-      // Add the overlay layer and the splice flag
-      transformations.push({ overlay: overlayOptions });
+      // Add the overlay layer using the manually built string, then add the splice flag
+      transformations.push({ overlay: overlayIdentifier });
       transformations.push({ flags: 'splice' });
     }
 
-    // Add final overall transformations for the output video
+    // Add final overall transformations
     transformations.push({ audio_codec: 'aac' }, { quality: 'auto:good' });
 
-    // Let the Cloudinary SDK generate the final, complex URL using the original video IDs
+    // Let the Cloudinary SDK generate the final, complex URL
     const finalUrl = cloudinary.url(firstVideo.publicId, {
       resource_type: 'video',
       transformation: transformations,
