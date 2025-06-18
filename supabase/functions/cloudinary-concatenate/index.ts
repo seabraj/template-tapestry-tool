@@ -28,7 +28,7 @@ serve(async (req) => {
     // ====================================================================
     // --- PHASE 1: CREATE TRIMMED VIDEOS WITH METADATA ---
     // ====================================================================
-    console.log('--- STARTING PHASE 1: INITIATE TRIMMING ---');
+    console.log('--- STARTING PHASE 1: Creating transformed assets directly ---');
 
     const totalOriginalDuration = videos.reduce((sum, v) => sum + v.duration, 0);
     const timestamp = Date.now();
@@ -38,52 +38,46 @@ serve(async (req) => {
     for (let i = 0; i < videos.length; i++) {
       const video = videos[i];
       const proportionalDuration = (video.duration / totalOriginalDuration) * targetDuration;
-      const trimmedId = `trimmed_phase1_${i}_${timestamp}`; // New naming for clarity
+      const trimmedId = `final_trimmed_${i}_${timestamp}`; // New name for clarity
       
       createdAssetIDs.push(trimmedId);
-      console.log(`[Phase 1] Preparing job for ${video.publicId}. New ID will be ${trimmedId}`);
+      console.log(`[Phase 1] Creating new asset ${trimmedId} from ${video.publicId}`);
 
-      // 1. Create the on-the-fly URL for the trimmed video content.
-      const trimmedUrl = cloudinary.url(video.publicId, {
+      // --- THE DEFINITIVE FIX ---
+      // Instead of creating a temp URL, we upload the ORIGINAL public_id
+      // and apply the transformation during the upload process.
+      // This is a direct instruction to Cloudinary and triggers full analysis.
+      const uploadPromise = cloudinary.uploader.upload(video.publicId, { // Source is the original public_id
         resource_type: 'video',
-        transformation: [{ duration: proportionalDuration.toFixed(2) }],
-        format: 'mp4'
-      });
-      
-      // 2. Upload from that URL to create a new, permanent asset.
-      const uploadPromise = cloudinary.uploader.upload(trimmedUrl, {
-        resource_type: 'video',
-        public_id: trimmedId,
+        public_id: trimmedId, // The ID of the NEW asset to create
         overwrite: true,
-        // --- THE FIX FOR METADATA ---
-        // This tells Cloudinary this is a background job.
-        eager_async: true,
-        // This "no-op" transform forces the video into the processing queue
-        // where duration and other metadata are correctly generated.
-        eager: [{ quality: 'auto' }] 
+        // The transformation to apply to the source before saving the new asset
+        transformation: [
+          { duration: proportionalDuration.toFixed(2) }
+        ]
       });
 
       uploadPromises.push(uploadPromise);
     }
     
-    // Wait for all the upload commands to be sent to Cloudinary.
+    // Wait for all upload commands to complete.
+    // This process is synchronous but should be fast as no video data is being sent.
     await Promise.all(uploadPromises);
 
-    console.log(`--- PHASE 1 COMPLETE: ${videos.length} trimming jobs have been initiated. ---`);
-    console.log('Verification: Check your Cloudinary library for new assets and inspect their duration after a few moments.');
+    console.log(`--- PHASE 1 COMPLETE: ${videos.length} trimmed videos have been created. ---`);
+    console.log('To verify, check your Cloudinary library for the new assets and inspect their duration metadata.');
     
     return new Response(JSON.stringify({ 
         success: true,
-        message: "Phase 1: Trimming jobs initiated successfully.",
+        message: "Phase 1: Trimmed videos created successfully with metadata.",
         phase: 1,
-        // The list of IDs for the files that are now being created:
-        trimmedVideoPublicIds: createdAssetIDs 
+        trimmedVideoPublicIds: createdAssetIDs
     }), {
         headers: { ...corsHeaders, "Content-Type": "application/json" },
     });
 
   } catch (error) {
-    console.error(`❌ Function Error: ${error.message}`);
+    console.error(`❌ Phase 1 Error: ${error.message}`);
     return new Response(JSON.stringify({ error: error.message }), {
       status: 500,
       headers: { ...corsHeaders, "Content-Type": "application/json" },
