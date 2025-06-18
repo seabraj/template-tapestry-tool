@@ -25,7 +25,7 @@ function debugLog(message: string, data?: any) {
 // PHASE 1: VIDEO TRIMMING (EXISTING FUNCTIONALITY)
 // ===============================================
 async function handlePhase1Trimming(requestBody: any) {
-  debugLog("🎬 PHASE 1: Starting video trimming with exact durations");
+  debugLog("🎬 === PHASE 1: STARTING VIDEO TRIMMING ===");
   
   const { videos, targetDuration } = requestBody;
 
@@ -33,18 +33,18 @@ async function handlePhase1Trimming(requestBody: any) {
   if (!targetDuration || targetDuration <= 0) throw new Error('Invalid target duration.');
 
   // Validate that all videos have exact durations
-  const missingDurations = videos.filter(v => !v.duration || v.duration <= 0);
+  const missingDurations = videos.filter((v: any) => !v.duration || v.duration <= 0);
   if (missingDurations.length > 0) {
-    const missingIds = missingDurations.map(v => v.publicId).join(', ');
+    const missingIds = missingDurations.map((v: any) => v.publicId).join(', ');
     throw new Error(`Videos missing exact durations: ${missingIds}. Please provide exact durations for all videos.`);
   }
 
-  debugLog("✅ PHASE 1: All videos have exact durations:", videos.map(v => ({
+  debugLog("✅ PHASE 1: All videos have exact durations:", videos.map((v: any) => ({
     publicId: v.publicId,
     duration: v.duration
   })));
 
-  const totalOriginalDuration = videos.reduce((sum, v) => sum + v.duration, 0);
+  const totalOriginalDuration = videos.reduce((sum: number, v: any) => sum + v.duration, 0);
   const timestamp = Date.now();
   const createdAssets = [];
 
@@ -116,7 +116,7 @@ async function handlePhase1Trimming(requestBody: any) {
         calculatedDuration: proportionalDuration
       });
 
-    } catch (error) {
+    } catch (error: any) {
       debugLog(`❌ PHASE 1: Error processing video ${i}`, {
         error: error.message,
         publicId: video.publicId
@@ -176,7 +176,7 @@ async function handlePhase1Trimming(requestBody: any) {
 // PHASE 2: VIDEO CONCATENATION (NEW FUNCTIONALITY)
 // ===============================================
 async function handlePhase2Concatenation(requestBody: any) {
-  debugLog("🎬 PHASE 2: Starting video concatenation with fl_splice");
+  debugLog("🎬 === PHASE 2: STARTING VIDEO CONCATENATION ===");
   
   const { trimmedVideos, outputSettings = {} } = requestBody;
 
@@ -184,7 +184,7 @@ async function handlePhase2Concatenation(requestBody: any) {
     throw new Error('Phase 2 requires at least 2 trimmed videos from Phase 1');
   }
 
-  debugLog("✅ PHASE 2: Received trimmed videos for concatenation:", trimmedVideos.map(v => ({
+  debugLog("✅ PHASE 2: Received trimmed videos for concatenation:", trimmedVideos.map((v: any) => ({
     publicId: v.publicId,
     duration: v.duration
   })));
@@ -209,7 +209,7 @@ async function handlePhase2Concatenation(requestBody: any) {
 
     debugLog("PHASE 2: Building concatenation transformation", {
       baseVideo: baseVideo.publicId,
-      additionalVideos: additionalVideos.map(v => v.publicId),
+      additionalVideos: additionalVideos.map((v: any) => v.publicId),
       totalVideos: trimmedVideos.length
     });
 
@@ -265,10 +265,10 @@ async function handlePhase2Concatenation(requestBody: any) {
     debugLog("PHASE 2: Generated concatenation URL:", { concatenatedUrl });
 
     // Calculate total duration
-    const totalDuration = trimmedVideos.reduce((sum, video) => sum + video.duration, 0);
+    const totalDuration = trimmedVideos.reduce((sum: number, video: any) => sum + video.duration, 0);
 
     debugLog("PHASE 2: Duration calculation", {
-      individualDurations: trimmedVideos.map(v => v.duration),
+      individualDurations: trimmedVideos.map((v: any) => v.duration),
       totalDuration: totalDuration
     });
 
@@ -341,7 +341,7 @@ async function handlePhase2Concatenation(requestBody: any) {
 
     return response;
 
-  } catch (error) {
+  } catch (error: any) {
     debugLog(`❌ PHASE 2: Concatenation error`, {
       error: error.message,
       stack: error.stack
@@ -372,10 +372,12 @@ serve(async (req) => {
     // Route to appropriate phase based on action
     if (!requestBody.action || requestBody.action === 'trim') {
       // PHASE 1: Video trimming (default/existing behavior)
+      debugLog("🎯 Routing to PHASE 1: Video Trimming");
       response = await handlePhase1Trimming(requestBody);
       
     } else if (requestBody.action === 'concatenate') {
       // PHASE 2: Video concatenation
+      debugLog("🎯 Routing to PHASE 2: Video Concatenation");
       response = await handlePhase2Concatenation(requestBody);
       
     } else {
@@ -393,7 +395,7 @@ serve(async (req) => {
       status: 200
     });
 
-  } catch (error) {
+  } catch (error: any) {
     debugLog(`❌ FATAL ERROR`, {
       message: error.message,
       stack: error.stack
