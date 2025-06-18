@@ -1,4 +1,3 @@
-
 import { Card, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
@@ -16,6 +15,14 @@ interface ExportPanelProps {
   customization: CustomizationSettings;
 }
 
+interface ProgressState {
+  progress: number;
+  phase: string;
+  message: string;
+  details?: any;
+  timestamp?: string;
+}
+
 const ExportPanel = ({ 
   platform, 
   language, 
@@ -26,6 +33,11 @@ const ExportPanel = ({
   const [isProcessing, setIsProcessing] = useState(false);
   const [processedVideoUrl, setProcessedVideoUrl] = useState<string | null>(null);
   const [progress, setProgress] = useState(0);
+  const [progressState, setProgressState] = useState<ProgressState>({
+    progress: 0,
+    phase: 'idle',
+    message: 'Ready to process videos'
+  });
   const [processingError, setProcessingError] = useState<string | null>(null);
   const { toast } = useToast();
 
@@ -45,6 +57,30 @@ const ExportPanel = ({
       case 'instagram': return '1080x1920';
       default: return '1920x1080';
     }
+  };
+
+  const getPhaseEmoji = (phase: string) => {
+    const phaseEmojis: Record<string, string> = {
+      'idle': '⏸️',
+      'starting': '🚀',
+      'initialization': '🔧',
+      'duration_detection': '🔍',
+      'trimming': '✂️',
+      'asset_verification': '✅',
+      'concatenation': '🔗',
+      'cleanup': '🧹',
+      'download': '📥',
+      'complete': '🎉',
+      'error': '❌'
+    };
+    return phaseEmojis[phase] || '⚙️';
+  };
+
+  const getProgressBarColor = () => {
+    if (progressState.progress < 0) return 'bg-red-600'; // Error
+    if (progressState.progress === 100) return 'bg-green-600'; // Complete
+    if (progressState.phase === 'concatenation') return 'bg-purple-600'; // Critical phase
+    return 'bg-blue-600'; // Processing
   };
 
   const selectedSequences = sequences.filter(s => s.selected);
@@ -85,6 +121,11 @@ const ExportPanel = ({
     try {
       setIsProcessing(true);
       setProgress(0);
+      setProgressState({
+        progress: 0,
+        phase: 'starting',
+        message: 'Initializing video processing...'
+      });
       
       console.log('🚀 Creating VideoProcessor instance...');
       const videoProcessor = new VideoProcessor();
@@ -100,10 +141,22 @@ const ExportPanel = ({
         })),
         customization,
         platform,
-        duration: duration
-      }, (progress) => {
-        console.log('📊 Progress update:', progress + '%');
+        duration: duration,
+        enableProgress: true // 🆕 Enable real-time progress tracking
+      }, (progress: number, details?: any) => {
+        console.log('📊 Progress update:', progress + '%', details);
+        
+        // Update basic progress
         setProgress(progress);
+        
+        // Update detailed progress state
+        setProgressState({
+          progress: Math.max(0, Math.min(100, progress)),
+          phase: details?.phase || 'processing',
+          message: details?.message || `Processing... ${progress.toFixed(1)}%`,
+          details: details?.details,
+          timestamp: details?.timestamp
+        });
       });
 
       console.log('✅ Video processing completed, creating download URL...');
@@ -112,6 +165,11 @@ const ExportPanel = ({
       const url = URL.createObjectURL(videoBlob);
       setProcessedVideoUrl(url);
       setProgress(100);
+      setProgressState({
+        progress: 100,
+        phase: 'complete',
+        message: '🎉 Video processing completed successfully!'
+      });
 
       console.log('🎉 Video generation successful!');
       toast({
@@ -125,6 +183,11 @@ const ExportPanel = ({
       // Store error for display
       const errorMessage = error instanceof Error ? error.message : 'Unknown error occurred';
       setProcessingError(errorMessage);
+      setProgressState({
+        progress: -1,
+        phase: 'error',
+        message: `❌ Error: ${errorMessage}`
+      });
       
       toast({
         title: "Processing Failed",
@@ -159,6 +222,11 @@ const ExportPanel = ({
     }
     setProcessedVideoUrl(null);
     setProgress(0);
+    setProgressState({
+      progress: 0,
+      phase: 'idle',
+      message: 'Ready to process videos'
+    });
   };
 
   // Error state
@@ -185,6 +253,11 @@ const ExportPanel = ({
             onClick={() => {
               setProcessingError(null);
               setProgress(0);
+              setProgressState({
+                progress: 0,
+                phase: 'idle',
+                message: 'Ready to process videos'
+              });
             }}
             className="bg-blue-600 hover:bg-blue-700"
           >
@@ -238,7 +311,7 @@ const ExportPanel = ({
     );
   }
 
-  // Processing state
+  // Processing state with enhanced progress tracking
   if (isProcessing) {
     return (
       <div className="text-center space-y-6">
@@ -250,26 +323,64 @@ const ExportPanel = ({
         </h3>
         
         <div className="max-w-md mx-auto space-y-4">
-          <div className="w-full bg-gray-200 rounded-full h-3">
+          {/* Enhanced Progress Bar */}
+          <div className="w-full bg-gray-200 rounded-full h-4">
             <div 
-              className="bg-blue-600 h-3 rounded-full transition-all duration-300" 
-              style={{ width: `${progress}%` }}
+              className={`h-4 rounded-full transition-all duration-300 ${getProgressBarColor()}`}
+              style={{ width: `${Math.max(0, Math.min(100, progressState.progress))}%` }}
             ></div>
           </div>
-          <p className="text-sm text-gray-300">{progress}% complete</p>
+          
+          {/* Progress Details */}
+          <div className="space-y-2">
+            <div className="flex items-center justify-between">
+              <span className="text-sm font-medium text-gray-300">
+                {getPhaseEmoji(progressState.phase)} {progressState.phase.replace('_', ' ')}
+              </span>
+              <span className="text-sm font-medium text-gray-300">
+                {progressState.progress >= 0 ? `${progressState.progress.toFixed(1)}%` : 'Error'}
+              </span>
+            </div>
+            
+            <p className="text-sm text-gray-300 text-center">
+              {progressState.message}
+            </p>
+            
+            {progressState.timestamp && (
+              <p className="text-xs text-gray-400 text-center">
+                Last update: {new Date(progressState.timestamp).toLocaleTimeString()}
+              </p>
+            )}
+          </div>
+          
+          {/* Processing Stats */}
           <p className="text-sm text-blue-400 font-medium">
             Processing {selectedSequences.length} video sequence(s)...
           </p>
+          
+          {/* Phase Guide */}
+          <div className="mt-6 p-3 bg-blue-950/30 rounded-lg">
+            <h5 className="text-xs font-semibold text-blue-300 mb-2">Current Phase:</h5>
+            <div className="text-xs text-blue-200">
+              {progressState.phase === 'duration_detection' && '🔍 Analyzing video durations...'}
+              {progressState.phase === 'trimming' && '✂️ Creating trimmed video assets...'}
+              {progressState.phase === 'asset_verification' && '✅ Verifying assets are ready...'}
+              {progressState.phase === 'concatenation' && '🔗 Combining videos together...'}
+              {progressState.phase === 'cleanup' && '🧹 Cleaning up temporary files...'}
+              {progressState.phase === 'download' && '📥 Preparing final video...'}
+              {!['duration_detection', 'trimming', 'asset_verification', 'concatenation', 'cleanup', 'download'].includes(progressState.phase) && '⚙️ Processing...'}
+            </div>
+          </div>
         </div>
         
         <p className="text-sm text-gray-400">
-          Please wait while we generate your video
+          Please wait while we generate your video with enhanced progress tracking
         </p>
       </div>
     );
   }
 
-  // Review and generate state
+  // Review and generate state (unchanged)
   return (
     <div className="space-y-8">
       {/* Project Summary */}
