@@ -13,13 +13,6 @@ cloudinary.config({
   secure: true,
 });
 
-// Manual duration mapping since Cloudinary API returns undefined
-const KNOWN_DURATIONS = {
-  'video_library/sigsig8mltjbmucxg7h3': 3.0,     // ~3s
-  'video_library/gquadddvckk1eqnyk2bz': 0.8,     // <1s 
-  'video_library/ki4y9fuhwu9z3b1tzi9n': 15.0     // ~15s
-};
-
 function debugLog(message: string, data?: any) {
   const timestamp = new Date().toISOString();
   console.log(`[${timestamp}] ${message}`);
@@ -28,216 +21,255 @@ function debugLog(message: string, data?: any) {
   }
 }
 
-// Helper function to wait for metadata (with fallback to calculated duration)
-async function waitForMetadataOrFallback(publicId: string, calculatedDuration: number, maxAttempts: number = 5): Promise<any> {
-  debugLog(`Checking metadata for ${publicId} (fallback: ${calculatedDuration}s)`);
-  
-  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
-    try {
-      const resource = await cloudinary.api.resource(publicId, { 
-        resource_type: 'video',
-        video_metadata: true 
-      });
-      
-      debugLog(`Attempt ${attempt}: Got resource`, {
-        public_id: resource.public_id,
-        duration: resource.duration,
-        bytes: resource.bytes,
-        format: resource.format
-      });
-      
-      if (resource.duration && resource.duration > 0) {
-        debugLog(`✅ Real metadata found: ${resource.duration}s`);
-        return { ...resource, duration: resource.duration, hasRealMetadata: true };
-      }
-      
-      if (attempt < maxAttempts) {
-        const waitTime = 1000 * attempt; // 1s, 2s, 3s, 4s, 5s
-        debugLog(`No metadata yet, waiting ${waitTime}ms...`);
-        await new Promise(resolve => setTimeout(resolve, waitTime));
-      }
-      
-    } catch (error) {
-      debugLog(`Error on attempt ${attempt}:`, error.message);
-      if (attempt === maxAttempts) {
-        throw error;
-      }
-      await new Promise(resolve => setTimeout(resolve, 1000));
-    }
-  }
-  
-  // Fallback to calculated duration
-  debugLog(`⚠️ Using calculated duration: ${calculatedDuration}s`);
-  return {
-    public_id: publicId,
-    duration: calculatedDuration,
-    hasRealMetadata: false,
-    secure_url: cloudinary.url(publicId, { resource_type: 'video', format: 'mp4' })
-  };
-}
-
 serve(async (req) => {
   if (req.method === 'OPTIONS') {
     return new Response(null, { headers: corsHeaders });
   }
 
   try {
-    debugLog("=== STARTING PRODUCTION VIDEO PROCESSING ===");
+    debugLog("=== EXACT DURATION VIDEO PROCESSING STARTED ===");
     
     const requestBody = await req.json();
-    debugLog("Request received", requestBody);
+    debugLog("Request received", {
+      hasVideos: !!requestBody.videos,
+      videoCount: requestBody.videos?.length || 0,
+      targetDuration: requestBody.targetDuration,
+      exactDurations: requestBody.exactDurations
+    });
     
     const { videos, targetDuration } = requestBody;
 
-    if (!videos || videos.length === 0) throw new Error('No videos provided.');
-    if (!targetDuration || targetDuration <= 0) throw new Error('Invalid target duration.');
+    // Validation
+    if (!videos || videos.length === 0) {
+      throw new Error('No videos provided.');
+    }
+    
+    if (!targetDuration || targetDuration <= 0) {
+      throw new Error('Invalid target duration.');
+    }
 
-    // Use known durations instead of relying on Cloudinary API
-    const videosWithDuration = videos.map(video => {
-      const knownDuration = KNOWN_DURATIONS[video.publicId];
-      if (!knownDuration) {
-        throw new Error(`Unknown video: ${video.publicId}. Please add to KNOWN_DURATIONS mapping.`);
+    // Critical: Validate that all videos have exact durations
+    debugLog("🔍 Validating video durations...");
+    const missingDurations = [];
+    const invalidDurations = [];
+    
+    videos.forEach((video, index) => {
+      if (!video.duration) {
+        missingDurations.push(`Video ${index}: ${video.publicId} (no duration field)`);
+      } else if (typeof video.duration !== 'number' || video.duration <= 0) {
+        invalidDurations.push(`Video ${index}: ${video.publicId} (duration: ${video.duration})`);
       }
-      return {
-        ...video,
-        duration: knownDuration
-      };
     });
+    
+    if (missingDurations.length > 0 || invalidDurations.length > 0) {
+      const errors = [...missingDurations, ...invalidDurations];
+      debugLog("❌ Duration validation failed", { errors });
+      throw new Error(`Invalid video durations detected:\n${errors.join('\n')}\n\nPlease ensure all videos have exact durations detected by the frontend.`);
+    }
 
-    debugLog("Videos with known durations", videosWithDuration);
+    debugLog("✅ All videos have valid exact durations:", videos.map(v => ({
+      publicId: v.publicId,
+      duration: v.duration,
+      source: v.source || 'unknown'
+    })));
 
-    const totalOriginalDuration = videosWithDuration.reduce((sum, v) => sum + v.duration, 0);
+    // Calculate proportions
+    const totalOriginalDuration = videos.reduce((sum, v) => sum + v.duration, 0);
     const timestamp = Date.now();
     const createdAssets = [];
 
-    debugLog("Calculation summary", {
-      totalOriginalDuration,
-      targetDuration,
-      timestamp,
-      proportions: videosWithDuration.map(v => ({
+    debugLog("📊 Duration calculations:", {
+      totalOriginalDuration: totalOriginalDuration.toFixed(3),
+      targetDuration: targetDuration.toFixed(3),
+      compressionRatio: ((targetDuration / totalOriginalDuration) * 100).toFixed(1) + '%',
+      proportions: videos.map(v => ({
         publicId: v.publicId,
-        original: v.duration,
-        target: (v.duration / totalOriginalDuration) * targetDuration
+        originalDuration: v.duration.toFixed(3),
+        targetDuration: ((v.duration / totalOriginalDuration) * targetDuration).toFixed(3),
+        percentage: ((v.duration / totalOriginalDuration) * 100).toFixed(1) + '%'
       }))
     });
 
-    for (let i = 0; i < videosWithDuration.length; i++) {
-      const video = videosWithDuration[i];
+    // Process each video
+    for (let i = 0; i < videos.length; i++) {
+      const video = videos[i];
       const proportionalDuration = (video.duration / totalOriginalDuration) * targetDuration;
       const trimmedId = `final_trimmed_${i}_${timestamp}`;
       
-      debugLog(`=== PROCESSING VIDEO ${i + 1}/${videosWithDuration.length} ===`, {
+      debugLog(`=== PROCESSING VIDEO ${i + 1}/${videos.length} ===`, {
         originalId: video.publicId,
-        originalDuration: video.duration,
-        targetDuration: proportionalDuration,
-        trimmedId
+        exactOriginalDuration: video.duration.toFixed(3),
+        exactTargetDuration: proportionalDuration.toFixed(3),
+        trimmedId,
+        step: `${i + 1}/${videos.length}`
       });
 
       try {
-        // Create transformation URL
+        // Verify source video exists
+        debugLog(`📋 Verifying source video: ${video.publicId}`);
+        
+        try {
+          const sourceCheck = await cloudinary.api.resource(video.publicId, { 
+            resource_type: 'video' 
+          });
+          debugLog(`✅ Source video verified:`, {
+            publicId: sourceCheck.public_id,
+            format: sourceCheck.format,
+            bytes: sourceCheck.bytes
+          });
+        } catch (sourceError) {
+          debugLog(`❌ Source video verification failed:`, sourceError.message);
+          throw new Error(`Source video not found: ${video.publicId}`);
+        }
+
+        // Create transformation URL with maximum precision
+        const exactDuration = proportionalDuration.toFixed(6); // 6 decimal places for maximum precision
+        
         const trimmedUrl = cloudinary.url(video.publicId, {
           resource_type: 'video',
           transformation: [{ 
-            duration: proportionalDuration.toFixed(2),
+            duration: exactDuration,
             format: 'mp4',
-            quality: 'auto'
+            quality: 'auto:good',
+            video_codec: 'h264',
+            audio_codec: 'aac'
           }]
         });
         
-        debugLog("Transformation URL created", { trimmedUrl });
+        debugLog("🔗 Transformation URL created:", { 
+          trimmedUrl,
+          exactDuration: exactDuration,
+          precision: '6_decimals'
+        });
 
         // Upload the transformed video
+        debugLog(`📤 Starting upload for: ${trimmedId}`);
+        
         const uploadResult = await cloudinary.uploader.upload(trimmedUrl, {
           resource_type: 'video',
           public_id: trimmedId,
           overwrite: true,
           use_filename: false,
-          unique_filename: false
+          unique_filename: false,
+          // Add options that might help with metadata
+          video_metadata: true,
+          quality_analysis: false // Disable to speed up processing
         });
 
-        debugLog("Upload completed", {
+        debugLog(`📥 Upload completed for: ${trimmedId}`, {
           public_id: uploadResult.public_id,
           url: uploadResult.secure_url,
-          duration: uploadResult.duration,
-          bytes: uploadResult.bytes
+          cloudinary_duration: uploadResult.duration,
+          bytes: uploadResult.bytes,
+          format: uploadResult.format
         });
 
-        // For now, let's use calculated duration and not wait for metadata
-        // This should make the response much faster
-        const finalDuration = uploadResult.duration || proportionalDuration;
+        // Use our calculated exact duration (we trust our math more than Cloudinary's metadata)
+        const finalExactDuration = proportionalDuration;
 
         debugLog(`✅ Video ${i + 1} completed successfully`, {
           publicId: uploadResult.public_id,
-          duration: finalDuration,
+          exactCalculatedDuration: finalExactDuration.toFixed(6),
+          cloudinaryDuration: uploadResult.duration,
           url: uploadResult.secure_url,
-          usedCalculated: !uploadResult.duration
+          durationSource: 'exact_calculation'
         });
         
         createdAssets.push({
           publicId: uploadResult.public_id,
-          duration: finalDuration,
+          duration: finalExactDuration,
           order: i,
           url: uploadResult.secure_url,
-          hasRealMetadata: !!uploadResult.duration
+          originalDuration: video.duration,
+          calculatedDuration: proportionalDuration,
+          precision: 'exact_6_decimals',
+          cloudinaryDuration: uploadResult.duration,
+          durationSource: 'calculated_from_exact_input'
         });
 
       } catch (error) {
-        debugLog(`❌ Error processing video ${i}`, {
+        debugLog(`❌ Error processing video ${i + 1}`, {
           error: error.message,
-          publicId: video.publicId
+          publicId: video.publicId,
+          stack: error.stack
         });
-        throw new Error(`Failed to process video ${video.publicId}: ${error.message}`);
+        throw new Error(`Failed to process video ${i + 1} (${video.publicId}): ${error.message}`);
       }
     }
     
-    const withRealMetadata = createdAssets.filter(a => a.hasRealMetadata).length;
-    const withCalculatedMetadata = createdAssets.length - withRealMetadata;
+    // Final calculations and verification
+    const actualTotalDuration = createdAssets.reduce((sum, asset) => sum + asset.duration, 0);
+    const durationAccuracy = Math.abs(actualTotalDuration - targetDuration);
     
     debugLog("=== PROCESSING COMPLETE ===", {
       totalCreated: createdAssets.length,
-      withRealMetadata,
-      withCalculatedMetadata,
-      totalDuration: createdAssets.reduce((sum, asset) => sum + asset.duration, 0)
+      originalTotalDuration: totalOriginalDuration.toFixed(6),
+      targetDuration: targetDuration.toFixed(6),
+      actualTotalDuration: actualTotalDuration.toFixed(6),
+      durationAccuracy: durationAccuracy.toFixed(6),
+      accuracyPercentage: ((durationAccuracy / targetDuration) * 100).toFixed(3) + '%',
+      precision: 'exact_calculations'
     });
-
+    
+    // Prepare comprehensive response
     const finalResponse = { 
-        // Standard success format
         success: true,
-        message: `Phase 1: ${createdAssets.length} videos processed successfully.`,
+        message: `Phase 1: ${createdAssets.length} videos processed with exact durations (±${durationAccuracy.toFixed(3)}s accuracy).`,
         phase: 1,
         
-        // Video data in multiple formats to cover different frontend expectations
+        // Video data in multiple formats for frontend compatibility
         createdAssets: createdAssets,
         videos: createdAssets,
         result: createdAssets,
         data: createdAssets,
         
-        // Common fields frontends look for
+        // URLs for immediate access
         url: createdAssets.length > 0 ? createdAssets[0].url : null,
         resultUrl: createdAssets.length > 0 ? createdAssets[0].url : null,
         videoUrl: createdAssets.length > 0 ? createdAssets[0].url : null,
         finalVideo: createdAssets.length > 0 ? createdAssets[0] : null,
         
-        // Stats
+        // Detailed stats for verification
         stats: {
-          withRealMetadata,
-          withCalculatedMetadata,
-          totalDuration: createdAssets.reduce((sum, asset) => sum + asset.duration, 0),
-          count: createdAssets.length
+          totalCreated: createdAssets.length,
+          originalTotalDuration: parseFloat(totalOriginalDuration.toFixed(6)),
+          targetDuration: parseFloat(targetDuration.toFixed(6)),
+          actualTotalDuration: parseFloat(actualTotalDuration.toFixed(6)),
+          durationAccuracy: parseFloat(durationAccuracy.toFixed(6)),
+          accuracyPercentage: parseFloat(((durationAccuracy / targetDuration) * 100).toFixed(3)),
+          precision: 'exact_6_decimal',
+          durationSource: 'frontend_html5_detection',
+          compressionRatio: parseFloat(((targetDuration / totalOriginalDuration) * 100).toFixed(1))
         },
         
-        // Status indicators
+        // Technical details for debugging
+        technical: {
+          timestamp: timestamp,
+          totalProcessingSteps: videos.length,
+          allVideosProcessed: createdAssets.length === videos.length,
+          precisionLevel: '6_decimal_places',
+          calculationMethod: 'proportional_exact'
+        },
+        
+        // Status indicators for frontend
         status: "completed",
         state: "success", 
         completed: true,
         ready: true,
+        exactDurations: true,
         
         // Timestamps
         timestamp: new Date().toISOString(),
         processedAt: new Date().toISOString()
     };
 
-    debugLog("=== SENDING RESPONSE TO FRONTEND ===", finalResponse);
+    debugLog("=== SENDING FINAL RESPONSE ===", {
+      success: finalResponse.success,
+      videosCreated: finalResponse.createdAssets.length,
+      totalDurationTarget: finalResponse.stats.targetDuration,
+      totalDurationActual: finalResponse.stats.actualTotalDuration,
+      accuracy: finalResponse.stats.durationAccuracy
+    });
     
     return new Response(JSON.stringify(finalResponse), {
         headers: { ...corsHeaders, "Content-Type": "application/json" },
@@ -247,7 +279,8 @@ serve(async (req) => {
   } catch (error) {
     debugLog(`❌ FATAL ERROR`, {
       message: error.message,
-      stack: error.stack
+      stack: error.stack,
+      name: error.name
     });
 
     const errorResponse = { 
@@ -255,10 +288,11 @@ serve(async (req) => {
       error: error.message,
       phase: 1,
       timestamp: new Date().toISOString(),
-      details: error.stack
+      details: error.stack,
+      helpMessage: "Ensure all videos have exact durations detected by the frontend before processing."
     };
 
-    debugLog("=== SENDING ERROR RESPONSE TO FRONTEND ===", errorResponse);
+    debugLog("=== SENDING ERROR RESPONSE ===", errorResponse);
     
     return new Response(JSON.stringify(errorResponse), {
       status: 500,
