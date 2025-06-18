@@ -186,8 +186,8 @@ export class VideoProcessor {
     const BACKEND_START_PROGRESS = 35;
     
     return new Promise((resolve, reject) => {
-      const supabaseUrl = supabase.supabaseUrl;
-      const supabaseKey = supabase.supabaseKey;
+      const supabaseUrl = import.meta.env.VITE_SUPABASE_URL;
+      const supabaseAnonKey = import.meta.env.VITE_SUPABASE_ANON_KEY;
       
       // Build the full URL for the edge function
       const url = `${supabaseUrl}/functions/v1/cloudinary-concatenate`;
