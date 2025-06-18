@@ -24,71 +24,124 @@ serve(async (req) => {
     if (!videos || videos.length === 0) throw new Error('No videos provided.');
     if (!targetDuration || targetDuration <= 0) throw new Error('Invalid target duration.');
 
-    // ====================================================================
-    // --- PHASE 1: SYNCHRONOUSLY CREATE TRIMMED VIDEOS WITH METADATA ---
-    // ====================================================================
-    console.log('--- STARTING PHASE 1: Synchronous trim and verify ---');
+    console.log('--- STARTING PHASE 1: Creating trimmed videos ---');
 
     const totalOriginalDuration = videos.reduce((sum, v) => sum + v.duration, 0);
     const timestamp = Date.now();
-    const createdAssets = []; // We will store the full verified asset data
+    const createdAssets = [];
 
-    // This loop now processes each video ONE BY ONE, waiting for completion.
     for (let i = 0; i < videos.length; i++) {
       const video = videos[i];
       const proportionalDuration = (video.duration / totalOriginalDuration) * targetDuration;
       const trimmedId = `final_trimmed_${i}_${timestamp}`;
       
       console.log(`[Phase 1] Processing video ${i + 1}/${videos.length}: Creating ${trimmedId}`);
+      console.log(`[Phase 1] Duration: ${video.duration}s -> ${proportionalDuration.toFixed(2)}s`);
 
-      // 1. Create the on-the-fly transformation URL for the trimmed video content.
+      // Create the transformation URL
       const trimmedUrl = cloudinary.url(video.publicId, {
         resource_type: 'video',
-        transformation: [{ duration: proportionalDuration.toFixed(2) }],
-        format: 'mp4'
+        transformation: [{ 
+          duration: proportionalDuration.toFixed(2),
+          format: 'mp4',
+          quality: 'auto'
+        }]
       });
       
-      // 2. Upload and AWAIT the completion of this single video.
-      // No eager flags needed. The synchronous await forces full processing.
-      await cloudinary.uploader.upload(trimmedUrl, {
+      console.log(`[Phase 1] Transformation URL: ${trimmedUrl}`);
+
+      // Upload with additional metadata flags to try forcing analysis
+      const result = await cloudinary.uploader.upload(trimmedUrl, {
         resource_type: 'video',
         public_id: trimmedId,
         overwrite: true,
+        // Add these flags to try forcing metadata generation
+        video_metadata: true,
+        use_filename: false,
+        unique_filename: false,
+        // Try adding an eager transformation to force processing
+        eager: [
+          {
+            format: 'mp4',
+            quality: 'auto'
+          }
+        ],
+        eager_async: false // Wait for processing
       });
 
-      console.log(`[Phase 1] Asset ${trimmedId} created. Now verifying metadata...`);
+      console.log(`[Phase 1] Upload result:`, {
+        public_id: result.public_id,
+        duration: result.duration,
+        bytes: result.bytes,
+        format: result.format
+      });
 
-      // 3. IMMEDIATELY verify the asset to confirm metadata exists.
-      const verification = await cloudinary.api.resource(trimmedId, { resource_type: 'video' });
+      // Wait a moment for any async processing
+      await new Promise(resolve => setTimeout(resolve, 3000));
+
+      // Try to get metadata
+      let finalDuration = result.duration;
       
-      if (!verification.duration) {
-        // If metadata is still missing, we stop and throw a clear error.
-        throw new Error(`Verification failed: Duration metadata not found for ${trimmedId} after synchronous upload.`);
+      if (!finalDuration || finalDuration === 0) {
+        console.log(`[Phase 1] No duration in upload result, checking resource...`);
+        
+        try {
+          const verification = await cloudinary.api.resource(trimmedId, { 
+            resource_type: 'video',
+            video_metadata: true 
+          });
+          
+          finalDuration = verification.duration;
+          console.log(`[Phase 1] Resource check result: duration = ${finalDuration}`);
+        } catch (verifyError) {
+          console.log(`[Phase 1] Resource verification failed:`, verifyError.message);
+        }
       }
 
-      console.log(`[Phase 1] ✅ Verification successful for ${trimmedId}. Duration: ${verification.duration}`);
+      // If still no metadata, use calculated duration but warn
+      if (!finalDuration || finalDuration === 0) {
+        console.log(`[Phase 1] ⚠️  No metadata found, using calculated duration: ${proportionalDuration.toFixed(2)}s`);
+        finalDuration = proportionalDuration;
+      }
+
       createdAssets.push({
-        publicId: verification.public_id,
-        duration: verification.duration,
-        order: i
+        publicId: result.public_id,
+        duration: finalDuration,
+        order: i,
+        url: result.secure_url,
+        hasMetadata: (result.duration && result.duration > 0)
       });
+
+      console.log(`[Phase 1] ✅ Created ${trimmedId} with duration: ${finalDuration}s`);
     }
     
-    console.log(`--- PHASE 1 COMPLETE: ${createdAssets.length} trimmed videos were created and verified successfully. ---`);
+    console.log(`--- PHASE 1 COMPLETE: ${createdAssets.length} trimmed videos created ---`);
+    
+    const withMetadata = createdAssets.filter(a => a.hasMetadata).length;
+    const withoutMetadata = createdAssets.length - withMetadata;
     
     return new Response(JSON.stringify({ 
         success: true,
-        message: "Phase 1: All videos trimmed and verified successfully.",
+        message: `Phase 1: ${createdAssets.length} videos processed. ${withMetadata} with metadata, ${withoutMetadata} using calculated durations.`,
         phase: 1,
-        // The response now contains the verified assets with their new durations
-        createdAssets: createdAssets
+        createdAssets: createdAssets,
+        stats: {
+          withMetadata,
+          withoutMetadata,
+          totalDuration: createdAssets.reduce((sum, asset) => sum + asset.duration, 0)
+        }
     }), {
         headers: { ...corsHeaders, "Content-Type": "application/json" },
     });
 
   } catch (error) {
     console.error(`❌ Phase 1 Error: ${error.message}`);
-    return new Response(JSON.stringify({ error: error.message }), {
+    console.error(`❌ Full error:`, error);
+    return new Response(JSON.stringify({ 
+      error: error.message,
+      phase: 1,
+      timestamp: new Date().toISOString()
+    }), {
       status: 500,
       headers: { ...corsHeaders, "Content-Type": "application/json" },
     });
