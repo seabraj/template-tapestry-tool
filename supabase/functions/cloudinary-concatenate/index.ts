@@ -26,8 +26,9 @@ serve(async (req) => {
     return new Response(null, { headers: corsHeaders });
   }
 
+  const temporaryAssetIds = new Set<string>();
   try {
-    debugLog("=== PRODUCTION VIDEO PROCESSING (CORRECTED MANIFEST) ===");
+    debugLog("=== PRODUCTION VIDEO PROCESSING (MANIFEST V4 - FINAL) ===");
     const requestBody = await req.json();
     const { videos, targetDuration } = requestBody;
 
@@ -36,7 +37,7 @@ serve(async (req) => {
     }
 
     // ====================================================================
-    // PHASE 1: CREATE TRIMMED VIDEOS (Unchanged and Working)
+    // PHASE 1: CREATE TRIMMED VIDEOS
     // ====================================================================
     debugLog("--- STARTING PHASE 1: CREATE TRIMMED VIDEOS ---");
     const totalOriginalDuration = videos.reduce((sum, v) => sum + v.duration, 0);
@@ -46,7 +47,8 @@ serve(async (req) => {
       const video = videos[i];
       const proportionalDuration = (video.duration / totalOriginalDuration) * targetDuration;
       const trimmedId = `p1_trimmed_${i}_${timestamp}`;
-      
+      temporaryAssetIds.add(trimmedId);
+
       const trimmedUrl = cloudinary.url(video.publicId, {
         resource_type: 'video',
         transformation: [{ duration: proportionalDuration.toFixed(6) }]
@@ -65,50 +67,43 @@ serve(async (req) => {
     // ====================================================================
     debugLog("--- STARTING PHASE 2: MANIFEST CONCATENATION ---");
     const sortedAssets = createdAssets.sort((a, b) => a.order - b.order);
-    
-    // Create a list of assets for the manifest, each with a uniform sizing transformation
-    const assetsForManifest = sortedAssets.map(asset => ({
-        public_id: asset.publicId,
-        transformation: { width: 1920, height: 1080, crop: 'pad' }
-    }));
-    debugLog(`[Phase 2] Assets prepared for manifest`, { assetsForManifest });
+    const publicIdsToConcat = sortedAssets.map(asset => asset.publicId);
 
-    // 1. Create the concatenation manifest. The correct method is `cloudinary.manifest.create`.
-    const manifestPublicId = `p2_manifest_${timestamp}`;
+    const manifestContent = `v:1\n${publicIdsToConcat.join('\n')}`;
+    const manifestPublicId = `p2_manifest_${timestamp}.vtt`;
+    temporaryAssetIds.add(manifestPublicId);
     
-    // The manifest itself is a JSON object.
-    const manifestJson = {
-      "v": "1.1",
-      "vars": [["w", 1920], ["h", 1080]],
-      "entries": sortedAssets.map(asset => ({
-        "resource": `res:${asset.publicId}.mp4`,
-        "width": "$w",
-        "height": "$h"
-      }))
-    };
-    
-    await cloudinary.uploader.upload(
-      `data:application/vnd.cloudinary.manifest+json;base64,${btoa(JSON.stringify(manifestJson))}`, {
+    await cloudinary.uploader.upload(`data:text/plain;base64,${btoa(manifestContent)}`, {
         resource_type: 'raw',
         public_id: manifestPublicId,
         overwrite: true,
     });
-    debugLog(`[Phase 2] Created concatenation manifest: ${manifestPublicId}`);
+    debugLog(`[Phase 2] Uploaded manifest file: ${manifestPublicId}`);
 
-    // 2. Generate the URL for the final video by transforming the manifest
-    const finalUrl = cloudinary.url(`${manifestPublicId}.vtt`, { // Reference the manifest with .vtt
-        resource_type: 'video',
+    // --- THE FINAL FIX IS HERE ---
+    // Generate the final video URL by applying transformations TO the manifest file.
+    // This tells Cloudinary to stitch the videos in the manifest into a single mp4.
+    const finalUrl = cloudinary.url(manifestPublicId, {
+        resource_type: 'video', // We request a 'video' despite the source being a 'raw' manifest
         transformation: [
+            { width: 1920, height: 1080, crop: 'pad' },
             { audio_codec: 'aac', quality: 'auto:good' }
         ],
         format: 'mp4'
     });
-    debugLog(`--- PHASE 2 COMPLETE: Final video URL from manifest generated. ---`, { finalUrl });
+    debugLog(`--- PHASE 2 COMPLETE: Final video URL generated. ---`, { finalUrl });
 
     // ====================================================================
-    // PHASE 3: CLEANUP (DISABLED FOR NOW)
+    // PHASE 3: CLEANUP (Re-enabled)
     // ====================================================================
-    debugLog("--- SKIPPING PHASE 3: Cleanup is disabled for debugging. ---");
+    debugLog("--- STARTING PHASE 3: CLEANUP ---");
+    if (temporaryAssetIds.size > 0) {
+      const idsToDelete = Array.from(temporaryAssetIds);
+      debugLog(`[Phase 3] Deleting ${idsToDelete.length} temporary assets...`, idsToDelete);
+      // Run cleanup in the background without waiting for it to finish
+      cloudinary.api.delete_resources(idsToDelete, { resource_type: 'video' });
+      cloudinary.api.delete_resources([manifestPublicId], { resource_type: 'raw' });
+    }
     
     // FINAL RESPONSE
     return new Response(JSON.stringify({ success: true, url: finalUrl }), {
@@ -118,6 +113,11 @@ serve(async (req) => {
 
   } catch (error) {
     debugLog(`❌ FATAL ERROR`, { message: error.message, stack: error.stack });
+    // Attempt to clean up any created assets even if an error occurs
+    if (temporaryAssetIds.size > 0) {
+        debugLog(`Attempting cleanup after error...`);
+        cloudinary.api.delete_resources(Array.from(temporaryAssetIds), { resource_type: 'video' });
+    }
     return new Response(JSON.stringify({ success: false, error: error.message }), {
       status: 500,
       headers: { ...corsHeaders, "Content-Type": "application/json" },
