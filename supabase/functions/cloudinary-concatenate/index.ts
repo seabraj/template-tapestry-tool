@@ -683,8 +683,8 @@ serve(async (req) => {
         },
       });
     } else {
-      // Traditional request-response for backward compatibility
-      const progressTracker = new ProgressTracker(); // No SSE controller
+      // Traditional request-response with enhanced cleanup
+      const progressTracker = new ProgressTracker(); // No SSE controller, but still tracks progress
       const result = await processVideo(videos, targetDuration, progressTracker);
       
       return new Response(JSON.stringify({ 
