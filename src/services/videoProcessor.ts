@@ -1,4 +1,4 @@
-// Minimal cleanup of working videoProcessor.ts
+// Enhanced videoProcessor.ts with real-time progress tracking
 import { supabase } from '@/integrations/supabase/client';
 
 export interface VideoProcessingOptions {
@@ -11,6 +11,7 @@ export interface VideoProcessingOptions {
   customization: { /* ... your customization options ... */ };
   platform: string;
   duration: number;
+  enableProgress?: boolean; // New option for progress tracking
 }
 
 interface VideoWithExactDuration {
@@ -21,13 +22,106 @@ interface VideoWithExactDuration {
   name: string;
 }
 
+interface ProgressUpdate {
+  phase: string;
+  progress: number; // 0-100
+  message: string;
+  details?: any;
+  timestamp: string;
+}
+
 export class VideoProcessor {
   constructor() {
-    console.log('🎬 VideoProcessor initialized');
+    console.log('🎬 VideoProcessor initialized with progress tracking');
   }
 
-  async processVideo(options: VideoProcessingOptions, onProgress?: (progress: number) => void): Promise<Blob> {
-    console.log('🚀 Starting video processing with exact duration detection:', options);
+  async processVideo(
+    options: VideoProcessingOptions, 
+    onProgress?: (progress: number, details?: any) => void
+  ): Promise<Blob> {
+    console.log('🚀 Starting video processing with progress tracking:', options);
+    
+    const enableProgress = options.enableProgress !== false; // Default to true
+    
+    if (enableProgress && onProgress) {
+      return this.processVideoWithProgress(options, onProgress);
+    } else {
+      return this.processVideoTraditional(options, onProgress);
+    }
+  }
+
+  /**
+   * Process video with real-time progress updates via Server-Sent Events
+   */
+  private async processVideoWithProgress(
+    options: VideoProcessingOptions,
+    onProgress: (progress: number, details?: any) => void
+  ): Promise<Blob> {
+    console.log('📡 Using real-time progress tracking...');
+    onProgress(5, { phase: 'initialization', message: 'Starting video processing...' });
+
+    try {
+      // Step 1: Detect exact durations
+      const videosWithExactDurations = await this.detectAllExactDurations(
+        this.validateSequences(options.sequences), 
+        (progress) => onProgress(progress, { phase: 'duration_detection', message: 'Detecting video durations...' })
+      );
+
+      // Step 2: Prepare request with progress enabled
+      const requestBody = {
+        videos: videosWithExactDurations.map(video => ({
+          publicId: video.publicId,
+          duration: video.duration,
+          source: video.detectionSource
+        })),
+        targetDuration: options.duration,
+        exactDurations: true,
+        enableProgress: true // Enable SSE progress updates
+      };
+
+      console.log('📊 Duration Summary:', {
+        totalVideos: videosWithExactDurations.length,
+        exactDetections: videosWithExactDurations.filter(v => v.detectionSource === 'exact').length,
+        fallbacks: videosWithExactDurations.filter(v => v.detectionSource === 'fallback').length,
+        totalOriginalDuration: videosWithExactDurations.reduce((sum, v) => sum + v.duration, 0).toFixed(3),
+        targetDuration: options.duration
+      });
+
+      // Step 3: Call edge function with SSE progress tracking
+      console.log('🎯 Starting backend processing with real-time updates...');
+      
+      const result = await this.processWithSSE(requestBody, onProgress);
+      
+      if (!result?.url) {
+        throw new Error('Backend failed to return a valid URL.');
+      }
+      
+      const finalUrl = result.url;
+      console.log(`✅ Success! Final URL received: ${finalUrl}`);
+      
+      // Step 4: Download final video
+      onProgress(75, { phase: 'download', message: 'Downloading final video...' });
+      const videoBlob = await this.downloadFromUrl(finalUrl);
+      onProgress(100, { phase: 'complete', message: 'Video processing complete!' });
+      
+      console.log('🎉 Video processing complete with real-time progress!');
+      return videoBlob;
+
+    } catch (error) {
+      console.error('❌ Video processing failed:', error);
+      onProgress(-1, { phase: 'error', message: `Error: ${error.message}` });
+      throw error;
+    }
+  }
+
+  /**
+   * Traditional processing method (fallback)
+   */
+  private async processVideoTraditional(
+    options: VideoProcessingOptions,
+    onProgress?: (progress: number, details?: any) => void
+  ): Promise<Blob> {
+    console.log('📡 Using traditional processing (no real-time progress)...');
     onProgress?.(5);
 
     try {
@@ -48,21 +142,14 @@ export class VideoProcessor {
           source: video.detectionSource
         })),
         targetDuration: options.duration,
-        exactDurations: true
+        exactDurations: true,
+        enableProgress: false // Disable SSE
       };
 
-      console.log('📊 Duration Summary:', {
-        totalVideos: videosWithExactDurations.length,
-        exactDetections: videosWithExactDurations.filter(v => v.detectionSource === 'exact').length,
-        fallbacks: videosWithExactDurations.filter(v => v.detectionSource === 'fallback').length,
-        totalOriginalDuration: videosWithExactDurations.reduce((sum, v) => sum + v.duration, 0).toFixed(3),
-        targetDuration: options.duration
-      });
-
-      console.log('📡 Calling edge function with exact durations:', requestBody);
+      console.log('📡 Calling edge function with traditional method:', requestBody);
       onProgress?.(40);
       
-      // Step 4: Process videos with exact durations
+      // Step 4: Process videos traditionally
       const { data, error } = await supabase.functions.invoke('cloudinary-concatenate', {
         body: requestBody
       });
@@ -72,7 +159,6 @@ export class VideoProcessor {
       
       const finalUrl = data.url;
       console.log(`✅ Success! Final URL received: ${finalUrl}`);
-      console.log('📈 Processing Stats:', data.stats);
       onProgress?.(75);
 
       // Step 5: Download final video
@@ -80,13 +166,110 @@ export class VideoProcessor {
       const videoBlob = await this.downloadFromUrl(finalUrl);
       onProgress?.(100);
       
-      console.log('🎉 Video processing complete with exact durations!');
+      console.log('🎉 Video processing complete!');
       return videoBlob;
 
     } catch (error) {
       console.error('❌ Video processing failed:', error);
       throw error;
     }
+  }
+
+  /**
+   * Process video with Server-Sent Events for real-time progress
+   */
+  private async processWithSSE(
+    requestBody: any,
+    onProgress: (progress: number, details?: any) => void
+  ): Promise<any> {
+    return new Promise((resolve, reject) => {
+      const supabaseUrl = supabase.supabaseUrl;
+      const supabaseKey = supabase.supabaseKey;
+      
+      // Build the full URL for the edge function
+      const url = `${supabaseUrl}/functions/v1/cloudinary-concatenate`;
+      
+      // Use fetch for SSE
+      fetch(url, {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${supabaseKey}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify(requestBody)
+      })
+      .then(response => {
+        if (!response.ok) {
+          throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+        }
+        
+        const reader = response.body?.getReader();
+        if (!reader) {
+          throw new Error('Response body is not readable');
+        }
+        
+        const decoder = new TextDecoder();
+        let buffer = '';
+        
+        const readChunk = () => {
+          reader.read().then(({ done, value }) => {
+            if (done) {
+              console.log('📡 SSE stream completed');
+              return;
+            }
+            
+            // Decode and process the chunk
+            buffer += decoder.decode(value, { stream: true });
+            
+            // Process complete lines
+            const lines = buffer.split('\n');
+            buffer = lines.pop() || ''; // Keep incomplete line in buffer
+            
+            for (const line of lines) {
+              if (line.startsWith('data: ')) {
+                try {
+                  const data = JSON.parse(line.substring(6));
+                  
+                  if (data.phase === 'complete') {
+                    console.log('🎉 Processing completed!', data.result);
+                    resolve(data.result);
+                    return;
+                  } else if (data.phase === 'error') {
+                    console.error('❌ Processing failed:', data.error);
+                    reject(new Error(data.error));
+                    return;
+                  } else {
+                    // Progress update
+                    console.log(`📊 Progress: ${data.progress}% - ${data.message}`);
+                    onProgress(data.progress, {
+                      phase: data.phase,
+                      message: data.message,
+                      details: data.details,
+                      timestamp: data.timestamp
+                    });
+                  }
+                } catch (parseError) {
+                  console.warn('Failed to parse SSE data:', line, parseError);
+                }
+              }
+            }
+            
+            // Continue reading
+            readChunk();
+          }).catch(error => {
+            console.error('❌ Error reading SSE stream:', error);
+            reject(error);
+          });
+        };
+        
+        // Start reading
+        readChunk();
+      })
+      .catch(error => {
+        console.error('❌ Error starting SSE request:', error);
+        reject(error);
+      });
+    });
   }
 
   /**
