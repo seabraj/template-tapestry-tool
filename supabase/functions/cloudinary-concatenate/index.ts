@@ -162,22 +162,23 @@ serve(async (req) => {
           bytes: uploadResult.bytes
         });
 
-        // Wait for metadata or use calculated duration
-        const verifiedAsset = await waitForMetadataOrFallback(trimmedId, proportionalDuration);
+        // For now, let's use calculated duration and not wait for metadata
+        // This should make the response much faster
+        const finalDuration = uploadResult.duration || proportionalDuration;
 
         debugLog(`✅ Video ${i + 1} completed successfully`, {
-          publicId: verifiedAsset.public_id,
-          duration: verifiedAsset.duration,
-          hasRealMetadata: verifiedAsset.hasRealMetadata,
-          url: verifiedAsset.secure_url
+          publicId: uploadResult.public_id,
+          duration: finalDuration,
+          url: uploadResult.secure_url,
+          usedCalculated: !uploadResult.duration
         });
         
         createdAssets.push({
-          publicId: verifiedAsset.public_id,
-          duration: verifiedAsset.duration,
+          publicId: uploadResult.public_id,
+          duration: finalDuration,
           order: i,
-          url: verifiedAsset.secure_url,
-          hasRealMetadata: verifiedAsset.hasRealMetadata || false
+          url: uploadResult.secure_url,
+          hasRealMetadata: !!uploadResult.duration
         });
 
       } catch (error) {
@@ -198,8 +199,8 @@ serve(async (req) => {
       withCalculatedMetadata,
       totalDuration: createdAssets.reduce((sum, asset) => sum + asset.duration, 0)
     });
-    
-    return new Response(JSON.stringify({ 
+
+    const finalResponse = { 
         success: true,
         message: `Phase 1: ${createdAssets.length} videos processed successfully.`,
         phase: 1,
@@ -208,9 +209,18 @@ serve(async (req) => {
           withRealMetadata,
           withCalculatedMetadata,
           totalDuration: createdAssets.reduce((sum, asset) => sum + asset.duration, 0)
-        }
-    }), {
+        },
+        // Add fields that frontend might expect
+        videos: createdAssets, // Alternative field name
+        resultUrl: createdAssets.length > 0 ? createdAssets[0].url : null,
+        timestamp: new Date().toISOString()
+    };
+
+    debugLog("=== SENDING RESPONSE TO FRONTEND ===", finalResponse);
+    
+    return new Response(JSON.stringify(finalResponse), {
         headers: { ...corsHeaders, "Content-Type": "application/json" },
+        status: 200
     });
 
   } catch (error) {
@@ -218,12 +228,18 @@ serve(async (req) => {
       message: error.message,
       stack: error.stack
     });
-    
-    return new Response(JSON.stringify({ 
+
+    const errorResponse = { 
+      success: false,
       error: error.message,
       phase: 1,
-      timestamp: new Date().toISOString()
-    }), {
+      timestamp: new Date().toISOString(),
+      details: error.stack
+    };
+
+    debugLog("=== SENDING ERROR RESPONSE TO FRONTEND ===", errorResponse);
+    
+    return new Response(JSON.stringify(errorResponse), {
       status: 500,
       headers: { ...corsHeaders, "Content-Type": "application/json" },
     });
