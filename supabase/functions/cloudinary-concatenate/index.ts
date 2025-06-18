@@ -25,46 +25,65 @@ serve(async (req) => {
     if (!videos || videos.length === 0) throw new Error('No videos provided.');
     if (!targetDuration || targetDuration <= 0) throw new Error('Invalid target duration.');
 
+    // ====================================================================
+    // --- PHASE 1: CREATE TRIMMED VIDEOS WITH METADATA ---
+    // ====================================================================
+    console.log('--- STARTING PHASE 1: INITIATE TRIMMING ---');
+
     const totalOriginalDuration = videos.reduce((sum, v) => sum + v.duration, 0);
-    if (totalOriginalDuration <= 0) throw new Error('Total original duration of videos is zero.');
+    const timestamp = Date.now();
+    const uploadPromises = [];
+    const createdAssetIDs = [];
 
-    const firstVideo = videos[0];
-    const firstVideoProportionalDuration = (firstVideo.duration / totalOriginalDuration) * targetDuration;
-
-    // --- MANUAL URL STRING CONSTRUCTION ---
-    const transformationParts = [];
-
-    // 1. Add base transformations for the FIRST video.
-    transformationParts.push(`w_1280,h_720,c_pad,du_${firstVideoProportionalDuration.toFixed(2)}`);
-
-    // 2. Loop through SUBSEQUENT videos to build the overlay and splice chain.
-    for (let i = 1; i < videos.length; i++) {
-      const subsequentVideo = videos[i];
-      const subsequentVideoProportionalDuration = (subsequentVideo.duration / totalOriginalDuration) * targetDuration;
-
-      // This is the correct, direct syntax for an overlay with its own transformations.
-      // All transforms (sizing, trimming) are comma-separated after the public ID.
-      const overlayComponent = `l_video:${subsequentVideo.publicId.replace(/\//g, ':')},w_1280,h_720,c_pad,du_${subsequentVideoProportionalDuration.toFixed(2)}`;
+    for (let i = 0; i < videos.length; i++) {
+      const video = videos[i];
+      const proportionalDuration = (video.duration / totalOriginalDuration) * targetDuration;
+      const trimmedId = `trimmed_phase1_${i}_${timestamp}`; // New naming for clarity
       
-      transformationParts.push(overlayComponent);
-      transformationParts.push('fl_splice');
+      createdAssetIDs.push(trimmedId);
+      console.log(`[Phase 1] Preparing job for ${video.publicId}. New ID will be ${trimmedId}`);
+
+      // 1. Create the on-the-fly URL for the trimmed video content.
+      const trimmedUrl = cloudinary.url(video.publicId, {
+        resource_type: 'video',
+        transformation: [{ duration: proportionalDuration.toFixed(2) }],
+        format: 'mp4'
+      });
+      
+      // 2. Upload from that URL to create a new, permanent asset.
+      const uploadPromise = cloudinary.uploader.upload(trimmedUrl, {
+        resource_type: 'video',
+        public_id: trimmedId,
+        overwrite: true,
+        // --- THE FIX FOR METADATA ---
+        // This tells Cloudinary this is a background job.
+        eager_async: true,
+        // This "no-op" transform forces the video into the processing queue
+        // where duration and other metadata are correctly generated.
+        eager: [{ quality: 'auto' }] 
+      });
+
+      uploadPromises.push(uploadPromise);
     }
+    
+    // Wait for all the upload commands to be sent to Cloudinary.
+    await Promise.all(uploadPromises);
 
-    // 3. Add final global transformations for the output video.
-    transformationParts.push(`ac_aac,q_auto:good`);
-
-    // 4. Join all transformation parts with slashes.
-    const transformationString = transformationParts.join('/');
-
-    // 5. Manually construct the final URL, which is the most reliable method.
-    const finalUrl = `https://res.cloudinary.com/dsxrmo3kt/video/upload/${transformationString}/${firstVideo.publicId}.mp4`;
-
-    return new Response(JSON.stringify({ success: true, url: finalUrl }), {
-      headers: { ...corsHeaders, "Content-Type": "application/json" },
+    console.log(`--- PHASE 1 COMPLETE: ${videos.length} trimming jobs have been initiated. ---`);
+    console.log('Verification: Check your Cloudinary library for new assets and inspect their duration after a few moments.');
+    
+    return new Response(JSON.stringify({ 
+        success: true,
+        message: "Phase 1: Trimming jobs initiated successfully.",
+        phase: 1,
+        // The list of IDs for the files that are now being created:
+        trimmedVideoPublicIds: createdAssetIDs 
+    }), {
+        headers: { ...corsHeaders, "Content-Type": "application/json" },
     });
 
   } catch (error) {
-    console.error(`❌ Edge Function Error: ${error.message}`);
+    console.error(`❌ Function Error: ${error.message}`);
     return new Response(JSON.stringify({ error: error.message }), {
       status: 500,
       headers: { ...corsHeaders, "Content-Type": "application/json" },
