@@ -387,28 +387,37 @@ async function processVideo(
 
       if (temporaryAssetIds.size > 0) {
         const idsToDelete = Array.from(temporaryAssetIds);
-        debugLog(`Deleting ${idsToDelete.length} temporary assets`, idsToDelete);
+        debugLog(`Attempting to delete ${idsToDelete.length} temporary assets`, idsToDelete);
         
         try {
-          // Delete video assets in batches (Cloudinary limit is 100 per request)
-          const batchSize = 100;
-          for (let i = 0; i < idsToDelete.length; i += batchSize) {
-            const batch = idsToDelete.slice(i, i + batchSize);
-            infoLog(`Deleting batch ${Math.floor(i/batchSize) + 1}: ${batch.length} assets`);
-            
-            const deleteResult = await cloudinary.api.delete_resources(batch, { 
-              resource_type: 'video',
-              type: 'upload' // Specify the asset type
-            });
-            
-            debugLog(`Batch deletion result:`, {
-              deleted: deleteResult.deleted,
-              partial: deleteResult.partial,
-              not_found: deleteResult.not_found
-            });
+          // Wait a moment for assets to be fully processed before deletion
+          await new Promise(resolve => setTimeout(resolve, 2000));
+          
+          // Delete assets one by one for better error handling
+          const deletionResults = [];
+          for (const assetId of idsToDelete) {
+            try {
+              const result = await cloudinary.api.delete_resources([assetId], { 
+                resource_type: 'video'
+              });
+              deletionResults.push({ assetId, result, success: true });
+              debugLog(`Successfully deleted: ${assetId}`, result);
+            } catch (deleteError) {
+              deletionResults.push({ assetId, error: deleteError.message, success: false });
+              warnLog(`Failed to delete asset: ${assetId}`, deleteError.message);
+            }
           }
           
-          infoLog("Cleanup completed successfully");
+          const successCount = deletionResults.filter(r => r.success).length;
+          const failCount = deletionResults.filter(r => !r.success).length;
+          
+          infoLog(`Cleanup completed: ${successCount} deleted, ${failCount} failed`, {
+            totalAssets: idsToDelete.length,
+            successfulDeletions: successCount,
+            failedDeletions: failCount,
+            results: deletionResults
+          });
+          
         } catch (cleanupError) {
           errorLog("Cleanup failed, but final video was created successfully", {
             error: cleanupError.message,
@@ -498,24 +507,38 @@ async function processVideo(
         timestamp: new Date().toISOString()
       });
 
-      // Cleanup
+      // Cleanup with improved deletion
       temporaryAssetIds.add(manifestPublicId);
       if (temporaryAssetIds.size > 0) {
+        // Wait for assets to be fully processed
+        await new Promise(resolve => setTimeout(resolve, 2000));
+        
         const videoIdsToDelete = Array.from(temporaryAssetIds).filter(id => id !== finalVideoPublicId && !id.includes('manifest'));
+        
         try {
+          // Delete video assets
           if (videoIdsToDelete.length > 0) {
-            await cloudinary.api.delete_resources(videoIdsToDelete, { 
-              resource_type: 'video',
-              type: 'upload'
-            });
+            for (const videoId of videoIdsToDelete) {
+              try {
+                await cloudinary.api.delete_resources([videoId], { resource_type: 'video' });
+                debugLog(`Successfully deleted video asset: ${videoId}`);
+              } catch (err) {
+                warnLog(`Failed to delete video asset: ${videoId}`, err.message);
+              }
+            }
           }
-          await cloudinary.api.delete_resources([manifestPublicId], { 
-            resource_type: 'raw',
-            type: 'upload'
-          });
-          infoLog("Cleanup completed successfully");
+          
+          // Delete manifest asset
+          try {
+            await cloudinary.api.delete_resources([manifestPublicId], { resource_type: 'raw' });
+            debugLog(`Successfully deleted manifest: ${manifestPublicId}`);
+          } catch (err) {
+            warnLog(`Failed to delete manifest: ${manifestPublicId}`, err.message);
+          }
+          
+          infoLog("Manifest method cleanup completed");
         } catch (cleanupError) {
-          errorLog("Cleanup failed", {
+          errorLog("Manifest cleanup failed", {
             error: cleanupError.message,
             videoAssets: videoIdsToDelete,
             manifestAsset: manifestPublicId
@@ -543,18 +566,23 @@ async function processVideo(
     }
 
   } catch (error) {
-    // Cleanup on error
+    // Cleanup on error with improved deletion
     if (temporaryAssetIds.size > 0) {
       try {
         const idsToDelete = Array.from(temporaryAssetIds);
         infoLog(`Attempting cleanup after error: ${idsToDelete.length} assets`);
         
-        await cloudinary.api.delete_resources(idsToDelete, { 
-          resource_type: 'video',
-          type: 'upload'
-        });
+        // Delete assets individually for better error handling
+        for (const assetId of idsToDelete) {
+          try {
+            await cloudinary.api.delete_resources([assetId], { resource_type: 'video' });
+            debugLog(`Error cleanup: deleted ${assetId}`);
+          } catch (deleteErr) {
+            warnLog(`Error cleanup: failed to delete ${assetId}`, deleteErr.message);
+          }
+        }
         
-        infoLog("Error cleanup completed successfully");
+        infoLog("Error cleanup completed");
       } catch (cleanupError) {
         errorLog("Cleanup after error also failed:", {
           originalError: error.message,
