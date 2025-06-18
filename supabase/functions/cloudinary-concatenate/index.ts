@@ -60,10 +60,10 @@ serve(async (req) => {
       transformations.push({ flags: 'splice' });
     }
 
-    // Add final overall transformations
+    // Add final overall transformations for the output video
     transformations.push({ audio_codec: 'aac' }, { quality: 'auto:good' });
 
-    // Let the Cloudinary SDK generate the final, complex URL
+    // Let the Cloudinary SDK generate the final, complex URL using the original video IDs
     const finalUrl = cloudinary.url(firstVideo.publicId, {
       resource_type: 'video',
       transformation: transformations,
@@ -75,6 +75,7 @@ serve(async (req) => {
     });
 
   } catch (error) {
+    console.error(`❌ Edge Function Error: ${error.message}`);
     return new Response(JSON.stringify({ error: error.message }), {
       status: 500,
       headers: { ...corsHeaders, "Content-Type": "application/json" },
