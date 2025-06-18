@@ -28,7 +28,7 @@ serve(async (req) => {
 
   const temporaryAssetIds = new Set<string>();
   try {
-    debugLog("=== PRODUCTION VIDEO PROCESSING (MANIFEST METHOD) ===");
+    debugLog("=== PRODUCTION VIDEO PROCESSING (MANIFEST METHOD V2) ===");
     const requestBody = await req.json();
     const { videos, targetDuration } = requestBody;
 
@@ -74,18 +74,22 @@ serve(async (req) => {
     temporaryAssetIds.add(manifestPublicId);
 
     // --- THE FIX IS HERE ---
-    await cloudinary.uploader.create_concatenation_manifest({ // Corrected method name
+    // The correct method is `create_manifest`.
+    await cloudinary.uploader.create_manifest({
         public_ids: publicIdsToConcat,
         public_id: manifestPublicId,
-        overwrite: true
+        overwrite: true,
+        type: 'video' // Specify manifest type for videos
     });
-    debugLog(`[Phase 2] Created concatenation manifest: ${manifestPublicId}`);
+    debugLog(`[Phase 2] Created video concatenation manifest: ${manifestPublicId}`);
 
     // 2. Generate the URL for the final video by transforming the manifest
     const finalUrl = cloudinary.url(manifestPublicId, {
         resource_type: 'video',
+        // --- RESOLUTION FIX IS HERE ---
+        // Changed to 1920x1080 as requested
         transformation: [
-            { width: 1280, height: 720, crop: 'pad' },
+            { width: 1920, height: 1080, crop: 'pad' },
             { audio_codec: 'aac', quality: 'auto:good' }
         ],
         format: 'mp4'
@@ -99,6 +103,7 @@ serve(async (req) => {
     if (temporaryAssetIds.size > 0) {
       const idsToDelete = Array.from(temporaryAssetIds);
       debugLog(`[Phase 3] Deleting ${idsToDelete.length} temporary assets...`, idsToDelete);
+      // Run cleanup in the background without waiting
       cloudinary.api.delete_resources(idsToDelete, { resource_type: 'video' });
     }
     
