@@ -390,10 +390,31 @@ async function processVideo(
         debugLog(`Deleting ${idsToDelete.length} temporary assets`, idsToDelete);
         
         try {
-          await cloudinary.api.delete_resources(idsToDelete, { resource_type: 'video' });
+          // Delete video assets in batches (Cloudinary limit is 100 per request)
+          const batchSize = 100;
+          for (let i = 0; i < idsToDelete.length; i += batchSize) {
+            const batch = idsToDelete.slice(i, i + batchSize);
+            infoLog(`Deleting batch ${Math.floor(i/batchSize) + 1}: ${batch.length} assets`);
+            
+            const deleteResult = await cloudinary.api.delete_resources(batch, { 
+              resource_type: 'video',
+              type: 'upload' // Specify the asset type
+            });
+            
+            debugLog(`Batch deletion result:`, {
+              deleted: deleteResult.deleted,
+              partial: deleteResult.partial,
+              not_found: deleteResult.not_found
+            });
+          }
+          
           infoLog("Cleanup completed successfully");
         } catch (cleanupError) {
-          warnLog("Cleanup failed, but final video was created successfully", cleanupError);
+          errorLog("Cleanup failed, but final video was created successfully", {
+            error: cleanupError.message,
+            stack: cleanupError.stack,
+            assetsToDelete: idsToDelete
+          });
         }
       }
       
@@ -480,12 +501,25 @@ async function processVideo(
       // Cleanup
       temporaryAssetIds.add(manifestPublicId);
       if (temporaryAssetIds.size > 0) {
-        const idsToDelete = Array.from(temporaryAssetIds);
+        const videoIdsToDelete = Array.from(temporaryAssetIds).filter(id => id !== finalVideoPublicId && !id.includes('manifest'));
         try {
-          await cloudinary.api.delete_resources(idsToDelete.filter(id => id !== finalVideoPublicId), { resource_type: 'video' });
-          await cloudinary.api.delete_resources([manifestPublicId], { resource_type: 'raw' });
+          if (videoIdsToDelete.length > 0) {
+            await cloudinary.api.delete_resources(videoIdsToDelete, { 
+              resource_type: 'video',
+              type: 'upload'
+            });
+          }
+          await cloudinary.api.delete_resources([manifestPublicId], { 
+            resource_type: 'raw',
+            type: 'upload'
+          });
+          infoLog("Cleanup completed successfully");
         } catch (cleanupError) {
-          warnLog("Cleanup failed", cleanupError);
+          errorLog("Cleanup failed", {
+            error: cleanupError.message,
+            videoAssets: videoIdsToDelete,
+            manifestAsset: manifestPublicId
+          });
         }
       }
 
@@ -512,9 +546,21 @@ async function processVideo(
     // Cleanup on error
     if (temporaryAssetIds.size > 0) {
       try {
-        await cloudinary.api.delete_resources(Array.from(temporaryAssetIds), { resource_type: 'video' });
+        const idsToDelete = Array.from(temporaryAssetIds);
+        infoLog(`Attempting cleanup after error: ${idsToDelete.length} assets`);
+        
+        await cloudinary.api.delete_resources(idsToDelete, { 
+          resource_type: 'video',
+          type: 'upload'
+        });
+        
+        infoLog("Error cleanup completed successfully");
       } catch (cleanupError) {
-        errorLog("Cleanup after error also failed:", cleanupError);
+        errorLog("Cleanup after error also failed:", {
+          originalError: error.message,
+          cleanupError: cleanupError.message,
+          assetsToDelete: Array.from(temporaryAssetIds)
+        });
       }
     }
     throw error;
