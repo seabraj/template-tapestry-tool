@@ -28,7 +28,7 @@ serve(async (req) => {
 
   const temporaryAssetIds = new Set<string>();
   try {
-    debugLog("=== PRODUCTION VIDEO PROCESSING (MANIFEST METHOD V3) ===");
+    debugLog("=== PRODUCTION VIDEO PROCESSING (EXPLICIT MANIFEST) ===");
     const requestBody = await req.json();
     const { videos, targetDuration } = requestBody;
 
@@ -63,34 +63,48 @@ serve(async (req) => {
     debugLog(`--- PHASE 1 COMPLETE: ${createdAssets.length} trimmed assets created. ---`);
     
     // ====================================================================
-    // PHASE 2: CONCATENATE USING A VIDEO MANIFEST
+    // PHASE 2: CONCATENATE USING A VIDEO MANIFEST (Corrected)
     // ====================================================================
     debugLog("--- STARTING PHASE 2: MANIFEST CONCATENATION ---");
     const sortedAssets = createdAssets.sort((a, b) => a.order - b.order);
-    const publicIdsToConcat = sortedAssets.map(asset => asset.publicId);
+    const publicIdsToConcat = sortedAssets.map(asset => ({ public_id: asset.publicId }));
 
-    const manifestPublicId = `p2_manifest_${timestamp}`;
-    temporaryAssetIds.add(manifestPublicId);
-
-    // --- THE FIX IS HERE ---
-    // The correct method is `cloudinary.create_video_manifest`, NOT on the uploader object.
-    await cloudinary.create_video_manifest({
-        public_ids: publicIdsToConcat,
-        public_id: manifestPublicId,
-        overwrite: true
-    });
-    debugLog(`[Phase 2] Created video concatenation manifest: ${manifestPublicId}`);
-
-    // 2. Generate the URL for the final video by transforming the manifest
-    const finalUrl = cloudinary.url(manifestPublicId, {
-        resource_type: 'video',
+    const manifestTransformation = {
         transformation: [
             { width: 1920, height: 1080, crop: 'pad' },
             { audio_codec: 'aac', quality: 'auto:good' }
         ],
         format: 'mp4'
+    };
+    
+    // 1. Generate the manifest string content
+    const manifestContent = cloudinary.utils.generate_video_concatenation_manifest(publicIdsToConcat);
+    debugLog(`[Phase 2] Generated manifest content`, { manifestContent });
+
+    // 2. Upload the manifest content as a new asset
+    const manifestPublicId = `p2_manifest_${timestamp}`;
+    temporaryAssetIds.add(manifestPublicId);
+    
+    await cloudinary.uploader.upload(`data:text/plain;base64,${btoa(manifestContent)}`, {
+        resource_type: 'raw',
+        public_id: manifestPublicId,
+        overwrite: true,
     });
-    debugLog(`--- PHASE 2 COMPLETE: Final video URL from manifest generated. ---`, { finalUrl });
+    debugLog(`[Phase 2] Uploaded manifest file to Cloudinary with public_id: ${manifestPublicId}`);
+
+    // 3. Create the final video by applying a transformation to the manifest
+    const finalVideoPublicId = `p2_final_video_${timestamp}`;
+    
+    // Using `explicit` is the correct, documented way to create a derived asset from a manifest.
+    const finalVideoResult = await cloudinary.uploader.explicit(manifestPublicId, {
+        type: 'concatenate',
+        resource_type: 'video',
+        public_id: finalVideoPublicId,
+        transformation: manifestTransformation
+    });
+
+    const finalUrl = finalVideoResult.secure_url;
+    debugLog(`--- PHASE 2 COMPLETE: Final video created. ---`, { finalUrl, public_id: finalVideoPublicId });
 
     // ====================================================================
     // PHASE 3: CLEANUP
@@ -100,6 +114,7 @@ serve(async (req) => {
       const idsToDelete = Array.from(temporaryAssetIds);
       debugLog(`[Phase 3] Deleting ${idsToDelete.length} temporary assets...`, idsToDelete);
       cloudinary.api.delete_resources(idsToDelete, { resource_type: 'video' });
+      cloudinary.api.delete_resources([manifestPublicId], { resource_type: 'raw' });
     }
     
     // FINAL RESPONSE
@@ -113,6 +128,7 @@ serve(async (req) => {
     if (temporaryAssetIds.size > 0) {
         debugLog(`Attempting cleanup after error...`);
         cloudinary.api.delete_resources(Array.from(temporaryAssetIds), { resource_type: 'video' });
+        cloudinary.api.delete_resources(Array.from(temporaryAssetIds).filter(id => id.startsWith("p2_manifest")), { resource_type: 'raw' });
     }
     return new Response(JSON.stringify({ success: false, error: error.message }), {
       status: 500,
