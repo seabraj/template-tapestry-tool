@@ -182,6 +182,9 @@ export class VideoProcessor {
     requestBody: any,
     onProgress: (progress: number, details?: any) => void
   ): Promise<any> {
+    // Start backend progress from 35% to continue from duration detection
+    const BACKEND_START_PROGRESS = 35;
+    
     return new Promise((resolve, reject) => {
       const supabaseUrl = supabase.supabaseUrl;
       const supabaseKey = supabase.supabaseKey;
@@ -239,9 +242,10 @@ export class VideoProcessor {
                     reject(new Error(data.error));
                     return;
                   } else {
-                    // Progress update
-                    console.log(`📊 Progress: ${data.progress}% - ${data.message}`);
-                    onProgress(data.progress, {
+                    // Progress update - scale backend progress to continue from frontend
+                    const scaledProgress = BACKEND_START_PROGRESS + (data.progress * 0.65); // Scale to 35-100%
+                    console.log(`📊 Progress: ${scaledProgress.toFixed(1)}% - ${data.message}`);
+                    onProgress(scaledProgress, {
                       phase: data.phase,
                       message: data.message,
                       details: data.details,
