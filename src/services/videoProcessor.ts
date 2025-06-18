@@ -80,17 +80,24 @@ export class VideoProcessor {
       const progress = 10 + ((i / sequences.length) * 25);
       onProgress?.(progress);
 
-      const publicId = this.extractPublicIdFromUrl(seq.file_url);
-      const exactDuration = await this.detectSingleVideoDuration(seq.file_url);
-      
-      videosWithExactDurations.push({
-        publicId: publicId,
-        duration: exactDuration
-      });
+      try {
+        const publicId = this.extractPublicIdFromUrl(seq.file_url);
+        const exactDuration = await this.detectSingleVideoDuration(seq.file_url);
+        
+        videosWithExactDurations.push({
+          publicId: publicId,
+          duration: exactDuration
+        });
 
-      console.log(`✅ ${seq.name}: ${exactDuration.toFixed(3)}s`);
+        console.log(`✅ ${seq.name}: ${exactDuration.toFixed(3)}s`);
+        
+      } catch (error) {
+        console.error(`❌ Duration detection failed for ${seq.name}:`, error);
+        throw new Error(`Failed to detect exact duration for "${seq.name}": ${error instanceof Error ? error.message : 'Unknown error'}`);
+      }
     }
 
+    console.log(`✅ Exact durations detected for all ${videosWithExactDurations.length} videos`);
     return videosWithExactDurations;
   }
 

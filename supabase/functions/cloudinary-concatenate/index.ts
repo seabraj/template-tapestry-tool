@@ -21,6 +21,13 @@ serve(async (req) => {
   try {
     const { videos, targetDuration } = await req.json();
 
+    // Debug logging
+    console.log('=== REQUEST DEBUG ===');
+    console.log('Raw request body:', JSON.stringify({ videos, targetDuration }, null, 2));
+    console.log('Videos received:', videos);
+    console.log('Videos length:', videos?.length);
+    console.log('Target duration:', targetDuration);
+
     // Validation
     if (!videos || videos.length === 0) {
       throw new Error('No videos provided.');
@@ -29,13 +36,25 @@ serve(async (req) => {
       throw new Error('Invalid target duration.');
     }
 
+    // Debug each video
+    videos.forEach((video, index) => {
+      console.log(`Video ${index}:`, {
+        publicId: video.publicId,
+        duration: video.duration,
+        durationType: typeof video.duration,
+        hasPublicId: !!video.publicId,
+        hasDuration: !!video.duration
+      });
+    });
+
     // Validate exact durations
     const invalidVideos = videos.filter(v => !v.duration || v.duration <= 0);
     if (invalidVideos.length > 0) {
-      throw new Error('All videos must have exact durations detected.');
+      console.log('❌ Invalid videos found:', invalidVideos);
+      throw new Error(`Invalid videos: ${invalidVideos.map((v, i) => `Video ${i}: duration=${v.duration}, publicId=${v.publicId}`).join(', ')}`);
     }
 
-    console.log(`Processing ${videos.length} videos for ${targetDuration}s target duration`);
+    console.log(`✅ Processing ${videos.length} videos for ${targetDuration}s target duration`);
 
     const totalOriginalDuration = videos.reduce((sum, v) => sum + v.duration, 0);
     const timestamp = Date.now();
