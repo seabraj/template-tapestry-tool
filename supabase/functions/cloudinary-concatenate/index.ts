@@ -28,7 +28,7 @@ serve(async (req) => {
     // ====================================================================
     // --- PHASE 1: CREATE TRIMMED VIDEOS WITH METADATA ---
     // ====================================================================
-    console.log('--- STARTING PHASE 1: Creating transformed assets directly ---');
+    console.log('--- STARTING PHASE 1: Trimming and forcing metadata generation ---');
 
     const totalOriginalDuration = videos.reduce((sum, v) => sum + v.duration, 0);
     const timestamp = Date.now();
@@ -38,38 +38,44 @@ serve(async (req) => {
     for (let i = 0; i < videos.length; i++) {
       const video = videos[i];
       const proportionalDuration = (video.duration / totalOriginalDuration) * targetDuration;
-      const trimmedId = `final_trimmed_${i}_${timestamp}`; // New name for clarity
+      const trimmedId = `final_trimmed_${i}_${timestamp}`;
       
       createdAssetIDs.push(trimmedId);
-      console.log(`[Phase 1] Creating new asset ${trimmedId} from ${video.publicId}`);
+      console.log(`[Phase 1] Preparing job for ${video.publicId}. New ID will be ${trimmedId}`);
 
-      // --- THE DEFINITIVE FIX ---
-      // Instead of creating a temp URL, we upload the ORIGINAL public_id
-      // and apply the transformation during the upload process.
-      // This is a direct instruction to Cloudinary and triggers full analysis.
-      const uploadPromise = cloudinary.uploader.upload(video.publicId, { // Source is the original public_id
+      // 1. Create the on-the-fly transformation URL for the trimmed video content.
+      const trimmedUrl = cloudinary.url(video.publicId, {
         resource_type: 'video',
-        public_id: trimmedId, // The ID of the NEW asset to create
+        transformation: [{ duration: proportionalDuration.toFixed(2) }],
+        format: 'mp4'
+      });
+      
+      // 2. Upload from that URL to create a new, permanent asset.
+      const uploadPromise = cloudinary.uploader.upload(trimmedUrl, {
+        resource_type: 'video',
+        public_id: trimmedId,
         overwrite: true,
-        // The transformation to apply to the source before saving the new asset
-        transformation: [
-          { duration: proportionalDuration.toFixed(2) }
-        ]
+        // --- THE FINAL METADATA FIX ---
+        // We run this as an async background job on Cloudinary.
+        eager_async: true,
+        // By explicitly setting a codec, we FORCE Cloudinary to re-process the
+        // video, which is the step where duration metadata is generated. This is
+        // more robust than a simple quality setting.
+        eager: [{ video_codec: 'h264', quality: 'auto' }] 
       });
 
       uploadPromises.push(uploadPromise);
     }
     
-    // Wait for all upload commands to complete.
-    // This process is synchronous but should be fast as no video data is being sent.
+    // Wait for all the upload commands to be sent to Cloudinary.
     await Promise.all(uploadPromises);
 
-    console.log(`--- PHASE 1 COMPLETE: ${videos.length} trimmed videos have been created. ---`);
-    console.log('To verify, check your Cloudinary library for the new assets and inspect their duration metadata.');
+    console.log(`--- PHASE 1 COMPLETE: ${videos.length} trimming jobs initiated. ---`);
+    console.log('Verification: Check your Cloudinary library for the new assets and inspect their duration metadata after a few moments.');
     
     return new Response(JSON.stringify({ 
         success: true,
-        message: "Phase 1: Trimmed videos created successfully with metadata.",
+        message: "Phase 1: Trimming jobs initiated successfully.",
         phase: 1,
         trimmedVideoPublicIds: createdAssetIDs
     }), {
