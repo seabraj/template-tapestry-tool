@@ -28,20 +28,20 @@ serve(async (req) => {
 
   try {
     debugLog("=== PRODUCTION VIDEO PROCESSING ===");
-    
     const requestBody = await req.json();
     debugLog("Request received", requestBody);
     
     const { videos, targetDuration } = requestBody;
 
-    if (!videos || videos.length === 0) throw new Error('No videos provided.');
-    if (!targetDuration || targetDuration <= 0) throw new Error('Invalid target duration.');
+    if (!videos || videos.length === 0 || !targetDuration || targetDuration <= 0) {
+      throw new Error('Invalid request body: Missing videos or targetDuration.');
+    }
     if (!videos.every(v => v.duration && v.duration > 0)) {
         throw new Error(`All videos must have an exact duration provided.`);
     }
 
     // ====================================================================
-    // --- PHASE 1: CREATE TRIMMED VIDEOS WITH EXACT DURATIONS ---
+    // --- PHASE 1: CREATE TRIMMED VIDEOS ---
     // ====================================================================
     debugLog("--- STARTING PHASE 1: CREATE TRIMMED VIDEOS ---");
 
@@ -65,7 +65,6 @@ serve(async (req) => {
         overwrite: true,
       });
 
-      // We use our known, exact duration for reliability
       createdAssets.push({
         publicId: uploadResult.public_id,
         duration: proportionalDuration,
@@ -76,30 +75,32 @@ serve(async (req) => {
     debugLog(`--- PHASE 1 COMPLETE: ${createdAssets.length} trimmed assets created. ---`, createdAssets);
     
     // ====================================================================
-    // --- PHASE 2: CONCATENATE TRIMMED VIDEOS ---
+    // --- PHASE 2: CONCATENATE TRIMMED VIDEOS (REVISED LOGIC) ---
     // ====================================================================
     debugLog("--- STARTING PHASE 2: CONCATENATE VIDEOS ---");
 
     if (createdAssets.length === 0) throw new Error("Phase 1 did not produce any videos to concatenate.");
 
-    // Sort assets by their original order to ensure correct sequence
     const sortedAssets = createdAssets.sort((a, b) => a.order - b.order);
-
     const baseVideo = sortedAssets[0];
-    const transformationParts = ['w_1280,h_720,c_pad']; // Base sizing for the final video
+    
+    // Start with an empty transformation array for the base video.
+    // We will apply sizing to the entire chain at the end.
+    const transformationParts = [];
 
-    // Loop through the REST of the videos to build the splice chain
+    // Loop through the rest of the videos to build the splice chain
     for (let i = 1; i < sortedAssets.length; i++) {
         const overlayVideo = sortedAssets[i];
-        // For overlays, the public_id needs slashes replaced with colons
         const overlayPublicId = overlayVideo.publicId.replace(/\//g, ':');
         
-        // Add the overlay video (already trimmed) with sizing, then the splice flag
+        // For each subsequent video, create a sized overlay and splice it.
         transformationParts.push(`l_video:${overlayPublicId},w_1280,h_720,c_pad`);
         transformationParts.push('fl_splice');
     }
 
-    // Add final encoding transformations for the output video
+    // Now, prepend the overall sizing and append the final encoding transformations.
+    // This ensures the entire concatenated result is sized correctly.
+    transformationParts.unshift('w_1280,h_720,c_pad');
     transformationParts.push('ac_aac', 'q_auto:good');
 
     const transformationString = transformationParts.join('/');
@@ -110,14 +111,11 @@ serve(async (req) => {
     // ====================================================================
     // --- FINAL RESPONSE ---
     // ====================================================================
-    
-    // Build the final response object that the frontend expects
     const finalResponse = { 
         success: true,
         message: `Phase 2: Concatenation successful.`,
         phase: 2,
-        url: finalConcatenatedUrl, // The final, concatenated video URL
-        // Include created asset details for potential cleanup in Phase 3
+        url: finalConcatenatedUrl,
         createdAssets: createdAssets,
         stats: {
           totalCreated: createdAssets.length,
@@ -132,11 +130,7 @@ serve(async (req) => {
     });
 
   } catch (error) {
-    debugLog(`❌ FATAL ERROR`, {
-      message: error.message,
-      stack: error.stack
-    });
-    
+    debugLog(`❌ FATAL ERROR`, { message: error.message, stack: error.stack });
     return new Response(JSON.stringify({ success: false, error: error.message }), {
       status: 500,
       headers: { ...corsHeaders, "Content-Type": "application/json" },
