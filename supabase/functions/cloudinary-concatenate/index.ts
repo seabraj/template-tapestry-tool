@@ -6,7 +6,6 @@ const corsHeaders = {
   'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
 };
 
-// Configure Cloudinary
 cloudinary.config({
   cloud_name: 'dsxrmo3kt',
   api_key: Deno.env.get('CLOUDINARY_API_KEY'),
@@ -26,22 +25,21 @@ serve(async (req) => {
     if (!targetDuration || targetDuration <= 0) throw new Error('Invalid target duration.');
 
     // ====================================================================
-    // --- PHASE 1: CREATE TRIMMED VIDEOS WITH METADATA ---
+    // --- PHASE 1: SYNCHRONOUSLY CREATE TRIMMED VIDEOS WITH METADATA ---
     // ====================================================================
-    console.log('--- STARTING PHASE 1: Trimming and forcing metadata generation ---');
+    console.log('--- STARTING PHASE 1: Synchronous trim and verify ---');
 
     const totalOriginalDuration = videos.reduce((sum, v) => sum + v.duration, 0);
     const timestamp = Date.now();
-    const uploadPromises = [];
-    const createdAssetIDs = [];
+    const createdAssets = []; // We will store the full verified asset data
 
+    // This loop now processes each video ONE BY ONE, waiting for completion.
     for (let i = 0; i < videos.length; i++) {
       const video = videos[i];
       const proportionalDuration = (video.duration / totalOriginalDuration) * targetDuration;
       const trimmedId = `final_trimmed_${i}_${timestamp}`;
       
-      createdAssetIDs.push(trimmedId);
-      console.log(`[Phase 1] Preparing job for ${video.publicId}. New ID will be ${trimmedId}`);
+      console.log(`[Phase 1] Processing video ${i + 1}/${videos.length}: Creating ${trimmedId}`);
 
       // 1. Create the on-the-fly transformation URL for the trimmed video content.
       const trimmedUrl = cloudinary.url(video.publicId, {
@@ -50,34 +48,40 @@ serve(async (req) => {
         format: 'mp4'
       });
       
-      // 2. Upload from that URL to create a new, permanent asset.
-      const uploadPromise = cloudinary.uploader.upload(trimmedUrl, {
+      // 2. Upload and AWAIT the completion of this single video.
+      // No eager flags needed. The synchronous await forces full processing.
+      await cloudinary.uploader.upload(trimmedUrl, {
         resource_type: 'video',
         public_id: trimmedId,
         overwrite: true,
-        // --- THE FINAL METADATA FIX ---
-        // We run this as an async background job on Cloudinary.
-        eager_async: true,
-        // By explicitly setting a codec, we FORCE Cloudinary to re-process the
-        // video, which is the step where duration metadata is generated. This is
-        // more robust than a simple quality setting.
-        eager: [{ video_codec: 'h264', quality: 'auto' }] 
       });
 
-      uploadPromises.push(uploadPromise);
+      console.log(`[Phase 1] Asset ${trimmedId} created. Now verifying metadata...`);
+
+      // 3. IMMEDIATELY verify the asset to confirm metadata exists.
+      const verification = await cloudinary.api.resource(trimmedId, { resource_type: 'video' });
+      
+      if (!verification.duration) {
+        // If metadata is still missing, we stop and throw a clear error.
+        throw new Error(`Verification failed: Duration metadata not found for ${trimmedId} after synchronous upload.`);
+      }
+
+      console.log(`[Phase 1] ✅ Verification successful for ${trimmedId}. Duration: ${verification.duration}`);
+      createdAssets.push({
+        publicId: verification.public_id,
+        duration: verification.duration,
+        order: i
+      });
     }
     
-    // Wait for all the upload commands to be sent to Cloudinary.
-    await Promise.all(uploadPromises);
-
-    console.log(`--- PHASE 1 COMPLETE: ${videos.length} trimming jobs initiated. ---`);
-    console.log('Verification: Check your Cloudinary library for the new assets and inspect their duration metadata after a few moments.');
+    console.log(`--- PHASE 1 COMPLETE: ${createdAssets.length} trimmed videos were created and verified successfully. ---`);
     
     return new Response(JSON.stringify({ 
         success: true,
-        message: "Phase 1: Trimming jobs initiated successfully.",
+        message: "Phase 1: All videos trimmed and verified successfully.",
         phase: 1,
-        trimmedVideoPublicIds: createdAssetIDs
+        // The response now contains the verified assets with their new durations
+        createdAssets: createdAssets
     }), {
         headers: { ...corsHeaders, "Content-Type": "application/json" },
     });
