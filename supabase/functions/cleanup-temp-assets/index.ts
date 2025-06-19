@@ -1,31 +1,10 @@
 
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
-import { v2 as cloudinary } from 'npm:cloudinary@^1.41.1';
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
   'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
 };
-
-// Configure Cloudinary with proper error handling
-function configureCloudinary() {
-  const cloudName = 'dsxrmo3kt';
-  const apiKey = Deno.env.get('CLOUDINARY_API_KEY');
-  const apiSecret = Deno.env.get('CLOUDINARY_API_SECRET');
-
-  if (!apiKey || !apiSecret) {
-    throw new Error('Missing Cloudinary credentials');
-  }
-
-  cloudinary.config({
-    cloud_name: cloudName,
-    api_key: apiKey,
-    api_secret: apiSecret,
-    secure: true,
-  });
-
-  console.log('✅ Cloudinary configured successfully');
-}
 
 function log(message: string, data?: any) {
   const timestamp = new Date().toISOString();
@@ -39,31 +18,63 @@ async function findTemporaryAssets(): Promise<{ videos: string[], manifests: str
   try {
     log('🔍 Searching for temporary assets...');
     
-    // Search for video assets with temporary naming pattern
-    const videoResults = await cloudinary.search
-      .expression('public_id:p1_trimmed_* OR public_id:p2_final_video_*')
-      .resource_type('video')
-      .max_results(500)
-      .execute();
+    const cloudName = 'dsxrmo3kt';
+    const apiKey = Deno.env.get('CLOUDINARY_API_KEY');
+    const apiSecret = Deno.env.get('CLOUDINARY_API_SECRET');
+
+    if (!apiKey || !apiSecret) {
+      throw new Error('Missing Cloudinary credentials');
+    }
+
+    // Use Cloudinary's search API via REST
+    const searchUrl = `https://api.cloudinary.com/v1_1/${cloudName}/resources/search`;
     
-    // Search for manifest assets (raw files)
-    const manifestResults = await cloudinary.search
-      .expression('public_id:p2_manifest_*')
-      .resource_type('raw')
-      .max_results(500)
-      .execute();
-    
-    // Filter for temporary assets only (exclude final videos that should be kept)
-    const videoIds = videoResults.resources
-      .filter(asset => {
-        // Only delete trimmed videos, not final videos
-        return asset.public_id.startsWith('p1_trimmed_');
+    // Search for video assets
+    const videoResponse = await fetch(searchUrl, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Basic ${btoa(`${apiKey}:${apiSecret}`)}`
+      },
+      body: JSON.stringify({
+        expression: 'public_id:p1_trimmed_* OR public_id:p2_manifest_*',
+        resource_type: 'video',
+        max_results: 500
       })
-      .map(asset => asset.public_id);
+    });
+
+    if (!videoResponse.ok) {
+      throw new Error(`Cloudinary search failed: ${videoResponse.statusText}`);
+    }
+
+    const videoResults = await videoResponse.json();
     
-    const manifestIds = manifestResults.resources
-      .filter(asset => asset.public_id.startsWith('p2_manifest_'))
-      .map(asset => asset.public_id);
+    // Filter for temporary assets only
+    const videoIds = videoResults.resources
+      .filter((asset: any) => asset.public_id.startsWith('p1_trimmed_'))
+      .map((asset: any) => asset.public_id);
+    
+    // Search for raw/manifest assets
+    const manifestResponse = await fetch(searchUrl, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Basic ${btoa(`${apiKey}:${apiSecret}`)}`
+      },
+      body: JSON.stringify({
+        expression: 'public_id:p2_manifest_*',
+        resource_type: 'raw',
+        max_results: 500
+      })
+    });
+
+    let manifestIds: string[] = [];
+    if (manifestResponse.ok) {
+      const manifestResults = await manifestResponse.json();
+      manifestIds = manifestResults.resources
+        .filter((asset: any) => asset.public_id.startsWith('p2_manifest_'))
+        .map((asset: any) => asset.public_id);
+    }
     
     log(`Found ${videoIds.length} temporary video assets and ${manifestIds.length} manifest assets`);
     return { videos: videoIds, manifests: manifestIds };
@@ -87,6 +98,14 @@ async function deleteAssetsSafely(assetIds: string[], resourceType: 'video' | 'r
     return { deleted, failed, details };
   }
 
+  const cloudName = 'dsxrmo3kt';
+  const apiKey = Deno.env.get('CLOUDINARY_API_KEY');
+  const apiSecret = Deno.env.get('CLOUDINARY_API_SECRET');
+
+  if (!apiKey || !apiSecret) {
+    throw new Error('Missing Cloudinary credentials for deletion');
+  }
+
   for (const assetId of assetIds) {
     let attempts = 0;
     const maxAttempts = 3;
@@ -98,27 +117,56 @@ async function deleteAssetsSafely(assetIds: string[], resourceType: 'video' | 'r
       try {
         log(`Attempting to delete ${resourceType} asset: ${assetId} (attempt ${attempts}/${maxAttempts})`);
         
-        const result = await cloudinary.api.delete_resources([assetId], { 
-          resource_type: resourceType,
-          invalidate: true
+        // Use Cloudinary's destroy API directly
+        const deleteUrl = `https://api.cloudinary.com/v1_1/${cloudName}/${resourceType}/destroy`;
+        
+        const formData = new FormData();
+        formData.append('public_id', assetId);
+        formData.append('api_key', apiKey);
+        
+        // Generate signature for the request
+        const timestamp = Math.round(Date.now() / 1000);
+        const stringToSign = `public_id=${assetId}&timestamp=${timestamp}${apiSecret}`;
+        
+        // Simple signature generation (for production, use proper crypto)
+        const encoder = new TextEncoder();
+        const data = encoder.encode(stringToSign);
+        const hashBuffer = await crypto.subtle.digest('SHA-1', data);
+        const hashArray = Array.from(new Uint8Array(hashBuffer));
+        const signature = hashArray.map(b => b.toString(16).padStart(2, '0')).join('');
+        
+        formData.append('timestamp', timestamp.toString());
+        formData.append('signature', signature);
+        
+        const response = await fetch(deleteUrl, {
+          method: 'POST',
+          body: formData
         });
         
-        if (result.deleted && result.deleted[assetId] === 'deleted') {
-          deleted.push(assetId);
-          success = true;
-          log(`✅ Successfully deleted: ${assetId}`);
-        } else if (result.deleted && result.deleted[assetId] === 'not_found') {
-          log(`⚠️ Asset not found (already deleted?): ${assetId}`);
-          deleted.push(assetId);
-          success = true;
+        if (response.ok) {
+          const result = await response.json();
+          if (result.result === 'ok' || result.result === 'not found') {
+            deleted.push(assetId);
+            success = true;
+            log(`✅ Successfully deleted: ${assetId}`);
+          } else {
+            log(`❌ Deletion failed for ${assetId}:`, result);
+            if (attempts === maxAttempts) {
+              failed.push(assetId);
+            }
+          }
+          details.push({ assetId, attempt: attempts, result });
         } else {
-          log(`❌ Deletion failed for ${assetId}:`, result);
+          const errorText = await response.text();
+          log(`❌ HTTP error deleting ${assetId}:`, errorText);
           if (attempts === maxAttempts) {
             failed.push(assetId);
+            details.push({ assetId, attempt: attempts, error: errorText });
+          } else {
+            // Wait before retry
+            await new Promise(resolve => setTimeout(resolve, 1000 * attempts));
           }
         }
-        
-        details.push({ assetId, attempt: attempts, result });
         
       } catch (error) {
         log(`❌ Error deleting ${assetId} (attempt ${attempts}):`, error.message);
@@ -151,9 +199,6 @@ serve(async (req) => {
   
   try {
     log('🧹 Starting cleanup of temporary Cloudinary assets...');
-    
-    // Configure Cloudinary
-    configureCloudinary();
     
     // Find all temporary assets
     const { videos, manifests } = await findTemporaryAssets();
