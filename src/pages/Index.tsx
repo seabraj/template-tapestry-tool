@@ -9,7 +9,7 @@ import CustomizationPanel from '@/components/CustomizationPanel';
 import ExportPanel from '@/components/ExportPanel';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
-import { Play, Settings, Upload, Sparkles } from 'lucide-react';
+import { Play, Sparkles, Upload, Settings, Video } from 'lucide-react';
 
 export type Platform = 'youtube' | 'facebook' | 'instagram';
 export type Language = 'en' | 'es' | 'fr' | 'de';
@@ -107,7 +107,7 @@ const Index = () => {
     switch (step) {
       case 1: return Settings;
       case 2: return Settings;
-      case 3: return Play;
+      case 3: return Video;
       case 4: return Sparkles;
       case 5: return Upload;
       default: return Settings;
@@ -152,7 +152,7 @@ const Index = () => {
               ▶
             </div>
             <div className="text-white text-lg font-medium">
-              / itMatters
+              itMatters Content Creator
             </div>
           </div>
           <Button 
