@@ -1,3 +1,4 @@
+
 import { Card, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
@@ -5,6 +6,7 @@ import { Platform, Language, VideoSequence, CustomizationSettings } from '@/page
 import { useState } from 'react';
 import { useToast } from '@/hooks/use-toast';
 import { VideoProcessor } from '@/services/videoProcessor';
+import { supabase } from '@/integrations/supabase/client';
 import { ArrowLeft, Play, Download, Check, AlertCircle, Video } from 'lucide-react';
 
 interface ExportPanelProps {

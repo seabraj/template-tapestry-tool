@@ -1,5 +1,3 @@
-// Clean cleanup utility for Supabase Edge Function
-// Save this as: supabase/functions/cleanup-temp-assets/index.ts
 
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { v2 as cloudinary } from 'npm:cloudinary@^1.41.1';
@@ -9,12 +7,25 @@ const corsHeaders = {
   'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
 };
 
-cloudinary.config({
-  cloud_name: 'dsxrmo3kt',
-  api_key: Deno.env.get('CLOUDINARY_API_KEY'),
-  api_secret: Deno.env.get('CLOUDINARY_API_SECRET'),
-  secure: true,
-});
+// Configure Cloudinary with proper error handling
+function configureCloudinary() {
+  const cloudName = 'dsxrmo3kt';
+  const apiKey = Deno.env.get('CLOUDINARY_API_KEY');
+  const apiSecret = Deno.env.get('CLOUDINARY_API_SECRET');
+
+  if (!apiKey || !apiSecret) {
+    throw new Error('Missing Cloudinary credentials');
+  }
+
+  cloudinary.config({
+    cloud_name: cloudName,
+    api_key: apiKey,
+    api_secret: apiSecret,
+    secure: true,
+  });
+
+  console.log('✅ Cloudinary configured successfully');
+}
 
 function log(message: string, data?: any) {
   const timestamp = new Date().toISOString();
@@ -42,15 +53,19 @@ async function findTemporaryAssets(): Promise<{ videos: string[], manifests: str
       .max_results(500)
       .execute();
     
+    // Filter for temporary assets only (exclude final videos that should be kept)
     const videoIds = videoResults.resources
-      .filter(asset => asset.public_id.startsWith('p1_trimmed_') || asset.public_id.startsWith('p2_final_video_'))
+      .filter(asset => {
+        // Only delete trimmed videos, not final videos
+        return asset.public_id.startsWith('p1_trimmed_');
+      })
       .map(asset => asset.public_id);
     
     const manifestIds = manifestResults.resources
       .filter(asset => asset.public_id.startsWith('p2_manifest_'))
       .map(asset => asset.public_id);
     
-    log(`Found ${videoIds.length} video assets and ${manifestIds.length} manifest assets`);
+    log(`Found ${videoIds.length} temporary video assets and ${manifestIds.length} manifest assets`);
     return { videos: videoIds, manifests: manifestIds };
   } catch (error) {
     log('Error finding temporary assets:', error);
@@ -67,36 +82,59 @@ async function deleteAssetsSafely(assetIds: string[], resourceType: 'video' | 'r
   const failed: string[] = [];
   const details: any[] = [];
   
+  if (assetIds.length === 0) {
+    log(`No ${resourceType} assets to delete`);
+    return { deleted, failed, details };
+  }
+
   for (const assetId of assetIds) {
-    try {
-      log(`Attempting to delete ${resourceType} asset: ${assetId}`);
+    let attempts = 0;
+    const maxAttempts = 3;
+    let success = false;
+
+    while (attempts < maxAttempts && !success) {
+      attempts++;
       
-      const result = await cloudinary.api.delete_resources([assetId], { 
-        resource_type: resourceType,
-        invalidate: true
-      });
-      
-      if (result.deleted && result.deleted[assetId] === 'deleted') {
-        deleted.push(assetId);
-        log(`✅ Successfully deleted: ${assetId}`);
-      } else if (result.deleted && result.deleted[assetId] === 'not_found') {
-        log(`⚠️ Asset not found (already deleted?): ${assetId}`);
-        deleted.push(assetId);
-      } else {
-        failed.push(assetId);
-        log(`❌ Failed to delete: ${assetId}`, result);
+      try {
+        log(`Attempting to delete ${resourceType} asset: ${assetId} (attempt ${attempts}/${maxAttempts})`);
+        
+        const result = await cloudinary.api.delete_resources([assetId], { 
+          resource_type: resourceType,
+          invalidate: true
+        });
+        
+        if (result.deleted && result.deleted[assetId] === 'deleted') {
+          deleted.push(assetId);
+          success = true;
+          log(`✅ Successfully deleted: ${assetId}`);
+        } else if (result.deleted && result.deleted[assetId] === 'not_found') {
+          log(`⚠️ Asset not found (already deleted?): ${assetId}`);
+          deleted.push(assetId);
+          success = true;
+        } else {
+          log(`❌ Deletion failed for ${assetId}:`, result);
+          if (attempts === maxAttempts) {
+            failed.push(assetId);
+          }
+        }
+        
+        details.push({ assetId, attempt: attempts, result });
+        
+      } catch (error) {
+        log(`❌ Error deleting ${assetId} (attempt ${attempts}):`, error.message);
+        
+        if (attempts === maxAttempts) {
+          failed.push(assetId);
+          details.push({ assetId, attempt: attempts, error: error.message });
+        } else {
+          // Wait before retry
+          await new Promise(resolve => setTimeout(resolve, 1000 * attempts));
+        }
       }
-      
-      details.push({ assetId, result });
-      
-      // Small delay to avoid rate limiting
-      await new Promise(resolve => setTimeout(resolve, 200));
-      
-    } catch (error) {
-      failed.push(assetId);
-      log(`❌ Error deleting ${assetId}:`, error.message);
-      details.push({ assetId, error: error.message });
     }
+    
+    // Small delay between assets to avoid rate limiting
+    await new Promise(resolve => setTimeout(resolve, 200));
   }
   
   return { deleted, failed, details };
@@ -112,12 +150,16 @@ serve(async (req) => {
   }
   
   try {
-    log('🧹 Starting manual cleanup of temporary Cloudinary assets...');
+    log('🧹 Starting cleanup of temporary Cloudinary assets...');
+    
+    // Configure Cloudinary
+    configureCloudinary();
     
     // Find all temporary assets
     const { videos, manifests } = await findTemporaryAssets();
     
     if (videos.length === 0 && manifests.length === 0) {
+      log('No temporary assets found to clean up');
       return new Response(JSON.stringify({
         success: true,
         message: 'No temporary assets found to clean up',
@@ -134,7 +176,7 @@ serve(async (req) => {
     }
     
     // Delete video assets
-    log(`🎬 Deleting ${videos.length} video assets...`);
+    log(`🎬 Deleting ${videos.length} temporary video assets...`);
     const videoResults = await deleteAssetsSafely(videos, 'video');
     
     // Delete manifest assets
@@ -145,11 +187,13 @@ serve(async (req) => {
     const totalFailed = videoResults.failed.length + manifestResults.failed.length;
     const totalProcessed = videos.length + manifests.length;
     
+    const successRate = totalProcessed > 0 ? ((totalDeleted / totalProcessed) * 100).toFixed(1) : '100';
+    
     log(`🎉 Cleanup completed:`, {
       totalProcessed,
       totalDeleted,
       totalFailed,
-      successRate: `${((totalDeleted / totalProcessed) * 100).toFixed(1)}%`
+      successRate: `${successRate}%`
     });
     
     return new Response(JSON.stringify({
@@ -159,7 +203,7 @@ serve(async (req) => {
         totalProcessed,
         totalDeleted,
         totalFailed,
-        successRate: `${((totalDeleted / totalProcessed) * 100).toFixed(1)}%`
+        successRate: `${successRate}%`
       },
       deleted: {
         videos: videoResults.deleted,
