@@ -38,13 +38,13 @@ const PlatformSelector = ({ selected, onSelect }: PlatformSelectorProps) => {
         <Card 
           key={platform.id}
           className={`
-            cursor-pointer transition-all duration-500 hover:scale-105 border-0 bg-[#111] gradient-border fade-in-up
+            cursor-pointer transition-all duration-500 hover:scale-105 border-0 bg-[#111] gradient-border fade-in-up rounded-3xl
             ${selected === platform.id ? 'selected -translate-y-2 shadow-2xl' : 'hover:-translate-y-2 hover:shadow-2xl'}
           `}
           style={{ animationDelay: `${(index + 1) * 0.1}s` }}
           onClick={() => onSelect(platform.id)}
         >
-          <CardContent className="p-6 text-center relative">
+          <CardContent className="p-6 text-center relative rounded-3xl">
             <div className="inline-block bg-white/10 text-white px-3 py-1.5 rounded-xl text-xs font-medium uppercase tracking-wider mb-6">
               Video Format
             </div>
