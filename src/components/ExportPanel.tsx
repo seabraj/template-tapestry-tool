@@ -86,6 +86,36 @@ const ExportPanel = ({
   const selectedSequences = sequences.filter(s => s.selected);
   const totalDuration = selectedSequences.reduce((sum, seq) => sum + seq.duration, 0);
 
+  const cleanupTemporaryAssets = async () => {
+    try {
+      console.log('🧹 Starting cleanup of temporary Cloudinary assets...');
+      
+      const response = await fetch('https://rihlnnxodrxzaxunwurc.supabase.co/functions/v1/cleanup-temp-assets', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InJpaGxubnhvZHJ4emF4dW53dXJjIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NTAwNzMyMjIsImV4cCI6MjA2NTY0OTIyMn0.0NfXK2GWdduughXFjPhRR2wGx1AROIRkaMcarj2cBYg`
+        },
+        body: JSON.stringify({})
+      });
+
+      const result = await response.json();
+      
+      if (result.success) {
+        console.log('✅ Cleanup completed successfully:', result.stats);
+        toast({
+          title: "Cleanup Complete",
+          description: `${result.stats.totalDeleted} temporary files cleaned up`,
+        });
+      } else {
+        console.warn('⚠️ Cleanup completed with warnings:', result);
+      }
+    } catch (error) {
+      console.error('❌ Cleanup failed:', error);
+      // Don't show error toast to user as this is a background operation
+    }
+  };
+
   const handleGenerateVideo = async () => {
     console.log('🎬 Generate Video button clicked');
     
@@ -176,6 +206,10 @@ const ExportPanel = ({
         title: "Video Generated Successfully!",
         description: `Your video has been processed and ${duration < totalDuration ? 'trimmed ' : ''}is ready for download.`,
       });
+
+      // 🆕 Start cleanup of temporary assets in the background
+      console.log('🧹 Starting background cleanup of temporary assets...');
+      cleanupTemporaryAssets();
 
     } catch (error) {
       console.error('❌ Video processing failed:', error);

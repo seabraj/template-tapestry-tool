@@ -152,7 +152,14 @@ const Index = () => {
               ▶
             </div>
             <div className="text-white text-lg font-medium">
-              itMatters Content Creator
+              <a 
+                href="https://www.itmatters.studio" 
+                target="_blank" 
+                rel="noopener noreferrer"
+                className="no-underline hover:no-underline"
+              >
+                <span className="font-bold">itMatters</span>
+              </a> Content Creator
             </div>
           </div>
           <Button 
