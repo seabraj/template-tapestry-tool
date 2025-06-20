@@ -53,17 +53,17 @@ export class VideoProcessor {
     onProgress?: (progress: number, details?: any) => void
   ): Promise<Blob> {
     console.log('📡 Using traditional processing...');
-    onProgress?.(5);
+    onProgress?.(5, { phase: 'initialization', message: 'Starting...' });
 
     try {
       // Step 1: Validate sequences
       const validSequences = this.validateSequences(options.sequences);
-      onProgress?.(10);
+      onProgress?.(10, { phase: 'validation', message: 'Validating sequences...' });
 
       // Step 2: Detect exact durations for all videos
       console.log('🔍 Step 2: Detecting exact durations for all videos...');
-      const videosWithExactDurations = await this.detectAllExactDurations(validSequences, onProgress);
-      onProgress?.(35);
+      const videosWithExactDurations = await this.detectAllExactDurations(validSequences, (progress) => onProgress?.(progress, { phase: 'duration_detection', message: 'Detecting durations...' }));
+      onProgress?.(35, { phase: 'duration_detection', message: 'Durations detected.' });
 
       // Step 3: Prepare request with exact durations
       const requestBody = {
@@ -73,12 +73,13 @@ export class VideoProcessor {
           source: video.detectionSource
         })),
         targetDuration: options.duration,
+        platform: options.platform, // Pass platform to the backend
         exactDurations: true,
         enableProgress: false // Disable SSE for now
       };
 
       console.log('📡 Calling edge function with traditional method:', requestBody);
-      onProgress?.(40);
+      onProgress?.(40, { phase: 'processing', message: 'Sending to backend...' });
       
       // Step 4: Process videos traditionally
       const { data, error } = await supabase.functions.invoke('cloudinary-concatenate', {
@@ -90,18 +91,19 @@ export class VideoProcessor {
       
       const finalUrl = data.url;
       console.log(`✅ Success! Final URL received: ${finalUrl}`);
-      onProgress?.(75);
+      onProgress?.(75, { phase: 'downloading', message: 'Downloading final video...' });
 
       // Step 5: Download final video
       console.log('📥 Downloading final video...');
       const videoBlob = await this.downloadFromUrl(finalUrl);
-      onProgress?.(100);
+      onProgress?.(100, { phase: 'complete', message: 'Done!' });
       
       console.log('🎉 Video processing complete!');
       return videoBlob;
 
     } catch (error) {
       console.error('❌ Video processing failed:', error);
+      onProgress?.(-1, { phase: 'error', message: error.message });
       throw error;
     }
   }

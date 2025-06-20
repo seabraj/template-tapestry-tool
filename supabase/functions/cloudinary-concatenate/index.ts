@@ -182,17 +182,32 @@ async function waitForAssetAvailability(
   return false;
 }
 
-async function buildConcatenationUrl(assetIds: string[]): Promise<string> {
+function getPlatformDimensions(platform: string): { width: number; height: number; aspectRatio: string } {
+  switch (platform) {
+    case 'youtube':
+      return { width: 1920, height: 1080, aspectRatio: '16:9' };
+    case 'facebook':
+      return { width: 1080, height: 1080, aspectRatio: '1:1' };
+    case 'instagram':
+      return { width: 1080, height: 1920, aspectRatio: '9:16' };
+    default:
+      return { width: 1920, height: 1080, aspectRatio: '16:9' };
+  }
+}
+
+async function buildConcatenationUrl(assetIds: string[], platform: string): Promise<string> {
   if (assetIds.length === 0) {
     throw new Error('No assets to concatenate');
   }
+
+  const { width, height } = getPlatformDimensions(platform);
 
   if (assetIds.length === 1) {
     // Single video, just return its URL
     return cloudinary.url(assetIds[0], {
       resource_type: 'video',
       transformation: [
-        { width: 1920, height: 1080, crop: 'pad', background: 'black' },
+        { width, height, crop: 'fill', gravity: 'auto' },
         { quality: 'auto:good', audio_codec: 'aac' }
       ]
     });
@@ -202,24 +217,23 @@ async function buildConcatenationUrl(assetIds: string[]): Promise<string> {
   const baseVideo = assetIds[0];
   const overlayVideos = assetIds.slice(1);
 
-  const transformations = [];
+  const transformations = [
+    { width, height, crop: 'fill', gravity: 'auto' }
+  ];
 
   // Add each overlay video with fl_splice
-  overlayVideos.forEach((videoId, index) => {
+  overlayVideos.forEach((videoId) => {
     transformations.push({
       overlay: `video:${videoId}`,
-      flags: 'splice'
+      flags: 'splice',
+      width,
+      height,
+      crop: 'fill',
+      gravity: 'auto'
     });
   });
 
   // Add final formatting
-  transformations.push({
-    width: 1920,
-    height: 1080,
-    crop: 'pad',
-    background: 'black'
-  });
-
   transformations.push({
     quality: 'auto:good',
     audio_codec: 'aac'
@@ -234,6 +248,7 @@ async function buildConcatenationUrl(assetIds: string[]): Promise<string> {
 async function processVideo(
   videos: any[], 
   targetDuration: number,
+  platform: string,
   progressTracker: ProgressTracker
 ): Promise<{ url: string; method: string; stats: any }> {
   const temporaryAssetIds = new Set<string>();
@@ -344,7 +359,7 @@ async function processVideo(
         timestamp: new Date().toISOString()
       });
 
-      const concatenationUrl = await buildConcatenationUrl(publicIdsToConcat);
+      const concatenationUrl = await buildConcatenationUrl(publicIdsToConcat, platform);
       debugLog("Built concatenation URL:", concatenationUrl);
 
       progressTracker.sendProgress({
@@ -675,9 +690,9 @@ serve(async (req) => {
 
   try {
     const requestBody = await req.json();
-    const { videos, targetDuration, enableProgress = false } = requestBody;
+    const { videos, targetDuration, platform, enableProgress = false } = requestBody;
 
-    if (!videos || videos.length === 0 || !targetDuration || targetDuration <= 0) {
+    if (!videos || videos.length === 0 || !targetDuration || targetDuration <= 0 || !platform) {
       throw new Error('Invalid request body');
     }
 
@@ -697,7 +712,7 @@ serve(async (req) => {
           });
 
           // Process video asynchronously
-          processVideo(videos, targetDuration, progressTracker)
+          processVideo(videos, targetDuration, platform, progressTracker)
             .then(result => {
               progressTracker.complete(result);
             })
@@ -719,7 +734,7 @@ serve(async (req) => {
     } else {
       // Traditional request-response with enhanced cleanup
       const progressTracker = new ProgressTracker(); // No SSE controller, but still tracks progress
-      const result = await processVideo(videos, targetDuration, progressTracker);
+      const result = await processVideo(videos, targetDuration, platform, progressTracker);
       
       return new Response(JSON.stringify({ 
         success: true, 
