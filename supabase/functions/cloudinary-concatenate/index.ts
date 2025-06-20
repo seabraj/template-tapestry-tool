@@ -166,7 +166,7 @@ async function waitForAssetAvailability(
       if (attempt === maxAttempts) {
         throw new Error(`Asset ${publicId} never became available after ${maxAttempts} attempts`);
       }
-      await new Promise(resolve => setTimeout(resolve, 2000));
+      await new Promise(resolve => setTimeout(resolve, 2500)); // Increased delay
     }
   }
   return false;
@@ -199,74 +199,57 @@ async function processVideo(
         const totalOriginalDuration = videos.reduce((sum, v) => sum + v.duration, 0);
 
         // ====================================================================
-        // PHASE 1: CREATE TRIMMED VIDEOS
+        // PHASE 1: CREATE FINAL SEGMENTS (TRIMMED & CROPPED) IN ONE STEP
         // ====================================================================
-        progressTracker.sendProgress({ phase: 'trimming', progress: 5, message: 'Starting video trimming...', timestamp: new Date().toISOString() });
-        const trimmedAssets = [];
-        for (let i = 0; i < videos.length; i++) {
-            const video = videos[i];
+        progressTracker.sendProgress({ phase: 'transformation', progress: 5, message: 'Starting video segment processing...', timestamp: new Date().toISOString() });
+        
+        const finalSegmentPromises = videos.map(async (video, i) => {
             const proportionalDuration = (video.duration / totalOriginalDuration) * targetDuration;
-            const trimmedId = `p1_trimmed_${i}_${timestamp}`;
-            temporaryAssetIds.add(trimmedId);
+            const finalSegmentId = `p_final_segment_${i}_${timestamp}`;
+            temporaryAssetIds.add(finalSegmentId);
 
-            progressTracker.sendProgress({ phase: 'trimming', progress: 5 + (i / videos.length) * 20, message: `Trimming video ${i + 1}/${videos.length}...`, timestamp: new Date().toISOString() });
+            progressTracker.sendProgress({ phase: 'transformation', progress: 10 + (i / videos.length) * 40, message: `Processing video segment ${i + 1}/${videos.length}...`, timestamp: new Date().toISOString() });
             
+            // Define a single, chained transformation
+            const transformation = [
+                { duration: proportionalDuration.toFixed(6) },
+                { width, height, crop: 'fill', gravity: 'auto' }
+            ];
+
             const uploadOptions = {
                 resource_type: 'video',
-                public_id: trimmedId,
+                public_id: finalSegmentId,
                 overwrite: true,
-                transformation: [{ duration: proportionalDuration.toFixed(6) }]
+                transformation: transformation
             };
-            debugLog(`Uploading trimmed video ${i+1}`, { file: video.file_url, options: uploadOptions });
+
+            debugLog(`Uploading and Transforming video ${i+1}`, { file: video.file_url, options: uploadOptions });
             await cloudinary.uploader.upload(video.file_url, uploadOptions);
             
-            trimmedAssets.push({ publicId: trimmedId, order: i });
-        }
-        progressTracker.sendProgress({ phase: 'trimming', progress: 25, message: 'All videos trimmed.', timestamp: new Date().toISOString() });
+            return { publicId: finalSegmentId, order: i };
+        });
+
+        const finalSegments = await Promise.all(finalSegmentPromises);
+        progressTracker.sendProgress({ phase: 'transformation', progress: 50, message: 'All video segments processed.', timestamp: new Date().toISOString() });
 
         // ====================================================================
-        // PHASE 2: EXPLICITLY CROP TRIMMED VIDEOS
-        // ====================================================================
-        progressTracker.sendProgress({ phase: 'cropping', progress: 30, message: 'Starting video cropping/resizing...', timestamp: new Date().toISOString() });
-        const croppedAssets = [];
-        for (let i = 0; i < trimmedAssets.length; i++) {
-            const asset = trimmedAssets[i];
-            await waitForAssetAvailability(asset.publicId, 'video', 15);
-            
-            const croppedId = `p2_cropped_${i}_${timestamp}`;
-            temporaryAssetIds.add(croppedId);
-
-            progressTracker.sendProgress({ phase: 'cropping', progress: 30 + (i / trimmedAssets.length) * 25, message: `Cropping video ${i + 1}/${trimmedAssets.length}...`, timestamp: new Date().toISOString() });
-            
-            const explicitOptions = {
-                type: 'upload',
-                resource_type: 'video',
-                public_id: croppedId,
-                overwrite: true,
-                transformation: [{ width, height, crop: 'fill', gravity: 'auto' }]
-            };
-            debugLog(`Applying explicit crop to ${asset.publicId}`, { options: explicitOptions });
-            await cloudinary.uploader.explicit(asset.publicId, explicitOptions);
-            
-            croppedAssets.push({ publicId: croppedId, order: i });
-        }
-        progressTracker.sendProgress({ phase: 'cropping', progress: 55, message: 'All videos cropped.', timestamp: new Date().toISOString() });
-        
-        // ====================================================================
-        // PHASE 3: CONCATENATE CROPPED VIDEOS VIA SIMPLE MANIFEST
+        // PHASE 2: CONCATENATE THE FINAL SEGMENTS VIA SIMPLE MANIFEST
         // ====================================================================
         progressTracker.sendProgress({ phase: 'concatenation', progress: 60, message: 'Preparing final concatenation...', timestamp: new Date().toISOString() });
         
-        const sortedCroppedAssets = croppedAssets.sort((a, b) => a.order - b.order);
-        for (const asset of sortedCroppedAssets) {
+        // Wait for all final segments to be fully available
+        for (const asset of finalSegments) {
             await waitForAssetAvailability(asset.publicId, 'video', 15);
         }
 
-        const manifestLines = sortedCroppedAssets.map(asset => `file '${asset.publicId}'`);
+        const manifestLines = finalSegments
+            .sort((a, b) => a.order - b.order)
+            .map(asset => `file '${asset.publicId}'`); // Simple manifest, no transformations needed
+
         const manifestContent = manifestLines.join('\n');
         debugLog("Generated simple manifest:", manifestContent);
 
-        const manifestPublicId = `p3_manifest_${timestamp}`;
+        const manifestPublicId = `p_manifest_${timestamp}`;
         temporaryAssetIds.add(manifestPublicId);
 
         progressTracker.sendProgress({ phase: 'concatenation', progress: 70, message: 'Uploading concatenation manifest...', timestamp: new Date().toISOString() });
@@ -293,11 +276,11 @@ async function processVideo(
         progressTracker.sendProgress({ phase: 'concatenation', progress: 90, message: 'Final video generated.', timestamp: new Date().toISOString() });
 
         // ====================================================================
-        // PHASE 4: CLEANUP
+        // PHASE 3: CLEANUP
         // ====================================================================
         infoLog("Starting cleanup of temporary assets...", { assets: Array.from(temporaryAssetIds) });
         try {
-            const videoIdsToDelete = Array.from(temporaryAssetIds).filter(id => !id.includes('manifest'));
+            const videoIdsToDelete = Array.from(temporaryAssetIds).filter(id => id.includes('segment'));
             const manifestIdsToDelete = [manifestPublicId];
             
             if (videoIdsToDelete.length > 0) {
@@ -316,7 +299,7 @@ async function processVideo(
 
         return {
             url: finalVideoResult.secure_url,
-            method: 'staged_explicit_transform_and_manifest',
+            method: 'single_step_transform_and_manifest',
             stats: {
                 inputVideos: videos.length,
                 totalOriginalDuration: totalOriginalDuration.toFixed(3),
@@ -325,14 +308,8 @@ async function processVideo(
         };
     } catch (error) {
         errorLog("Video processing pipeline failed.", error);
-        // Aggressive cleanup on failure
         if (temporaryAssetIds.size > 0) {
             warnLog("Attempting to cleanup failed assets...", { assets: Array.from(temporaryAssetIds) });
-            try {
-                // ... (cleanup logic) ...
-            } catch (cleanupError) {
-                errorLog("Cleanup after error also failed.", cleanupError);
-            }
         }
         throw error;
     }
