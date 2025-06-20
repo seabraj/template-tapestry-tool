@@ -1,4 +1,4 @@
-// Enhanced videoProcessor.ts with platform-specific processing
+// Simplified videoProcessor.ts based on working edge function structure
 import { supabase } from '@/integrations/supabase/client';
 
 export interface VideoProcessingOptions {
@@ -8,21 +8,13 @@ export interface VideoProcessingOptions {
     duration: number;
     file_url: string;
   }>;
-  customization: { /* ... your customization options ... */ };
+  customization: any;
   platform: string;
   duration: number;
   enableProgress?: boolean;
 }
 
-interface VideoWithExactDuration {
-  publicId: string;
-  duration: number;
-  originalDuration: number;
-  detectionSource: 'exact' | 'fallback';
-  name: string;
-}
-
-// FIXED: Platform specifications with correct resolutions
+// Platform specifications
 const PLATFORM_SPECS = {
   youtube: { 
     ratio: '16:9', 
@@ -40,7 +32,7 @@ const PLATFORM_SPECS = {
   },
   instagram: { 
     ratio: '9:16', 
-    resolution: '1080×1920', // FIXED: Was 1980x1920
+    resolution: '1080×1920',
     width: 1080,
     height: 1920,
     description: 'Vertical format, full-screen mobile experience'
@@ -49,7 +41,7 @@ const PLATFORM_SPECS = {
 
 export class VideoProcessor {
   constructor() {
-    console.log('🎬 VideoProcessor initialized with enhanced platform support');
+    console.log('🎬 VideoProcessor initialized with simplified, proven approach');
   }
 
   async processVideo(
@@ -58,14 +50,13 @@ export class VideoProcessor {
   ): Promise<Blob> {
     const platformSpec = PLATFORM_SPECS[options.platform as keyof typeof PLATFORM_SPECS];
     
-    console.log('🚀 Starting platform-specific video processing:', {
+    console.log('🚀 Starting simplified platform processing:', {
       platform: options.platform,
       sequences: options.sequences.length,
       targetDuration: options.duration,
       platformSpecs: platformSpec
     });
     
-    // Enhanced progress tracking with platform info
     onProgress?.(5, {
       phase: 'initialization',
       platform: options.platform,
@@ -73,59 +64,77 @@ export class VideoProcessor {
     });
 
     try {
-      // Step 1: Validate sequences
+      // Step 1: Validate and prepare data in the format the working edge function expects
       const validSequences = this.validateSequences(options.sequences);
-      onProgress?.(10, { phase: 'validation', validSequences: validSequences.length });
+      onProgress?.(15, { phase: 'validation', validSequences: validSequences.length });
 
-      // Step 2: Detect exact durations for all videos
-      console.log('🔍 Detecting exact durations for platform processing...');
-      const videosWithExactDurations = await this.detectAllExactDurations(validSequences, onProgress);
-      onProgress?.(35, { phase: 'duration_detection', detectedVideos: videosWithExactDurations.length });
+      // Step 2: Extract public IDs from Cloudinary URLs (like the working version expects)
+      console.log('📋 Preparing video data for edge function...');
+      const videosForEdgeFunction = validSequences.map(seq => ({
+        publicId: this.extractPublicIdFromUrl(seq.file_url),
+        duration: seq.duration,
+        name: seq.name
+      }));
 
-      // Step 3: Prepare enhanced request with platform specifications
+      onProgress?.(25, { 
+        phase: 'data_preparation', 
+        videosReady: videosForEdgeFunction.length 
+      });
+
+      // Step 3: Call the working edge function with the correct data format
       const requestBody = {
-        videos: videosWithExactDurations.map(video => ({
-          publicId: video.publicId,
-          duration: video.duration,
-          source: video.detectionSource
-        })),
+        videos: videosForEdgeFunction,
         targetDuration: options.duration,
-        platform: options.platform, // Critical for platform-specific processing
-        exactDurations: true,
-        enableProgress: false
+        platform: options.platform
       };
 
-      console.log(`📡 Processing for ${options.platform} (${platformSpec?.ratio})...`, {
-        ...requestBody,
-        videos: requestBody.videos.length,
-        targetResolution: platformSpec?.resolution
-      });
-      
-      onProgress?.(40, { 
-        phase: 'platform_processing', 
+      console.log(`📡 Calling proven edge function for ${options.platform}:`, {
+        videoCount: requestBody.videos.length,
         platform: options.platform,
-        targetResolution: platformSpec?.resolution
+        targetResolution: platformSpec?.resolution,
+        videosData: requestBody.videos.map(v => ({
+          publicId: v.publicId,
+          duration: v.duration
+        }))
       });
       
-      // Step 4: Process videos with platform transformations
+      onProgress?.(35, { 
+        phase: 'edge_function_call', 
+        platform: options.platform 
+      });
+      
+      // Step 4: Process with the working edge function
       const { data, error } = await supabase.functions.invoke('cloudinary-concatenate', {
         body: requestBody
       });
 
-      if (error) throw new Error(`Platform processing failed: ${error.message}`);
-      if (!data?.success || !data?.url) throw new Error(data?.error || 'Backend failed to return a valid URL.');
+      if (error) {
+        console.error('❌ Edge function error:', error);
+        throw new Error(`Platform processing failed: ${error.message}`);
+      }
+      
+      if (!data?.success) {
+        console.error('❌ Edge function returned failure:', data);
+        throw new Error(data?.error || 'Edge function processing failed');
+      }
+      
+      if (!data?.url) {
+        console.error('❌ No URL returned from edge function:', data);
+        throw new Error('Edge function failed to return a valid video URL');
+      }
       
       const finalUrl = data.url;
       console.log(`✅ Platform processing complete for ${options.platform}!`, {
         url: finalUrl,
         platform: options.platform,
-        specs: platformSpec,
+        method: data.method,
         stats: data.stats
       });
       
       onProgress?.(75, { 
         phase: 'platform_complete', 
         platform: options.platform,
+        method: data.method,
         finalUrl: finalUrl
       });
 
@@ -136,13 +145,15 @@ export class VideoProcessor {
       onProgress?.(100, { 
         phase: 'complete', 
         platform: options.platform,
-        finalSize: `${(videoBlob.size / 1024 / 1024).toFixed(2)}MB`
+        finalSize: `${(videoBlob.size / 1024 / 1024).toFixed(2)}MB`,
+        method: data.method
       });
       
       console.log(`🎉 ${options.platform} video ready!`, {
         platform: options.platform,
         finalSize: `${(videoBlob.size / 1024 / 1024).toFixed(2)}MB`,
         targetSpecs: platformSpec,
+        method: data.method,
         stats: data.stats
       });
       
@@ -155,142 +166,44 @@ export class VideoProcessor {
   }
 
   /**
-   * Enhanced duration detection with platform context
+   * Extract public ID from Cloudinary URL (like the working version does)
    */
-  private async detectAllExactDurations(
-    sequences: VideoProcessingOptions['sequences'], 
-    onProgress?: (progress: number, details?: any) => void
-  ): Promise<VideoWithExactDuration[]> {
-    console.log('🎯 Starting exact duration detection for platform processing...');
-    
-    const videosWithExactDurations: VideoWithExactDuration[] = [];
-    const errors: string[] = [];
-
-    for (let i = 0; i < sequences.length; i++) {
-      const seq = sequences[i];
+  private extractPublicIdFromUrl(cloudinaryUrl: string): string {
+    try {
+      console.log(`🔍 Extracting public ID from: ${cloudinaryUrl.substring(0, 80)}...`);
       
-      try {
-        console.log(`📊 Detecting duration ${i + 1}/${sequences.length}: ${seq.name}`);
-        
-        // Progress for duration detection phase (10% to 35%)
-        const detectionProgress = 10 + ((i / sequences.length) * 25);
-        onProgress?.(detectionProgress, {
-          phase: 'duration_detection',
-          current: i + 1,
-          total: sequences.length,
-          videoName: seq.name
-        });
-
-        // Extract public ID
-        const publicId = this.extractPublicIdFromUrl(seq.file_url);
-        
-        // Detect exact duration
-        const exactDuration = await this.detectExactDuration(seq.file_url);
-        
-        videosWithExactDurations.push({
-          publicId: publicId,
-          duration: exactDuration,
-          originalDuration: seq.duration,
-          detectionSource: 'exact',
-          name: seq.name
-        });
-
-        const durationDiff = Math.abs(exactDuration - seq.duration);
-        console.log(`✅ ${seq.name}:`, {
-          originalDuration: seq.duration.toFixed(3),
-          exactDuration: exactDuration.toFixed(6),
-          difference: durationDiff.toFixed(6)
-        });
-
-      } catch (error) {
-        console.error(`❌ Duration detection failed for ${seq.name}:`, error);
-        
-        // Fallback to original duration
-        console.warn(`⚠️ Using fallback duration for ${seq.name}`);
-        
-        try {
-          const publicId = this.extractPublicIdFromUrl(seq.file_url);
-          videosWithExactDurations.push({
-            publicId: publicId,
-            duration: seq.duration,
-            originalDuration: seq.duration,
-            detectionSource: 'fallback',
-            name: seq.name
-          });
-          
-          errors.push(`${seq.name}: ${error instanceof Error ? error.message : 'Unknown error'}`);
-        } catch (fallbackError) {
-          console.error(`❌ Complete failure for ${seq.name}:`, fallbackError);
-          throw new Error(`Failed to process video "${seq.name}": ${fallbackError instanceof Error ? fallbackError.message : 'Unknown error'}`);
-        }
+      if (!cloudinaryUrl.includes('cloudinary.com')) {
+        throw new Error('Not a Cloudinary URL');
       }
+      
+      const urlParts = cloudinaryUrl.split('/');
+      const uploadIndex = urlParts.findIndex(part => part === 'upload');
+      
+      if (uploadIndex === -1) {
+        throw new Error('No "upload" segment found in URL');
+      }
+      
+      // Get path after upload
+      const pathAfterUpload = urlParts.slice(uploadIndex + 1).join('/');
+      
+      // Remove version if present (v123456/)
+      const pathWithoutVersion = pathAfterUpload.replace(/^v\d+\//, '');
+      
+      // Remove file extension
+      const publicId = pathWithoutVersion.replace(/\.[^/.]+$/, '');
+      
+      console.log(`✅ Extracted public ID: ${publicId}`);
+      
+      if (!publicId) {
+        throw new Error('Extracted public ID is empty');
+      }
+      
+      return publicId;
+      
+    } catch (error) {
+      console.error(`❌ Public ID extraction failed:`, error);
+      throw new Error(`Failed to extract public ID from URL: ${cloudinaryUrl}`);
     }
-
-    // Enhanced summary with platform context
-    const exactCount = videosWithExactDurations.filter(v => v.detectionSource === 'exact').length;
-    const fallbackCount = videosWithExactDurations.filter(v => v.detectionSource === 'fallback').length;
-
-    console.log('📊 Duration Detection Summary for Platform Processing:', {
-      total: videosWithExactDurations.length,
-      exactDetections: exactCount,
-      fallbackUsed: fallbackCount,
-      successRate: `${((exactCount / videosWithExactDurations.length) * 100).toFixed(1)}%`,
-      readyForPlatformProcessing: true
-    });
-
-    if (videosWithExactDurations.length === 0) {
-      throw new Error('Failed to process any videos for platform formatting. Check video URLs and network connection.');
-    }
-
-    return videosWithExactDurations;
-  }
-
-  /**
-   * Enhanced duration detection with better error handling
-   */
-  private async detectExactDuration(fileUrl: string): Promise<number> {
-    return new Promise((resolve, reject) => {
-      console.log(`🔍 Detecting exact duration for platform processing: ${fileUrl}`);
-      
-      const video = document.createElement('video');
-      video.crossOrigin = 'anonymous';
-      video.preload = 'metadata';
-      
-      const cleanup = () => {
-        video.removeEventListener('loadedmetadata', onMetadata);
-        video.removeEventListener('error', onError);
-        video.src = '';
-      };
-      
-      const onMetadata = () => {
-        const duration = video.duration;
-        if (duration && duration > 0) {
-          console.log(`✅ Exact duration detected: ${duration.toFixed(6)}s`);
-          cleanup();
-          resolve(duration);
-        } else {
-          cleanup();
-          reject(new Error('Invalid duration detected (0 or undefined)'));
-        }
-      };
-      
-      const onError = (error: Event) => {
-        console.error(`❌ Error loading video for duration detection:`, error);
-        cleanup();
-        reject(new Error(`Failed to load video for platform processing: ${fileUrl}`));
-      };
-      
-      video.addEventListener('loadedmetadata', onMetadata);
-      video.addEventListener('error', onError);
-      
-      // Timeout after 15 seconds
-      setTimeout(() => {
-        cleanup();
-        reject(new Error(`Timeout: Could not detect duration within 15 seconds for platform processing`));
-      }, 15000);
-      
-      video.src = fileUrl;
-    });
   }
 
   // Utility method to get platform specifications
@@ -298,34 +211,35 @@ export class VideoProcessor {
     return PLATFORM_SPECS[platform as keyof typeof PLATFORM_SPECS] || PLATFORM_SPECS.youtube;
   }
 
-  // Enhanced validation with platform context
   private validateSequences(sequences: any[]) {
-    console.log('🔍 Validating sequences for platform processing...');
+    console.log('🔍 Validating sequences for proven processing...');
     const validSequences = sequences.filter(seq => seq.file_url && seq.duration > 0);
-    console.log(`✅ Validation complete: ${validSequences.length}/${sequences.length} sequences ready for platform processing`);
-    return validSequences;
-  }
-
-  private extractPublicIdFromUrl(cloudinaryUrl: string): string {
-    try {
-      const urlParts = cloudinaryUrl.split('/');
-      const uploadIndex = urlParts.findIndex(part => part === 'upload');
-      if (uploadIndex === -1) throw new Error('Invalid Cloudinary URL format');
-      
-      const pathAfterUpload = urlParts.slice(uploadIndex + 1).join('/');
-      const pathWithoutVersion = pathAfterUpload.replace(/^v\d+\//, '');
-      return pathWithoutVersion.replace(/\.[^/.]+$/, '');
-    } catch (error) {
-      throw new Error(`Invalid Cloudinary URL: ${cloudinaryUrl}`);
+    
+    console.log(`✅ Validation complete: ${validSequences.length}/${sequences.length} sequences ready`, {
+      allHaveFileUrls: validSequences.every(s => !!s.file_url),
+      allHaveDurations: validSequences.every(s => s.duration > 0),
+      allHaveNames: validSequences.every(s => !!s.name)
+    });
+    
+    if (validSequences.length === 0) {
+      throw new Error('No valid sequences found - check that all sequences have file_url and duration > 0');
     }
+    
+    return validSequences;
   }
 
   private async downloadFromUrl(url: string): Promise<Blob> {
     try {
+      console.log(`📥 Downloading video from: ${url.substring(0, 80)}...`);
       const response = await fetch(url);
-      if (!response.ok) throw new Error(`Failed to download video: HTTP ${response.status}`);
-      return await response.blob();
+      if (!response.ok) {
+        throw new Error(`Failed to download video: HTTP ${response.status} ${response.statusText}`);
+      }
+      const blob = await response.blob();
+      console.log(`✅ Download complete: ${(blob.size / 1024 / 1024).toFixed(2)}MB`);
+      return blob;
     } catch (error) {
+      console.error('❌ Download failed:', error);
       throw new Error(`Video download failed: ${error instanceof Error ? error.message : 'Unknown error'}`);
     }
   }
