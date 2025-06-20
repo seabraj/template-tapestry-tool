@@ -1,4 +1,3 @@
-
 import { Card, CardContent } from '@/components/ui/card';
 import { Platform } from '@/pages/Index';
 
@@ -13,22 +12,28 @@ const PlatformSelector = ({ selected, onSelect }: PlatformSelectorProps) => {
       id: 'youtube' as Platform,
       name: 'YouTube',
       ratio: '16:9',
+      resolution: '1920×1080',
       description: 'Landscape format, perfect for desktop viewing',
-      frameClass: 'w-40 h-[90px]'
+      frameClass: 'w-40 h-[90px]',
+      bgGradient: 'from-red-500 to-red-600'
     },
     {
       id: 'facebook' as Platform,
       name: 'Facebook',
       ratio: '1:1',
+      resolution: '1080×1080',
       description: 'Square format, optimized for feed posts',
-      frameClass: 'w-[90px] h-[90px]'
+      frameClass: 'w-[90px] h-[90px]',
+      bgGradient: 'from-blue-500 to-blue-600'
     },
     {
       id: 'instagram' as Platform,
       name: 'Instagram Stories',
       ratio: '9:16',
+      resolution: '1080×1920',
       description: 'Vertical format, full-screen mobile experience',
-      frameClass: 'w-[60px] h-[100px]'
+      frameClass: 'w-[60px] h-[100px]',
+      bgGradient: 'from-purple-500 to-pink-500'
     }
   ];
 
@@ -51,19 +56,25 @@ const PlatformSelector = ({ selected, onSelect }: PlatformSelectorProps) => {
             
             <div className="flex justify-center mb-6 h-[120px] items-center">
               <div className={`
-                border-2 border-white/30 rounded-2xl bg-white/5 flex items-center justify-center
-                text-sm font-semibold text-white/70 transition-all duration-300 relative
+                border-2 border-white/30 rounded-2xl bg-gradient-to-br ${platform.bgGradient} bg-opacity-20 flex flex-col items-center justify-center
+                text-sm font-semibold text-white transition-all duration-300 relative
                 ${platform.frameClass}
-                ${selected === platform.id || 'hover:border-white/80 hover:bg-white/10 hover:text-white/90'}
+                ${selected === platform.id ? 'border-white shadow-lg' : 'hover:border-white/80 hover:shadow-md'}
               `}>
                 <div className="absolute top-2 left-2 right-2 h-0.5 bg-gradient-to-r from-white/30 to-transparent rounded-full"></div>
-                {platform.ratio}
+                <div className="text-lg font-bold">{platform.ratio}</div>
+                <div className="text-xs text-white/80 mt-1">{platform.resolution}</div>
               </div>
             </div>
             
-            <h4 className="font-bold text-2xl mb-4 text-white tracking-tight">{platform.name}</h4>
+            <h4 className="font-bold text-2xl mb-2 text-white tracking-tight">{platform.name}</h4>
+            <p className="text-sm text-white/70 mb-4">{platform.description}</p>
             
-            <div className="flex justify-end">
+            <div className="flex justify-between items-center">
+              <div className="text-left">
+                <div className="text-xs text-white/50 uppercase tracking-wider">Resolution</div>
+                <div className="text-sm font-semibold text-white">{platform.resolution}</div>
+              </div>
               <div className="text-white/60 text-lg transition-colors duration-300">
                 →
               </div>

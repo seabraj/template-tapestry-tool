@@ -1,5 +1,4 @@
-
-// Enhanced videoProcessor.ts with real-time progress tracking
+// Enhanced videoProcessor.ts with real-time progress tracking and platform support
 import { supabase } from '@/integrations/supabase/client';
 
 export interface VideoProcessingOptions {
@@ -31,29 +30,42 @@ interface ProgressUpdate {
   timestamp: string;
 }
 
+// Platform resolution mapping for user feedback
+const PLATFORM_SPECS = {
+  youtube: { ratio: '16:9', resolution: '1920×1080' },
+  facebook: { ratio: '1:1', resolution: '1080×1080' },
+  instagram: { ratio: '9:16', resolution: '1080×1920' }
+} as const;
+
 export class VideoProcessor {
   constructor() {
-    console.log('🎬 VideoProcessor initialized with progress tracking');
+    console.log('🎬 VideoProcessor initialized with platform-specific processing');
   }
 
   async processVideo(
     options: VideoProcessingOptions, 
     onProgress?: (progress: number, details?: any) => void
   ): Promise<Blob> {
-    console.log('🚀 Starting video processing with progress tracking:', options);
+    console.log('🚀 Starting video processing with platform support:', {
+      platform: options.platform,
+      sequences: options.sequences.length,
+      targetDuration: options.duration,
+      platformSpecs: PLATFORM_SPECS[options.platform as keyof typeof PLATFORM_SPECS]
+    });
     
-    // For now, use traditional method to avoid build issues
+    // Use traditional method with enhanced platform support
     return this.processVideoTraditional(options, onProgress);
   }
 
   /**
-   * Traditional processing method (fallback)
+   * Traditional processing method with platform support
    */
   private async processVideoTraditional(
     options: VideoProcessingOptions,
     onProgress?: (progress: number, details?: any) => void
   ): Promise<Blob> {
-    console.log('📡 Using traditional processing...');
+    const platformSpec = PLATFORM_SPECS[options.platform as keyof typeof PLATFORM_SPECS];
+    console.log(`📡 Processing for ${options.platform} (${platformSpec?.ratio} - ${platformSpec?.resolution})...`);
     onProgress?.(5);
 
     try {
@@ -79,10 +91,14 @@ export class VideoProcessor {
         enableProgress: false // Disable SSE for now
       };
 
-      console.log('📡 Calling edge function with platform-specific processing:', requestBody);
+      console.log(`📡 Calling edge function for ${options.platform} processing:`, {
+        ...requestBody,
+        videos: requestBody.videos.length,
+        platformTarget: platformSpec
+      });
       onProgress?.(40);
       
-      // Step 4: Process videos traditionally with platform formatting
+      // Step 4: Process videos with platform-specific transformations
       const { data, error } = await supabase.functions.invoke('cloudinary-concatenate', {
         body: requestBody
       });
@@ -91,19 +107,28 @@ export class VideoProcessor {
       if (!data?.success || !data?.url) throw new Error(data?.error || 'Backend failed to return a valid URL.');
       
       const finalUrl = data.url;
-      console.log(`✅ Success! Final ${options.platform} URL received: ${finalUrl}`);
+      console.log(`✅ Success! Final ${options.platform} URL received:`, {
+        url: finalUrl,
+        platform: options.platform,
+        specs: platformSpec,
+        stats: data.stats
+      });
       onProgress?.(75);
 
       // Step 5: Download final video
-      console.log('📥 Downloading final video...');
+      console.log(`📥 Downloading final ${options.platform} video...`);
       const videoBlob = await this.downloadFromUrl(finalUrl);
       onProgress?.(100);
       
-      console.log('🎉 Video processing complete!');
+      console.log(`🎉 ${options.platform} video processing complete!`, {
+        platform: options.platform,
+        finalSize: `${(videoBlob.size / 1024 / 1024).toFixed(2)}MB`,
+        targetSpecs: platformSpec
+      });
       return videoBlob;
 
     } catch (error) {
-      console.error('❌ Video processing failed:', error);
+      console.error(`❌ ${options.platform} video processing failed:`, error);
       throw error;
     }
   }

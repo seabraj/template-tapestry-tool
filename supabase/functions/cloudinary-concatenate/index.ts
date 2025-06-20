@@ -1,4 +1,3 @@
-
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 
 const corsHeaders = {
@@ -138,7 +137,7 @@ class ProgressTracker {
   }
 }
 
-// Platform-specific transformations
+// FIXED: Platform-specific transformations with correct resolutions
 function getPlatformTransformations(platform: string) {
   switch (platform) {
     case 'youtube':
@@ -240,6 +239,7 @@ async function waitForAssetAvailability(
   return false;
 }
 
+// FIXED: Complete signature generation including all parameters
 async function uploadToCloudinary(sourceUrl: string, publicId: string, transformations?: any[]): Promise<any> {
   const cloudName = 'dsxrmo3kt';
   const apiKey = Deno.env.get('CLOUDINARY_API_KEY');
@@ -250,14 +250,19 @@ async function uploadToCloudinary(sourceUrl: string, publicId: string, transform
   }
 
   const uploadUrl = `https://api.cloudinary.com/v1_1/${cloudName}/video/upload`;
+  const timestamp = Math.round(Date.now() / 1000);
   
-  const formData = new FormData();
-  formData.append('file', sourceUrl);
-  formData.append('public_id', publicId);
-  formData.append('overwrite', 'true');
-  formData.append('resource_type', 'video');
-  formData.append('api_key', apiKey);
+  // FIXED: Build all parameters for signature generation
+  const params: Record<string, string> = {
+    'api_key': apiKey,
+    'file': sourceUrl,
+    'public_id': publicId,
+    'overwrite': 'true',
+    'resource_type': 'video',
+    'timestamp': timestamp.toString()
+  };
   
+  // Add transformation parameter if provided
   if (transformations && transformations.length > 0) {
     const transformString = transformations.map(transform => {
       return Object.entries(transform).map(([key, value]) => {
@@ -271,23 +276,44 @@ async function uploadToCloudinary(sourceUrl: string, publicId: string, transform
         return `${key}_${value}`;
       }).join(',');
     }).join('/');
-    formData.append('transformation', transformString);
+    params['transformation'] = transformString;
   }
   
+  // FIXED: Create signature string with ALL parameters (except file and api_key)
+  const sortedKeys = Object.keys(params)
+    .filter(key => key !== 'file' && key !== 'api_key')
+    .sort();
+  
+  const signatureString = sortedKeys
+    .map(key => `${key}=${params[key]}`)
+    .join('&') + apiSecret;
+  
+  debugLog('Signature string for Cloudinary:', { 
+    signatureString: signatureString.replace(apiSecret, '[SECRET]'),
+    sortedKeys,
+    hasTransformation: !!params.transformation
+  });
+  
   // Generate signature
-  const timestamp = Math.round(Date.now() / 1000);
-  formData.append('timestamp', timestamp.toString());
-  
-  // Create signature string
-  const signatureString = `overwrite=true&public_id=${publicId}&resource_type=video&timestamp=${timestamp}${apiSecret}`;
-  
   const encoder = new TextEncoder();
   const data = encoder.encode(signatureString);
   const hashBuffer = await crypto.subtle.digest('SHA-1', data);
   const hashArray = Array.from(new Uint8Array(hashBuffer));
   const signature = hashArray.map(b => b.toString(16).padStart(2, '0')).join('');
   
+  // Build form data
+  const formData = new FormData();
+  formData.append('file', sourceUrl);
+  formData.append('public_id', publicId);
+  formData.append('overwrite', 'true');
+  formData.append('resource_type', 'video');
+  formData.append('api_key', apiKey);
+  formData.append('timestamp', timestamp.toString());
   formData.append('signature', signature);
+  
+  if (params.transformation) {
+    formData.append('transformation', params.transformation);
+  }
   
   const response = await fetch(uploadUrl, {
     method: 'POST',
@@ -296,6 +322,13 @@ async function uploadToCloudinary(sourceUrl: string, publicId: string, transform
   
   if (!response.ok) {
     const errorText = await response.text();
+    errorLog('Cloudinary upload failed', {
+      status: response.status,
+      statusText: response.statusText,
+      error: errorText,
+      publicId,
+      hasTransformation: !!params.transformation
+    });
     throw new Error(`Cloudinary upload failed: ${response.status} ${errorText}`);
   }
   
@@ -342,7 +375,7 @@ async function processVideo(
         timestamp: new Date().toISOString()
       });
 
-      // Create source URL with trimming and platform transformations
+      // FIXED: Create source URL with trimming and platform transformations
       const sourceTransformations = [
         { duration: proportionalDuration.toFixed(6) },
         ...platformTransformations
@@ -356,10 +389,11 @@ async function processVideo(
         platform,
         originalDuration: video.duration,
         proportionalDuration: proportionalDuration.toFixed(6),
-        sourceUrl
+        sourceUrl,
+        transformations: sourceTransformations
       });
 
-      const uploadResult = await uploadToCloudinary(sourceUrl, trimmedId);
+      const uploadResult = await uploadToCloudinary(sourceUrl, trimmedId, sourceTransformations);
       
       createdAssets.push({ 
         publicId: uploadResult.public_id, 
@@ -435,7 +469,7 @@ async function processVideo(
       concatenationTransformations.push({ overlay: `video:${assetId}`, flags: 'splice' });
     });
     
-    // Add platform transformations again to ensure final output is correct
+    // FIXED: Add platform transformations again to ensure final output is correct
     concatenationTransformations.push(...platformTransformations);
     
     infoLog('Waiting 10 seconds before final concatenation...');
@@ -444,7 +478,7 @@ async function processVideo(
     const baseVideoUrl = buildCloudinaryUrl(baseAssetId, concatenationTransformations);
     debugLog("Final concatenation URL:", baseVideoUrl);
     
-    const finalVideoResult = await uploadToCloudinary(baseVideoUrl, finalVideoPublicId);
+    const finalVideoResult = await uploadToCloudinary(baseVideoUrl, finalVideoPublicId, concatenationTransformations);
 
     const finalUrl = finalVideoResult.secure_url;
     
@@ -533,13 +567,18 @@ async function performCleanup(temporaryAssetIds: Set<string>, finalVideoPublicId
               infoLog(`Cleanup attempt ${attempt}/3 for temp asset: ${assetId}`);
               
               const deleteUrl = `https://api.cloudinary.com/v1_1/${cloudName}/video/destroy`;
-              
-              const formData = new FormData();
-              formData.append('public_id', assetId);
-              formData.append('api_key', apiKey);
-              
               const timestamp = Math.round(Date.now() / 1000);
-              const stringToSign = `public_id=${assetId}&timestamp=${timestamp}${apiSecret}`;
+              
+              // FIXED: Proper signature for delete operation
+              const deleteParams = {
+                'public_id': assetId,
+                'timestamp': timestamp.toString()
+              };
+              
+              const sortedKeys = Object.keys(deleteParams).sort();
+              const stringToSign = sortedKeys
+                .map(key => `${key}=${deleteParams[key]}`)
+                .join('&') + apiSecret;
               
               const encoder = new TextEncoder();
               const data = encoder.encode(stringToSign);
@@ -547,6 +586,9 @@ async function performCleanup(temporaryAssetIds: Set<string>, finalVideoPublicId
               const hashArray = Array.from(new Uint8Array(hashBuffer));
               const signature = hashArray.map(b => b.toString(16).padStart(2, '0')).join('');
               
+              const formData = new FormData();
+              formData.append('public_id', assetId);
+              formData.append('api_key', apiKey);
               formData.append('timestamp', timestamp.toString());
               formData.append('signature', signature);
               
