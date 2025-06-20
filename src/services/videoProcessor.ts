@@ -65,7 +65,7 @@ export class VideoProcessor {
       const videosWithExactDurations = await this.detectAllExactDurations(validSequences, (progress) => onProgress?.(progress, { phase: 'duration_detection', message: 'Detecting durations...' }));
       onProgress?.(35, { phase: 'duration_detection', message: 'Durations detected.' });
 
-      // Step 3: Prepare request with exact durations
+      // Step 3: Prepare request with exact durations and platform
       const requestBody = {
         videos: videosWithExactDurations.map(video => ({
           publicId: video.publicId,
@@ -73,7 +73,7 @@ export class VideoProcessor {
           source: video.detectionSource
         })),
         targetDuration: options.duration,
-        platform: options.platform, // Pass platform to the backend
+        platform: options.platform, // <-- FIX: Pass platform to the backend
         exactDurations: true,
         enableProgress: false // Disable SSE for now
       };
