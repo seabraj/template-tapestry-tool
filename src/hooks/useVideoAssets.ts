@@ -47,7 +47,7 @@ export const useVideoAssets = (platformFilter?: string) => {
         .eq('is_active', true)
         .order('created_at', { ascending: false });
 
-      // Filter by platform if specified
+      // If platform filter is specified, try to match categories but also include uncategorized videos
       if (platformFilter) {
         const { data: categories } = await supabase
           .from('video_categories')
@@ -56,11 +56,11 @@ export const useVideoAssets = (platformFilter?: string) => {
         
         if (categories && categories.length > 0) {
           // Include videos that match the platform category OR have no category (null)
-          query = query.or(`category_id.in.(${categories.map(c => c.id).join(',')}),category_id.is.null`);
-        } else {
-          // If no platform categories found, show videos with no category
-          query = query.is('category_id', null);
+          const categoryIds = categories.map(c => c.id).join(',');
+          query = query.or(`category_id.in.(${categoryIds}),category_id.is.null`);
         }
+        // If no matching categories found, still show uncategorized videos
+        // Remove the else clause that was hiding videos
       }
 
       const { data, error } = await query;
@@ -71,6 +71,8 @@ export const useVideoAssets = (platformFilter?: string) => {
       }
       
       console.log('Fetched video assets:', data?.length || 0, 'assets');
+      console.log('Platform filter:', platformFilter);
+      console.log('Assets data:', data);
       setAssets(data || []);
     } catch (err: any) {
       console.error('Error fetching video assets:', err);
