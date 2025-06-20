@@ -270,6 +270,8 @@ async function processVideo(
     const createdAssets = [];
     const platformTransformations = getPlatformTransformations(platform);
     
+    infoLog(`Platform transformations for ${platform}:`, platformTransformations);
+    
     for (let i = 0; i < videos.length; i++) {
       const video = videos[i];
       const proportionalDuration = (video.duration / totalOriginalDuration) * targetDuration;
@@ -284,13 +286,17 @@ async function processVideo(
         timestamp: new Date().toISOString()
       });
 
-      // Apply both duration trimming and platform formatting
+      // Create transformation array step by step
+      const transformationArray = [
+        { duration: proportionalDuration.toFixed(6) }
+      ];
+      
+      // Add platform-specific transformations
+      transformationArray.push(...platformTransformations);
+      
       const trimmedUrl = cloudinary.url(video.publicId, {
         resource_type: 'video',
-        transformation: [
-          { duration: proportionalDuration.toFixed(6) },
-          ...platformTransformations
-        ]
+        transformation: transformationArray
       });
       
       debugLog(`Creating trimmed and formatted video ${i + 1}/${videos.length}`, {
@@ -299,7 +305,8 @@ async function processVideo(
         platform,
         originalDuration: video.duration,
         proportionalDuration: proportionalDuration.toFixed(6),
-        transformations: platformTransformations
+        transformations: transformationArray,
+        generatedUrl: trimmedUrl
       });
 
       const uploadResult = await cloudinary.uploader.upload(trimmedUrl, {
