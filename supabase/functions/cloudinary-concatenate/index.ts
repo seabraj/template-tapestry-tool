@@ -1,20 +1,13 @@
+
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
-import { v2 as cloudinary } from 'npm:cloudinary@^1.41.1';
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
   'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
 };
 
-cloudinary.config({
-  cloud_name: 'dsxrmo3kt',
-  api_key: Deno.env.get('CLOUDINARY_API_KEY'),
-  api_secret: Deno.env.get('CLOUDINARY_API_SECRET'),
-  secure: true,
-});
-
 // Environment-based logging configuration
-const LOG_LEVEL = Deno.env.get('LOG_LEVEL') || 'INFO'; // DEBUG, INFO, WARN, ERROR
+const LOG_LEVEL = Deno.env.get('LOG_LEVEL') || 'INFO';
 const IS_PRODUCTION = Deno.env.get('ENVIRONMENT') === 'production';
 
 enum LogLevel {
@@ -36,7 +29,7 @@ function log(level: keyof typeof LogLevel, message: string, data?: any, includeT
   const messageLogLevel = LOG_LEVEL_MAP[level];
   
   if (messageLogLevel < currentLogLevel) {
-    return; // Skip if message level is below current threshold
+    return;
   }
   
   const timestamp = includeTimestamp ? `[${new Date().toISOString()}]` : '';
@@ -46,20 +39,17 @@ function log(level: keyof typeof LogLevel, message: string, data?: any, includeT
   
   if (data) {
     if (IS_PRODUCTION) {
-      // In production, only log essential data and avoid deep object logging
       if (level === 'ERROR' || level === 'WARN') {
         console.log(`${timestamp} ${prefix} Data:`, JSON.stringify(data, null, 2));
       } else {
         console.log(`${timestamp} ${prefix} Data:`, JSON.stringify(data));
       }
     } else {
-      // In development, log everything with formatting
       console.log(`${timestamp} ${prefix} Data:`, JSON.stringify(data, null, 2));
     }
   }
 }
 
-// Convenience functions
 function debugLog(message: string, data?: any) {
   log('DEBUG', message, data);
 }
@@ -79,7 +69,7 @@ function errorLog(message: string, data?: any) {
 // Progress tracking interface
 interface ProgressUpdate {
   phase: string;
-  progress: number; // 0-100
+  progress: number;
   message: string;
   details?: any;
   timestamp: string;
@@ -103,7 +93,6 @@ class ProgressTracker {
       }
     }
     
-    // Also log for debugging
     infoLog(`Progress: ${update.progress}% - ${update.message}`, { 
       phase: update.phase, 
       details: update.details 
@@ -175,18 +164,60 @@ function getPlatformTransformations(platform: string) {
   }
 }
 
+// Build Cloudinary URL manually
+function buildCloudinaryUrl(publicId: string, transformations: any[]): string {
+  const cloudName = 'dsxrmo3kt';
+  let url = `https://res.cloudinary.com/${cloudName}/video/upload/`;
+  
+  // Convert transformations to string format
+  const transformString = transformations.map(transform => {
+    return Object.entries(transform).map(([key, value]) => {
+      // Handle special cases
+      if (key === 'overlay') return `l_${value}`;
+      if (key === 'flags') return `fl_${value}`;
+      if (key === 'gravity') return `g_${value}`;
+      if (key === 'crop') return `c_${value}`;
+      if (key === 'width') return `w_${value}`;
+      if (key === 'height') return `h_${value}`;
+      if (key === 'quality') return `q_${value}`;
+      if (key === 'audio_codec') return `ac_${value}`;
+      if (key === 'duration') return `du_${value}`;
+      
+      return `${key}_${value}`;
+    }).join(',');
+  }).join('/');
+  
+  return `${url}${transformString}/${publicId}`;
+}
+
 async function waitForAssetAvailability(
   publicId: string, 
   resourceType: string = 'video', 
-  maxAttempts: number = 15,
+  maxAttempts: number = 30,
   progressTracker?: ProgressTracker
 ): Promise<boolean> {
+  const cloudName = 'dsxrmo3kt';
+  const apiKey = Deno.env.get('CLOUDINARY_API_KEY');
+  const apiSecret = Deno.env.get('CLOUDINARY_API_SECRET');
+
+  if (!apiKey || !apiSecret) {
+    throw new Error('Missing Cloudinary credentials for asset verification');
+  }
+
   for (let attempt = 1; attempt <= maxAttempts; attempt++) {
     try {
-      const result = await cloudinary.api.resource(publicId, { resource_type: resourceType });
-      if (result && result.public_id) {
-        debugLog(`Asset ${publicId} is available (attempt ${attempt})`);
-        return true;
+      const response = await fetch(`https://api.cloudinary.com/v1_1/${cloudName}/resources/${resourceType}/${publicId}`, {
+        headers: {
+          'Authorization': `Basic ${btoa(`${apiKey}:${apiSecret}`)}`
+        }
+      });
+
+      if (response.ok) {
+        const result = await response.json();
+        if (result && result.public_id) {
+          debugLog(`Asset ${publicId} is available (attempt ${attempt})`);
+          return true;
+        }
       }
     } catch (error) {
       debugLog(`Asset ${publicId} not ready yet (attempt ${attempt}/${maxAttempts})`, error.message);
@@ -194,7 +225,7 @@ async function waitForAssetAvailability(
       if (progressTracker) {
         progressTracker.sendProgress({
           phase: 'asset_verification',
-          progress: 35 + (attempt / maxAttempts) * 10, // 35-45% range
+          progress: 35 + (attempt / maxAttempts) * 10,
           message: `Verifying asset ${publicId.split('_').pop()}... (${attempt}/${maxAttempts})`,
           timestamp: new Date().toISOString()
         });
@@ -203,49 +234,72 @@ async function waitForAssetAvailability(
       if (attempt === maxAttempts) {
         throw new Error(`Asset ${publicId} never became available after ${maxAttempts} attempts`);
       }
-      // Wait longer between retries
-      await new Promise(resolve => setTimeout(resolve, 3000));
+      await new Promise(resolve => setTimeout(resolve, 5000));
     }
   }
   return false;
 }
 
-async function buildConcatenationUrl(assetIds: string[], platform: string): Promise<string> {
-  if (assetIds.length === 0) {
-    throw new Error('No assets to concatenate');
+async function uploadToCloudinary(sourceUrl: string, publicId: string, transformations?: any[]): Promise<any> {
+  const cloudName = 'dsxrmo3kt';
+  const apiKey = Deno.env.get('CLOUDINARY_API_KEY');
+  const apiSecret = Deno.env.get('CLOUDINARY_API_SECRET');
+
+  if (!apiKey || !apiSecret) {
+    throw new Error('Missing Cloudinary credentials');
   }
 
-  const platformTransformations = getPlatformTransformations(platform);
-
-  if (assetIds.length === 1) {
-    // Single video, just return its URL with platform transformations
-    return cloudinary.url(assetIds[0], {
-      resource_type: 'video',
-      transformation: platformTransformations
-    });
+  const uploadUrl = `https://api.cloudinary.com/v1_1/${cloudName}/video/upload`;
+  
+  const formData = new FormData();
+  formData.append('file', sourceUrl);
+  formData.append('public_id', publicId);
+  formData.append('overwrite', 'true');
+  formData.append('resource_type', 'video');
+  formData.append('api_key', apiKey);
+  
+  if (transformations && transformations.length > 0) {
+    const transformString = transformations.map(transform => {
+      return Object.entries(transform).map(([key, value]) => {
+        if (key === 'gravity') return `g_${value}`;
+        if (key === 'crop') return `c_${value}`;
+        if (key === 'width') return `w_${value}`;
+        if (key === 'height') return `h_${value}`;
+        if (key === 'quality') return `q_${value}`;
+        if (key === 'audio_codec') return `ac_${value}`;
+        if (key === 'duration') return `du_${value}`;
+        return `${key}_${value}`;
+      }).join(',');
+    }).join('/');
+    formData.append('transformation', transformString);
   }
-
-  // For multiple videos, use the video overlay approach with fl_splice
-  const baseVideo = assetIds[0];
-  const overlayVideos = assetIds.slice(1);
-
-  const transformations = [];
-
-  // Add each overlay video with fl_splice
-  overlayVideos.forEach((videoId, index) => {
-    transformations.push({
-      overlay: `video:${videoId}`,
-      flags: 'splice'
-    });
+  
+  // Generate signature
+  const timestamp = Math.round(Date.now() / 1000);
+  formData.append('timestamp', timestamp.toString());
+  
+  // Create signature string
+  const signatureString = `overwrite=true&public_id=${publicId}&resource_type=video&timestamp=${timestamp}${apiSecret}`;
+  
+  const encoder = new TextEncoder();
+  const data = encoder.encode(signatureString);
+  const hashBuffer = await crypto.subtle.digest('SHA-1', data);
+  const hashArray = Array.from(new Uint8Array(hashBuffer));
+  const signature = hashArray.map(b => b.toString(16).padStart(2, '0')).join('');
+  
+  formData.append('signature', signature);
+  
+  const response = await fetch(uploadUrl, {
+    method: 'POST',
+    body: formData
   });
-
-  // Add platform-specific transformations
-  transformations.push(...platformTransformations);
-
-  return cloudinary.url(baseVideo, {
-    resource_type: 'video',
-    transformation: transformations
-  });
+  
+  if (!response.ok) {
+    const errorText = await response.text();
+    throw new Error(`Cloudinary upload failed: ${response.status} ${errorText}`);
+  }
+  
+  return await response.json();
 }
 
 async function processVideo(
@@ -282,24 +336,19 @@ async function processVideo(
 
       progressTracker.sendProgress({
         phase: 'trimming',
-        progress: 5 + (i / videos.length) * 25, // 5-30% range
+        progress: 5 + (i / videos.length) * 25,
         message: `Processing video ${i + 1} of ${videos.length} for ${platform}...`,
         details: { videoIndex: i, trimmedId, platform },
         timestamp: new Date().toISOString()
       });
 
-      // Create transformation array step by step
-      const transformationArray = [
-        { duration: proportionalDuration.toFixed(6) }
+      // Create source URL with trimming and platform transformations
+      const sourceTransformations = [
+        { duration: proportionalDuration.toFixed(6) },
+        ...platformTransformations
       ];
       
-      // Add platform-specific transformations
-      transformationArray.push(...platformTransformations);
-      
-      const trimmedUrl = cloudinary.url(video.publicId, {
-        resource_type: 'video',
-        transformation: transformationArray
-      });
+      const sourceUrl = buildCloudinaryUrl(video.publicId, sourceTransformations);
       
       debugLog(`Creating trimmed and formatted video ${i + 1}/${videos.length}`, {
         originalId: video.publicId,
@@ -307,15 +356,10 @@ async function processVideo(
         platform,
         originalDuration: video.duration,
         proportionalDuration: proportionalDuration.toFixed(6),
-        transformations: transformationArray,
-        generatedUrl: trimmedUrl
+        sourceUrl
       });
 
-      const uploadResult = await cloudinary.uploader.upload(trimmedUrl, {
-        resource_type: 'video',
-        public_id: trimmedId,
-        overwrite: true,
-      });
+      const uploadResult = await uploadToCloudinary(sourceUrl, trimmedId);
       
       createdAssets.push({ 
         publicId: uploadResult.public_id, 
@@ -343,12 +387,11 @@ async function processVideo(
 
     const sortedAssets = createdAssets.sort((a, b) => a.order - b.order);
     
-    // Wait longer before checking availability
-    infoLog('Waiting 8 seconds for assets to be fully processed...');
-    await new Promise(resolve => setTimeout(resolve, 8000));
+    infoLog('Waiting 15 seconds for assets to be fully processed...');
+    await new Promise(resolve => setTimeout(resolve, 15000));
     
     for (const asset of sortedAssets) {
-      await waitForAssetAvailability(asset.publicId, 'video', 15, progressTracker);
+      await waitForAssetAvailability(asset.publicId, 'video', 30, progressTracker);
     }
     
     progressTracker.sendProgress({
@@ -359,7 +402,7 @@ async function processVideo(
     });
     
     // ====================================================================
-    // PHASE 2: CONCATENATE VIDEOS
+    // PHASE 2: CONCATENATE VIDEOS USING DIRECT API
     // ====================================================================
     progressTracker.sendProgress({
       phase: 'concatenation',
@@ -371,193 +414,83 @@ async function processVideo(
     const publicIdsToConcat = sortedAssets.map(asset => asset.publicId);
     debugLog("Assets to concatenate in order:", publicIdsToConcat);
 
-    // Method A: Try URL-based concatenation first (more reliable)
-    try {
-      progressTracker.sendProgress({
-        phase: 'concatenation',
-        progress: 55,
-        message: `Building ${platform} concatenation URL...`,
-        timestamp: new Date().toISOString()
-      });
+    // Use the first video as base and overlay others
+    const baseAssetId = publicIdsToConcat[0];
+    const overlayAssets = publicIdsToConcat.slice(1);
+    
+    progressTracker.sendProgress({
+      phase: 'concatenation',
+      progress: 65,
+      message: `Creating final ${platform} video...`,
+      timestamp: new Date().toISOString()
+    });
 
-      const concatenationUrl = await buildConcatenationUrl(publicIdsToConcat, platform);
-      debugLog("Built concatenation URL with platform formatting:", concatenationUrl);
+    const finalVideoPublicId = `p2_final_video_${timestamp}`;
+    
+    // Build concatenation transformations
+    const concatenationTransformations = [];
+    
+    // Add overlays with proper splice flag
+    overlayAssets.forEach(assetId => {
+      concatenationTransformations.push({ overlay: `video:${assetId}`, flags: 'splice' });
+    });
+    
+    // Add platform transformations again to ensure final output is correct
+    concatenationTransformations.push(...platformTransformations);
+    
+    infoLog('Waiting 10 seconds before final concatenation...');
+    await new Promise(resolve => setTimeout(resolve, 10000));
+    
+    const baseVideoUrl = buildCloudinaryUrl(baseAssetId, concatenationTransformations);
+    debugLog("Final concatenation URL:", baseVideoUrl);
+    
+    const finalVideoResult = await uploadToCloudinary(baseVideoUrl, finalVideoPublicId);
 
-      progressTracker.sendProgress({
-        phase: 'concatenation',
-        progress: 65,
-        message: `Creating final ${platform} video...`,
-        timestamp: new Date().toISOString()
-      });
+    const finalUrl = finalVideoResult.secure_url;
+    
+    infoLog(`Final ${platform} video created and will be preserved: ${finalVideoPublicId}`);
+    
+    progressTracker.sendProgress({
+      phase: 'concatenation',
+      progress: 80,
+      message: `${platform} video concatenation completed successfully`,
+      details: { method: 'direct_api_concatenation', finalUrl, finalVideoId: finalVideoPublicId, platform },
+      timestamp: new Date().toISOString()
+    });
 
-      const finalVideoPublicId = `p2_final_video_${timestamp}`;
-      
-      // Wait a bit more before final concatenation
-      infoLog('Waiting 5 seconds before final concatenation...');
-      await new Promise(resolve => setTimeout(resolve, 5000));
-      
-      const finalVideoResult = await cloudinary.uploader.upload(concatenationUrl, {
-        resource_type: 'video',
-        public_id: finalVideoPublicId,
-        overwrite: true,
-        transformation: [
-          { quality: 'auto:good' }
-        ]
-      });
+    // ====================================================================
+    // PHASE 3: CLEANUP (ONLY TEMP FILES)
+    // ====================================================================
+    progressTracker.sendProgress({
+      phase: 'cleanup',
+      progress: 85,
+      message: 'Cleaning up temporary processing files...',
+      timestamp: new Date().toISOString()
+    });
 
-      const finalUrl = finalVideoResult.secure_url;
-      
-      infoLog(`Final ${platform} video created and will be preserved: ${finalVideoPublicId}`);
-      
-      progressTracker.sendProgress({
-        phase: 'concatenation',
-        progress: 80,
-        message: `${platform} video concatenation completed successfully`,
-        details: { method: 'url_concatenation', finalUrl, finalVideoId: finalVideoPublicId, platform },
-        timestamp: new Date().toISOString()
-      });
+    await performCleanup(temporaryAssetIds, finalVideoPublicId);
+    
+    progressTracker.sendProgress({
+      phase: 'cleanup',
+      progress: 95,
+      message: 'Cleanup completed - temp files removed, final videos preserved',
+      timestamp: new Date().toISOString()
+    });
 
-      // ====================================================================
-      // PHASE 3: ENHANCED CLEANUP (ONLY TEMP FILES)
-      // ====================================================================
-      progressTracker.sendProgress({
-        phase: 'cleanup',
-        progress: 85,
-        message: 'Cleaning up temporary processing files...',
-        timestamp: new Date().toISOString()
-      });
-
-      await performCleanup(temporaryAssetIds, finalVideoPublicId);
-      
-      progressTracker.sendProgress({
-        phase: 'cleanup',
-        progress: 95,
-        message: 'Cleanup completed - temp files removed, final videos preserved',
-        timestamp: new Date().toISOString()
-      });
-
-      return {
-        url: finalUrl,
-        method: 'url_concatenation',
-        stats: {
-          inputVideos: videos.length,
-          totalOriginalDuration: totalOriginalDuration.toFixed(3),
-          targetDuration: targetDuration.toFixed(3),
-          trimmedAssets: createdAssets.length,
-          platform,
-          platformTransformations
-        }
-      };
-
-    } catch (urlError) {
-      warnLog("URL-based concatenation failed, trying manifest method", urlError);
-      
-      progressTracker.sendProgress({
-        phase: 'concatenation',
-        progress: 55,
-        message: 'URL method failed, trying manifest-based concatenation...',
-        timestamp: new Date().toISOString()
-      });
-      
-      // Method B: Fallback to manifest-based concatenation (FIXED)
-      const manifestLines = ['# Video Concatenation Manifest'];
-      sortedAssets.forEach(asset => {
-        manifestLines.push(`file '${asset.publicId}'`);
-      });
-      const manifestContent = manifestLines.join('\n');
-      
-      debugLog("Manifest content:", manifestContent);
-      
-      const manifestPublicId = `p2_manifest_${timestamp}`;
-      temporaryAssetIds.add(manifestPublicId);
-      
-      // Upload manifest as raw text file
-      await cloudinary.uploader.upload(`data:text/plain;base64,${btoa(manifestContent)}`, {
-        resource_type: 'raw',
-        public_id: manifestPublicId,
-        overwrite: true,
-      });
-      
-      // Wait for manifest to be available
-      await waitForAssetAvailability(manifestPublicId, 'raw');
-      
-      progressTracker.sendProgress({
-        phase: 'concatenation',
-        progress: 70,
-        message: `Creating final ${platform} video from manifest...`,
-        timestamp: new Date().toISOString()
-      });
-      
-      const finalVideoPublicId = `p2_final_video_${timestamp}`;
-      
-      // Create a simple concatenation using first video as base with overlays
-      // This is a more reliable method than using manifest for concatenation
-      const baseAsset = sortedAssets[0];
-      const overlayAssets = sortedAssets.slice(1);
-      
-      const concatenationTransformations = [];
-      
-      // Add overlays for each additional video
-      overlayAssets.forEach(asset => {
-        concatenationTransformations.push({
-          overlay: `video:${asset.publicId}`,
-          flags: 'splice'
-        });
-      });
-      
-      // Add platform transformations
-      concatenationTransformations.push(...platformTransformations);
-      
-      const finalVideoResult = await cloudinary.uploader.upload(
-        cloudinary.url(baseAsset.publicId, {
-          resource_type: 'video',
-          transformation: concatenationTransformations
-        }),
-        {
-          resource_type: 'video',
-          public_id: finalVideoPublicId,
-          overwrite: true,
-        }
-      );
-
-      const finalUrl = finalVideoResult.secure_url;
-      
-      infoLog(`Final ${platform} video created via improved method and will be preserved: ${finalVideoPublicId}`);
-      
-      progressTracker.sendProgress({
-        phase: 'concatenation',
-        progress: 80,
-        message: `${platform} video concatenation completed via improved method`,
-        details: { method: 'improved_concatenation', finalUrl, finalVideoId: finalVideoPublicId, platform },
-        timestamp: new Date().toISOString()
-      });
-
-      // Cleanup
-      await performCleanup(temporaryAssetIds, finalVideoPublicId);
-
-      progressTracker.sendProgress({
-        phase: 'cleanup',
-        progress: 95,
-        message: 'Cleanup completed',
-        timestamp: new Date().toISOString()
-      });
-
-      return {
-        url: finalUrl,
-        method: 'improved_concatenation',
-        stats: {
-          inputVideos: videos.length,
-          totalOriginalDuration: totalOriginalDuration.toFixed(3),
-          targetDuration: targetDuration.toFixed(3),
-          trimmedAssets: createdAssets.length,
-          platform,
-          platformTransformations
-        }
-      };
-    }
+    return {
+      url: finalUrl,
+      method: 'direct_api_concatenation',
+      stats: {
+        inputVideos: videos.length,
+        totalOriginalDuration: totalOriginalDuration.toFixed(3),
+        targetDuration: targetDuration.toFixed(3),
+        trimmedAssets: createdAssets.length,
+        platform,
+        platformTransformations
+      }
+    };
 
   } catch (error) {
-    // Cleanup on error
     await performCleanup(temporaryAssetIds, '');
     throw error;
   }
@@ -565,9 +498,8 @@ async function processVideo(
 
 async function performCleanup(temporaryAssetIds: Set<string>, finalVideoPublicId: string) {
   if (temporaryAssetIds.size > 0) {
-    // Filter to only delete temporary files, NOT final videos
     const idsToDelete = Array.from(temporaryAssetIds).filter(id => 
-      (id.startsWith('p1_trimmed_') || id.startsWith('p2_manifest_')) && id !== finalVideoPublicId
+      id.startsWith('p1_trimmed_') && id !== finalVideoPublicId
     );
     
     infoLog(`Cleanup strategy: Delete ${idsToDelete.length} temp files, keep final video ${finalVideoPublicId}`, {
@@ -577,49 +509,72 @@ async function performCleanup(temporaryAssetIds: Set<string>, finalVideoPublicId
     
     if (idsToDelete.length > 0) {
       try {
-        // Wait longer for assets to be fully processed and available for deletion
-        infoLog('Waiting 5 seconds for temp assets to be fully processed...');
-        await new Promise(resolve => setTimeout(resolve, 5000));
+        infoLog('Waiting 10 seconds for temp assets to be fully processed...');
+        await new Promise(resolve => setTimeout(resolve, 10000));
+        
+        const cloudName = 'dsxrmo3kt';
+        const apiKey = Deno.env.get('CLOUDINARY_API_KEY');
+        const apiSecret = Deno.env.get('CLOUDINARY_API_SECRET');
+
+        if (!apiKey || !apiSecret) {
+          warnLog('Missing Cloudinary credentials for cleanup');
+          return;
+        }
         
         let successCount = 0;
         let failCount = 0;
         
-        // Delete only temporary assets one by one with detailed logging and retries
         for (const assetId of idsToDelete) {
           let deleted = false;
           let lastError = null;
           
-          // Try up to 3 times for each temp asset
           for (let attempt = 1; attempt <= 3; attempt++) {
             try {
               infoLog(`Cleanup attempt ${attempt}/3 for temp asset: ${assetId}`);
               
-              const resourceType = assetId.startsWith('p2_manifest_') ? 'raw' : 'video';
-              const result = await cloudinary.api.delete_resources([assetId], { 
-                resource_type: resourceType,
-                invalidate: true // Force cache invalidation
+              const deleteUrl = `https://api.cloudinary.com/v1_1/${cloudName}/video/destroy`;
+              
+              const formData = new FormData();
+              formData.append('public_id', assetId);
+              formData.append('api_key', apiKey);
+              
+              const timestamp = Math.round(Date.now() / 1000);
+              const stringToSign = `public_id=${assetId}&timestamp=${timestamp}${apiSecret}`;
+              
+              const encoder = new TextEncoder();
+              const data = encoder.encode(stringToSign);
+              const hashBuffer = await crypto.subtle.digest('SHA-1', data);
+              const hashArray = Array.from(new Uint8Array(hashBuffer));
+              const signature = hashArray.map(b => b.toString(16).padStart(2, '0')).join('');
+              
+              formData.append('timestamp', timestamp.toString());
+              formData.append('signature', signature);
+              
+              const response = await fetch(deleteUrl, {
+                method: 'POST',
+                body: formData
               });
               
-              infoLog(`Deletion API response for ${assetId}:`, result);
-              
-              // Check if actually deleted
-              if (result.deleted && (result.deleted[assetId] === 'deleted' || result.deleted[assetId] === 'not_found')) {
-                successCount++;
-                deleted = true;
-                infoLog(`✅ Successfully processed temp asset: ${assetId}`);
-                break;
+              if (response.ok) {
+                const result = await response.json();
+                if (result.result === 'ok' || result.result === 'not found') {
+                  successCount++;
+                  deleted = true;
+                  infoLog(`✅ Successfully deleted: ${assetId}`);
+                  break;
+                } else {
+                  lastError = `Unexpected deletion result: ${JSON.stringify(result)}`;
+                }
               } else {
-                lastError = `Unexpected deletion result: ${JSON.stringify(result)}`;
-                warnLog(`Attempt ${attempt} failed for ${assetId}:`, lastError);
+                const errorText = await response.text();
+                lastError = `HTTP error: ${response.status} ${errorText}`;
               }
               
             } catch (deleteError) {
               lastError = deleteError?.message || 'Unknown error';
-              warnLog(`Attempt ${attempt} failed for ${assetId}:`, lastError);
               
-              // Wait before retry
               if (attempt < 3) {
-                await new Promise(resolve => setTimeout(resolve, 2000));
+                await new Promise(resolve => setTimeout(resolve, 3000));
               }
             }
           }
@@ -629,8 +584,7 @@ async function performCleanup(temporaryAssetIds: Set<string>, finalVideoPublicId
             errorLog(`❌ Failed to delete temp asset after 3 attempts: ${assetId}`, lastError);
           }
           
-          // Small delay between assets
-          await new Promise(resolve => setTimeout(resolve, 500));
+          await new Promise(resolve => setTimeout(resolve, 1000));
         }
         
         infoLog(`Cleanup summary: ${successCount}/${idsToDelete.length} temp assets processed`, {
@@ -673,14 +627,11 @@ serve(async (req) => {
       enableProgress
     });
 
-    // Check if client wants progress updates
     if (enableProgress) {
-      // Return Server-Sent Events stream for progress updates
       const stream = new ReadableStream({
         start(controller) {
           const progressTracker = new ProgressTracker(controller);
           
-          // Send initial progress
           progressTracker.sendProgress({
             phase: 'initialization',
             progress: 0,
@@ -688,7 +639,6 @@ serve(async (req) => {
             timestamp: new Date().toISOString()
           });
 
-          // Process video asynchronously
           processVideo(videos, targetDuration, platform, progressTracker)
             .then(result => {
               progressTracker.complete(result);
@@ -709,8 +659,7 @@ serve(async (req) => {
         },
       });
     } else {
-      // Traditional request-response
-      const progressTracker = new ProgressTracker(); // No SSE controller, but still tracks progress
+      const progressTracker = new ProgressTracker();
       const result = await processVideo(videos, targetDuration, platform, progressTracker);
       
       return new Response(JSON.stringify({ 
