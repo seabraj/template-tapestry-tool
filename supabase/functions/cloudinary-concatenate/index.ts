@@ -178,21 +178,23 @@ function getPlatformTransformations(platform: string) {
 async function waitForAssetAvailability(
   publicId: string, 
   resourceType: string = 'video', 
-  maxAttempts: number = 10,
+  maxAttempts: number = 15,
   progressTracker?: ProgressTracker
 ): Promise<boolean> {
   for (let attempt = 1; attempt <= maxAttempts; attempt++) {
     try {
-      await cloudinary.api.resource(publicId, { resource_type: resourceType });
-      debugLog(`Asset ${publicId} is available (attempt ${attempt})`);
-      return true;
+      const result = await cloudinary.api.resource(publicId, { resource_type: resourceType });
+      if (result && result.public_id) {
+        debugLog(`Asset ${publicId} is available (attempt ${attempt})`);
+        return true;
+      }
     } catch (error) {
-      debugLog(`Asset ${publicId} not ready yet (attempt ${attempt}/${maxAttempts})`);
+      debugLog(`Asset ${publicId} not ready yet (attempt ${attempt}/${maxAttempts})`, error.message);
       
       if (progressTracker) {
         progressTracker.sendProgress({
           phase: 'asset_verification',
-          progress: 35 + (attempt / maxAttempts) * 5, // 35-40% range
+          progress: 35 + (attempt / maxAttempts) * 10, // 35-45% range
           message: `Verifying asset ${publicId.split('_').pop()}... (${attempt}/${maxAttempts})`,
           timestamp: new Date().toISOString()
         });
@@ -201,8 +203,8 @@ async function waitForAssetAvailability(
       if (attempt === maxAttempts) {
         throw new Error(`Asset ${publicId} never became available after ${maxAttempts} attempts`);
       }
-      // Wait 2 seconds before retrying
-      await new Promise(resolve => setTimeout(resolve, 2000));
+      // Wait longer between retries
+      await new Promise(resolve => setTimeout(resolve, 3000));
     }
   }
   return false;
@@ -341,13 +343,17 @@ async function processVideo(
 
     const sortedAssets = createdAssets.sort((a, b) => a.order - b.order);
     
+    // Wait longer before checking availability
+    infoLog('Waiting 8 seconds for assets to be fully processed...');
+    await new Promise(resolve => setTimeout(resolve, 8000));
+    
     for (const asset of sortedAssets) {
-      await waitForAssetAvailability(asset.publicId, 'video', 10, progressTracker);
+      await waitForAssetAvailability(asset.publicId, 'video', 15, progressTracker);
     }
     
     progressTracker.sendProgress({
       phase: 'asset_verification',
-      progress: 40,
+      progress: 45,
       message: 'All assets verified and ready for concatenation',
       timestamp: new Date().toISOString()
     });
@@ -357,7 +363,7 @@ async function processVideo(
     // ====================================================================
     progressTracker.sendProgress({
       phase: 'concatenation',
-      progress: 45,
+      progress: 50,
       message: `Combining videos for ${platform} output...`,
       timestamp: new Date().toISOString()
     });
@@ -369,7 +375,7 @@ async function processVideo(
     try {
       progressTracker.sendProgress({
         phase: 'concatenation',
-        progress: 50,
+        progress: 55,
         message: `Building ${platform} concatenation URL...`,
         timestamp: new Date().toISOString()
       });
@@ -379,12 +385,16 @@ async function processVideo(
 
       progressTracker.sendProgress({
         phase: 'concatenation',
-        progress: 60,
+        progress: 65,
         message: `Creating final ${platform} video...`,
         timestamp: new Date().toISOString()
       });
 
       const finalVideoPublicId = `p2_final_video_${timestamp}`;
+      
+      // Wait a bit more before final concatenation
+      infoLog('Waiting 5 seconds before final concatenation...');
+      await new Promise(resolve => setTimeout(resolve, 5000));
       
       const finalVideoResult = await cloudinary.uploader.upload(concatenationUrl, {
         resource_type: 'video',
@@ -397,7 +407,6 @@ async function processVideo(
 
       const finalUrl = finalVideoResult.secure_url;
       
-      // DO NOT add final video to cleanup list - this is the output we want to keep
       infoLog(`Final ${platform} video created and will be preserved: ${finalVideoPublicId}`);
       
       progressTracker.sendProgress({
@@ -418,103 +427,7 @@ async function processVideo(
         timestamp: new Date().toISOString()
       });
 
-      if (temporaryAssetIds.size > 0) {
-        // Filter to only delete temporary trimmed files, NOT final videos
-        const idsToDelete = Array.from(temporaryAssetIds).filter(id => 
-          id.startsWith('p1_trimmed_') || id.startsWith('p2_manifest_')
-        );
-        
-        // Do NOT delete p2_final_video_* files - these are the final outputs
-        const finalVideoIds = Array.from(temporaryAssetIds).filter(id => 
-          id.startsWith('p2_final_video_')
-        );
-        
-        infoLog(`Cleanup strategy: Delete ${idsToDelete.length} temp files, keep ${finalVideoIds.length} final videos`, {
-          toDelete: idsToDelete,
-          toKeep: finalVideoIds
-        });
-        
-        if (idsToDelete.length > 0) {
-          try {
-            // Wait longer for assets to be fully processed and available for deletion
-            infoLog('Waiting 5 seconds for temp assets to be fully processed...');
-            await new Promise(resolve => setTimeout(resolve, 5000));
-            
-            let successCount = 0;
-            let failCount = 0;
-            
-            // Delete only temporary assets one by one with detailed logging and retries
-            for (const assetId of idsToDelete) {
-              let deleted = false;
-              let lastError = null;
-              
-              // Try up to 3 times for each temp asset
-              for (let attempt = 1; attempt <= 3; attempt++) {
-                try {
-                  infoLog(`Cleanup attempt ${attempt}/3 for temp asset: ${assetId}`);
-                  
-                  const result = await cloudinary.api.delete_resources([assetId], { 
-                    resource_type: assetId.startsWith('p2_manifest_') ? 'raw' : 'video',
-                    invalidate: true // Force cache invalidation
-                  });
-                  
-                  infoLog(`Deletion API response for ${assetId}:`, result);
-                  
-                  // Check if actually deleted
-                  if (result.deleted && result.deleted[assetId] === 'deleted') {
-                    successCount++;
-                    deleted = true;
-                    infoLog(`✅ Successfully deleted temp asset: ${assetId}`);
-                    break;
-                  } else if (result.deleted && result.deleted[assetId] === 'not_found') {
-                    successCount++;
-                    deleted = true;
-                    infoLog(`✅ Temp asset not found (already deleted?): ${assetId}`);
-                    break;
-                  } else {
-                    lastError = `Unexpected deletion result: ${JSON.stringify(result)}`;
-                    warnLog(`Attempt ${attempt} failed for ${assetId}:`, lastError);
-                  }
-                  
-                } catch (deleteError) {
-                  lastError = deleteError.message;
-                  warnLog(`Attempt ${attempt} failed for ${assetId}:`, deleteError.message);
-                  
-                  // Wait before retry
-                  if (attempt < 3) {
-                    await new Promise(resolve => setTimeout(resolve, 2000));
-                  }
-                }
-              }
-              
-              if (!deleted) {
-                failCount++;
-                errorLog(`❌ Failed to delete temp asset after 3 attempts: ${assetId}`, lastError);
-              }
-              
-              // Small delay between assets
-              await new Promise(resolve => setTimeout(resolve, 500));
-            }
-            
-            infoLog(`Cleanup summary: ${successCount}/${idsToDelete.length} temp assets deleted`, {
-              successCount,
-              failCount,
-              totalTempAssets: idsToDelete.length,
-              keptFinalVideos: finalVideoIds.length,
-              successRate: `${((successCount / idsToDelete.length) * 100).toFixed(1)}%`
-            });
-            
-          } catch (cleanupError) {
-            errorLog("Cleanup process failed", {
-              error: cleanupError.message,
-              stack: cleanupError.stack,
-              tempAssetsToDelete: idsToDelete
-            });
-          }
-        } else {
-          infoLog("No temporary assets to clean up");
-        }
-      }
+      await performCleanup(temporaryAssetIds, finalVideoPublicId);
       
       progressTracker.sendProgress({
         phase: 'cleanup',
@@ -541,12 +454,12 @@ async function processVideo(
       
       progressTracker.sendProgress({
         phase: 'concatenation',
-        progress: 50,
+        progress: 55,
         message: 'URL method failed, trying manifest-based concatenation...',
         timestamp: new Date().toISOString()
       });
       
-      // Method B: Fallback to manifest-based concatenation
+      // Method B: Fallback to manifest-based concatenation (FIXED)
       const manifestLines = ['# Video Concatenation Manifest'];
       sortedAssets.forEach(asset => {
         manifestLines.push(`file '${asset.publicId}'`);
@@ -570,82 +483,57 @@ async function processVideo(
       
       progressTracker.sendProgress({
         phase: 'concatenation',
-        progress: 65,
+        progress: 70,
         message: `Creating final ${platform} video from manifest...`,
         timestamp: new Date().toISOString()
       });
       
-      // Get the manifest URL
-      const manifestUrl = cloudinary.url(manifestPublicId, { resource_type: 'raw' });
-      
       const finalVideoPublicId = `p2_final_video_${timestamp}`;
       
-      // Try using the manifest URL directly with platform transformations
-      const finalVideoResult = await cloudinary.uploader.upload(manifestUrl, {
-        resource_type: 'video',
-        public_id: finalVideoPublicId,
-        raw_convert: 'concatenate',
-        overwrite: true,
-        transformation: getPlatformTransformations(platform)
+      // Create a simple concatenation using first video as base with overlays
+      // This is a more reliable method than using manifest for concatenation
+      const baseAsset = sortedAssets[0];
+      const overlayAssets = sortedAssets.slice(1);
+      
+      const concatenationTransformations = [];
+      
+      // Add overlays for each additional video
+      overlayAssets.forEach(asset => {
+        concatenationTransformations.push({
+          overlay: `video:${asset.publicId}`,
+          flags: 'splice'
+        });
       });
+      
+      // Add platform transformations
+      concatenationTransformations.push(...platformTransformations);
+      
+      const finalVideoResult = await cloudinary.uploader.upload(
+        cloudinary.url(baseAsset.publicId, {
+          resource_type: 'video',
+          transformation: concatenationTransformations
+        }),
+        {
+          resource_type: 'video',
+          public_id: finalVideoPublicId,
+          overwrite: true,
+        }
+      );
 
       const finalUrl = finalVideoResult.secure_url;
       
-      // DO NOT add final video to cleanup list - this is the output we want to keep
-      infoLog(`Final ${platform} video created via manifest and will be preserved: ${finalVideoPublicId}`);
+      infoLog(`Final ${platform} video created via improved method and will be preserved: ${finalVideoPublicId}`);
       
       progressTracker.sendProgress({
         phase: 'concatenation',
         progress: 80,
-        message: `${platform} video concatenation completed via manifest method`,
-        details: { method: 'manifest_concatenation', finalUrl, finalVideoId: finalVideoPublicId, platform },
+        message: `${platform} video concatenation completed via improved method`,
+        details: { method: 'improved_concatenation', finalUrl, finalVideoId: finalVideoPublicId, platform },
         timestamp: new Date().toISOString()
       });
 
-      // Cleanup with improved deletion - only temp files
-      temporaryAssetIds.add(manifestPublicId);
-      if (temporaryAssetIds.size > 0) {
-        // Wait for assets to be fully processed
-        await new Promise(resolve => setTimeout(resolve, 2000));
-        
-        // Only delete temp files, NOT final videos
-        const tempVideoIds = Array.from(temporaryAssetIds).filter(id => 
-          id.startsWith('p1_trimmed_') && id !== finalVideoPublicId
-        );
-        
-        infoLog(`Manifest cleanup: Will delete ${tempVideoIds.length} temp files, keeping final video ${finalVideoPublicId}`);
-        
-        try {
-          // Delete temp video assets only
-          if (tempVideoIds.length > 0) {
-            for (const videoId of tempVideoIds) {
-              try {
-                await cloudinary.api.delete_resources([videoId], { resource_type: 'video' });
-                debugLog(`Successfully deleted temp video asset: ${videoId}`);
-              } catch (err) {
-                warnLog(`Failed to delete temp video asset: ${videoId}`, err.message);
-              }
-            }
-          }
-          
-          // Delete manifest asset (always temp)
-          try {
-            await cloudinary.api.delete_resources([manifestPublicId], { resource_type: 'raw' });
-            debugLog(`Successfully deleted manifest: ${manifestPublicId}`);
-          } catch (err) {
-            warnLog(`Failed to delete manifest: ${manifestPublicId}`, err.message);
-          }
-          
-          infoLog("Manifest method cleanup completed - temp files deleted, final video preserved");
-        } catch (cleanupError) {
-          errorLog("Manifest cleanup failed", {
-            error: cleanupError.message,
-            tempVideoAssets: tempVideoIds,
-            manifestAsset: manifestPublicId,
-            keptFinalVideo: finalVideoPublicId
-          });
-        }
-      }
+      // Cleanup
+      await performCleanup(temporaryAssetIds, finalVideoPublicId);
 
       progressTracker.sendProgress({
         phase: 'cleanup',
@@ -656,7 +544,7 @@ async function processVideo(
 
       return {
         url: finalUrl,
-        method: 'manifest_concatenation',
+        method: 'improved_concatenation',
         stats: {
           inputVideos: videos.length,
           totalOriginalDuration: totalOriginalDuration.toFixed(3),
@@ -669,37 +557,99 @@ async function processVideo(
     }
 
   } catch (error) {
-    // Cleanup on error with improved deletion - only temp files
-    if (temporaryAssetIds.size > 0) {
+    // Cleanup on error
+    await performCleanup(temporaryAssetIds, '');
+    throw error;
+  }
+}
+
+async function performCleanup(temporaryAssetIds: Set<string>, finalVideoPublicId: string) {
+  if (temporaryAssetIds.size > 0) {
+    // Filter to only delete temporary files, NOT final videos
+    const idsToDelete = Array.from(temporaryAssetIds).filter(id => 
+      (id.startsWith('p1_trimmed_') || id.startsWith('p2_manifest_')) && id !== finalVideoPublicId
+    );
+    
+    infoLog(`Cleanup strategy: Delete ${idsToDelete.length} temp files, keep final video ${finalVideoPublicId}`, {
+      toDelete: idsToDelete,
+      toKeep: finalVideoPublicId
+    });
+    
+    if (idsToDelete.length > 0) {
       try {
-        // Only delete temp files on error, not final videos
-        const tempIdsToDelete = Array.from(temporaryAssetIds).filter(id => 
-          id.startsWith('p1_trimmed_') || id.startsWith('p2_manifest_')
-        );
+        // Wait longer for assets to be fully processed and available for deletion
+        infoLog('Waiting 5 seconds for temp assets to be fully processed...');
+        await new Promise(resolve => setTimeout(resolve, 5000));
         
-        infoLog(`Error cleanup: attempting to delete ${tempIdsToDelete.length} temp assets`, tempIdsToDelete);
+        let successCount = 0;
+        let failCount = 0;
         
-        // Delete temp assets individually for better error handling
-        for (const assetId of tempIdsToDelete) {
-          try {
-            const resourceType = assetId.startsWith('p2_manifest_') ? 'raw' : 'video';
-            await cloudinary.api.delete_resources([assetId], { resource_type: resourceType });
-            debugLog(`Error cleanup: deleted ${assetId}`);
-          } catch (deleteErr) {
-            warnLog(`Error cleanup: failed to delete ${assetId}`, deleteErr.message);
+        // Delete only temporary assets one by one with detailed logging and retries
+        for (const assetId of idsToDelete) {
+          let deleted = false;
+          let lastError = null;
+          
+          // Try up to 3 times for each temp asset
+          for (let attempt = 1; attempt <= 3; attempt++) {
+            try {
+              infoLog(`Cleanup attempt ${attempt}/3 for temp asset: ${assetId}`);
+              
+              const resourceType = assetId.startsWith('p2_manifest_') ? 'raw' : 'video';
+              const result = await cloudinary.api.delete_resources([assetId], { 
+                resource_type: resourceType,
+                invalidate: true // Force cache invalidation
+              });
+              
+              infoLog(`Deletion API response for ${assetId}:`, result);
+              
+              // Check if actually deleted
+              if (result.deleted && (result.deleted[assetId] === 'deleted' || result.deleted[assetId] === 'not_found')) {
+                successCount++;
+                deleted = true;
+                infoLog(`✅ Successfully processed temp asset: ${assetId}`);
+                break;
+              } else {
+                lastError = `Unexpected deletion result: ${JSON.stringify(result)}`;
+                warnLog(`Attempt ${attempt} failed for ${assetId}:`, lastError);
+              }
+              
+            } catch (deleteError) {
+              lastError = deleteError?.message || 'Unknown error';
+              warnLog(`Attempt ${attempt} failed for ${assetId}:`, lastError);
+              
+              // Wait before retry
+              if (attempt < 3) {
+                await new Promise(resolve => setTimeout(resolve, 2000));
+              }
+            }
           }
+          
+          if (!deleted) {
+            failCount++;
+            errorLog(`❌ Failed to delete temp asset after 3 attempts: ${assetId}`, lastError);
+          }
+          
+          // Small delay between assets
+          await new Promise(resolve => setTimeout(resolve, 500));
         }
         
-        infoLog("Error cleanup completed - temp files cleaned up");
+        infoLog(`Cleanup summary: ${successCount}/${idsToDelete.length} temp assets processed`, {
+          successCount,
+          failCount,
+          totalTempAssets: idsToDelete.length,
+          keptFinalVideo: finalVideoPublicId,
+          successRate: `${((successCount / idsToDelete.length) * 100).toFixed(1)}%`
+        });
+        
       } catch (cleanupError) {
-        errorLog("Cleanup after error also failed:", {
-          originalError: error.message,
-          cleanupError: cleanupError.message,
-          tempAssetsToDelete: Array.from(temporaryAssetIds)
+        errorLog("Cleanup process failed", {
+          error: cleanupError?.message || 'Unknown error',
+          tempAssetsToDelete: idsToDelete
         });
       }
+    } else {
+      infoLog("No temporary assets to clean up");
     }
-    throw error;
   }
 }
 
@@ -759,7 +709,7 @@ serve(async (req) => {
         },
       });
     } else {
-      // Traditional request-response with enhanced cleanup
+      // Traditional request-response
       const progressTracker = new ProgressTracker(); // No SSE controller, but still tracks progress
       const result = await processVideo(videos, targetDuration, platform, progressTracker);
       
@@ -773,12 +723,12 @@ serve(async (req) => {
     }
 
   } catch (error) {
-    errorLog(`FATAL ERROR`, { message: error.message, stack: error.stack });
+    errorLog(`FATAL ERROR`, { message: error?.message || 'Unknown error', stack: error?.stack });
     
     return new Response(JSON.stringify({ 
       success: false, 
-      error: error.message,
-      details: error.stack 
+      error: error?.message || 'Unknown error',
+      details: error?.stack 
     }), {
       status: 500,
       headers: { ...corsHeaders, "Content-Type": "application/json" },
