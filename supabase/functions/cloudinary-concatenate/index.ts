@@ -21,44 +21,6 @@ function debugLog(message: string, data?: any) {
   }
 }
 
-// ENHANCED: Platform-specific transformations
-function getPlatformTransformations(platform: string) {
-  switch (platform.toLowerCase()) {
-    case 'youtube':
-      return {
-        width: 1920,
-        height: 1080,
-        crop: 'fill',
-        gravity: 'auto',
-        background: 'black'
-      };
-    case 'facebook':
-      return {
-        width: 1080,
-        height: 1080,
-        crop: 'fill',
-        gravity: 'auto',
-        background: 'black'
-      };
-    case 'instagram':
-      return {
-        width: 1080,
-        height: 1920,
-        crop: 'fill',
-        gravity: 'auto',
-        background: 'black'
-      };
-    default:
-      return {
-        width: 1920,
-        height: 1080,
-        crop: 'fill',
-        gravity: 'auto',
-        background: 'black'
-      };
-  }
-}
-
 async function waitForAssetAvailability(publicId: string, resourceType: string = 'video', maxAttempts: number = 10): Promise<boolean> {
   for (let attempt = 1; attempt <= maxAttempts; attempt++) {
     try {
@@ -77,14 +39,24 @@ async function waitForAssetAvailability(publicId: string, resourceType: string =
   return false;
 }
 
-// ENHANCED: Build concatenation URL with platform transformations
-async function buildPlatformConcatenationUrl(assetIds: string[], platform: string): Promise<string> {
+// MINIMAL CHANGE: Just add platform parameter to existing function
+async function buildConcatenationUrl(assetIds: string[], platform: string = 'youtube'): Promise<string> {
   if (assetIds.length === 0) {
     throw new Error('No assets to concatenate');
   }
 
-  const platformTransform = getPlatformTransformations(platform);
-  debugLog(`Building concatenation URL for ${platform}:`, platformTransform);
+  // Platform-specific dimensions
+  let platformTransform;
+  switch (platform.toLowerCase()) {
+    case 'facebook':
+      platformTransform = { width: 1080, height: 1080, crop: 'fill', gravity: 'auto', background: 'black' };
+      break;
+    case 'instagram':
+      platformTransform = { width: 1080, height: 1920, crop: 'fill', gravity: 'auto', background: 'black' };
+      break;
+    default: // youtube
+      platformTransform = { width: 1920, height: 1080, crop: 'fill', gravity: 'auto', background: 'black' };
+  }
 
   if (assetIds.length === 1) {
     // Single video, apply platform transformation
@@ -114,7 +86,6 @@ async function buildPlatformConcatenationUrl(assetIds: string[], platform: strin
   // Add platform-specific formatting
   transformations.push(platformTransform);
 
-  // Add final quality settings
   transformations.push({
     quality: 'auto:good',
     audio_codec: 'aac'
@@ -133,19 +104,18 @@ serve(async (req) => {
 
   const temporaryAssetIds = new Set<string>();
   try {
-    debugLog("=== ENHANCED PLATFORM VIDEO PROCESSING ===");
+    debugLog("=== PRODUCTION VIDEO PROCESSING WITH PLATFORM SUPPORT ===");
     const requestBody = await req.json();
     const { videos, targetDuration, platform = 'youtube' } = requestBody;
+
+    debugLog(`Processing for platform: ${platform}`);
 
     if (!videos || videos.length === 0 || !targetDuration || targetDuration <= 0) {
       throw new Error('Invalid request body');
     }
 
-    const platformSpecs = getPlatformTransformations(platform);
-    debugLog(`Processing for ${platform} platform:`, platformSpecs);
-
     // ====================================================================
-    // PHASE 1: CREATE TRIMMED VIDEOS (Enhanced with platform awareness)
+    // PHASE 1: CREATE TRIMMED VIDEOS (Same as working version)
     // ====================================================================
     debugLog(`--- STARTING PHASE 1: CREATE TRIMMED VIDEOS FOR ${platform.toUpperCase()} ---`);
     const totalOriginalDuration = videos.reduce((sum, v) => sum + v.duration, 0);
@@ -155,21 +125,19 @@ serve(async (req) => {
     for (let i = 0; i < videos.length; i++) {
       const video = videos[i];
       const proportionalDuration = (video.duration / totalOriginalDuration) * targetDuration;
-      const trimmedId = `p1_trimmed_${platform}_${i}_${timestamp}`;
+      const trimmedId = `p1_trimmed_${i}_${timestamp}`;
       temporaryAssetIds.add(trimmedId);
 
-      // Create trimmed URL (just duration for now, platform formatting comes later)
       const trimmedUrl = cloudinary.url(video.publicId, {
         resource_type: 'video',
         transformation: [{ duration: proportionalDuration.toFixed(6) }]
       });
       
-      debugLog(`Creating trimmed video ${i + 1}/${videos.length} for ${platform}:`, {
+      debugLog(`Creating trimmed video ${i + 1}/${videos.length}`, {
         originalId: video.publicId,
         trimmedId,
         originalDuration: video.duration,
-        proportionalDuration: proportionalDuration.toFixed(6),
-        platform
+        proportionalDuration: proportionalDuration.toFixed(6)
       });
 
       const uploadResult = await cloudinary.uploader.upload(trimmedUrl, {
@@ -188,7 +156,7 @@ serve(async (req) => {
     debugLog(`--- PHASE 1 COMPLETE: ${createdAssets.length} trimmed assets created for ${platform}. ---`);
     
     // ====================================================================
-    // PHASE 1.5: WAIT FOR ASSET AVAILABILITY
+    // PHASE 1.5: WAIT FOR ASSET AVAILABILITY (Same as working version)
     // ====================================================================
     debugLog("--- PHASE 1.5: ENSURING ASSET AVAILABILITY ---");
     const sortedAssets = createdAssets.sort((a, b) => a.order - b.order);
@@ -200,20 +168,20 @@ serve(async (req) => {
     debugLog("--- PHASE 1.5 COMPLETE: All assets confirmed available ---");
     
     // ====================================================================
-    // PHASE 2: CONCATENATE WITH PLATFORM TRANSFORMATIONS
+    // PHASE 2: CONCATENATE WITH PLATFORM TRANSFORMATIONS (Enhanced)
     // ====================================================================
     debugLog(`--- STARTING PHASE 2: PLATFORM CONCATENATION FOR ${platform.toUpperCase()} ---`);
     
     const publicIdsToConcat = sortedAssets.map(asset => asset.publicId);
-    debugLog(`Assets to concatenate for ${platform}:`, publicIdsToConcat);
+    debugLog("Assets to concatenate in order:", publicIdsToConcat);
 
-    // Method A: Try platform-aware URL-based concatenation first
+    // Method A: Try URL-based concatenation with platform support
     try {
       debugLog(`Attempting platform-specific concatenation for ${platform}...`);
-      const concatenationUrl = await buildPlatformConcatenationUrl(publicIdsToConcat, platform);
-      debugLog(`Built ${platform} concatenation URL:`, concatenationUrl);
+      const concatenationUrl = await buildConcatenationUrl(publicIdsToConcat, platform);
+      debugLog("Built concatenation URL:", concatenationUrl);
 
-      const finalVideoPublicId = `p2_final_${platform}_${timestamp}`;
+      const finalVideoPublicId = `p2_final_video_${timestamp}`;
       
       const finalVideoResult = await cloudinary.uploader.upload(concatenationUrl, {
         resource_type: 'video',
@@ -225,16 +193,15 @@ serve(async (req) => {
       });
 
       const finalUrl = finalVideoResult.secure_url;
-      debugLog(`--- PHASE 2 COMPLETE: Final ${platform} video created via enhanced URL method. ---`, { 
+      debugLog(`--- PHASE 2 COMPLETE: Final ${platform} video created via URL method. ---`, { 
         finalUrl, 
         public_id: finalVideoPublicId,
         platform,
-        platformSpecs,
         dimensions: `${finalVideoResult.width}x${finalVideoResult.height}`
       });
 
       // ====================================================================
-      // PHASE 3: CLEANUP
+      // PHASE 3: CLEANUP (Same as working version)
       // ====================================================================
       debugLog("--- STARTING PHASE 3: CLEANUP ---");
       if (temporaryAssetIds.size > 0) {
@@ -249,19 +216,18 @@ serve(async (req) => {
         }
       }
       
-      // FINAL RESPONSE WITH PLATFORM INFO
+      // FINAL RESPONSE
       return new Response(JSON.stringify({ 
         success: true, 
         url: finalUrl,
-        method: 'platform_url_concatenation',
+        method: `${platform}_url_concatenation`,
         stats: {
           inputVideos: videos.length,
           platform: platform,
-          platformSpecs: platformSpecs,
+          finalDimensions: `${finalVideoResult.width}x${finalVideoResult.height}`,
           totalOriginalDuration: totalOriginalDuration.toFixed(3),
           targetDuration: targetDuration.toFixed(3),
-          trimmedAssets: createdAssets.length,
-          finalDimensions: `${finalVideoResult.width}x${finalVideoResult.height}`
+          trimmedAssets: createdAssets.length
         }
       }), {
         headers: { ...corsHeaders, "Content-Type": "application/json" },
@@ -269,14 +235,14 @@ serve(async (req) => {
       });
 
     } catch (urlError) {
-      debugLog(`❌ Platform-specific concatenation failed for ${platform}, trying manifest method...`, urlError);
+      debugLog(`❌ URL-based concatenation failed for ${platform}, trying manifest method...`, urlError);
       
-      // Method B: Fallback to manifest-based concatenation with platform formatting
+      // Method B: Fallback to manifest-based concatenation (same as working version)
       try {
-        debugLog(`Attempting manifest-based concatenation for ${platform}...`);
+        debugLog("Attempting manifest-based concatenation...");
         
         // Create proper manifest content
-        const manifestLines = [`# Video Concatenation Manifest for ${platform}`];
+        const manifestLines = ['# Video Concatenation Manifest'];
         sortedAssets.forEach(asset => {
           manifestLines.push(`file '${asset.publicId}'`);
         });
@@ -284,7 +250,7 @@ serve(async (req) => {
         
         debugLog("Manifest content:", manifestContent);
         
-        const manifestPublicId = `p2_manifest_${platform}_${timestamp}`;
+        const manifestPublicId = `p2_manifest_${timestamp}`;
         temporaryAssetIds.add(manifestPublicId);
         
         // Upload manifest as raw text file
@@ -300,26 +266,20 @@ serve(async (req) => {
         // Get the manifest URL
         const manifestUrl = cloudinary.url(manifestPublicId, { resource_type: 'raw' });
         
-        const finalVideoPublicId = `p2_final_${platform}_${timestamp}`;
+        const finalVideoPublicId = `p2_final_video_${timestamp}`;
         
-        // Try using the manifest URL with platform transformations
+        // Try using the manifest URL directly
         const finalVideoResult = await cloudinary.uploader.upload(manifestUrl, {
           resource_type: 'video',
           public_id: finalVideoPublicId,
           raw_convert: 'concatenate',
           overwrite: true,
-          transformation: [
-            platformSpecs,
-            { quality: 'auto:good' }
-          ]
         });
 
         const finalUrl = finalVideoResult.secure_url;
         debugLog(`--- PHASE 2 COMPLETE: Final ${platform} video created via manifest method. ---`, { 
           finalUrl, 
-          public_id: finalVideoPublicId,
-          platform,
-          platformSpecs
+          public_id: finalVideoPublicId 
         });
 
         // Cleanup
@@ -337,11 +297,10 @@ serve(async (req) => {
         return new Response(JSON.stringify({ 
           success: true, 
           url: finalUrl,
-          method: 'platform_manifest_concatenation',
+          method: `${platform}_manifest_concatenation`,
           stats: {
             inputVideos: videos.length,
             platform: platform,
-            platformSpecs: platformSpecs,
             totalOriginalDuration: totalOriginalDuration.toFixed(3),
             targetDuration: targetDuration.toFixed(3),
             trimmedAssets: createdAssets.length
@@ -352,13 +311,13 @@ serve(async (req) => {
         });
 
       } catch (manifestError) {
-        debugLog(`❌ Both concatenation methods failed for ${platform}`, { urlError, manifestError });
-        throw new Error(`${platform} concatenation failed with both methods: URL (${urlError.message}), Manifest (${manifestError.message})`);
+        debugLog("❌ Both concatenation methods failed", { urlError, manifestError });
+        throw new Error(`Concatenation failed with both methods: URL (${urlError.message}), Manifest (${manifestError.message})`);
       }
     }
 
   } catch (error) {
-    debugLog(`❌ FATAL ERROR for ${requestBody?.platform || 'unknown platform'}`, { message: error.message, stack: error.stack });
+    debugLog(`❌ FATAL ERROR`, { message: error.message, stack: error.stack });
     
     if (temporaryAssetIds.size > 0) {
       debugLog(`Attempting cleanup after error...`);
