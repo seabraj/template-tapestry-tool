@@ -55,7 +55,11 @@ export const useVideoAssets = (platformFilter?: string) => {
           .ilike('name', `%${platformFilter}%`);
         
         if (categories && categories.length > 0) {
-          query = query.in('category_id', categories.map(c => c.id));
+          // Include videos that match the platform category OR have no category (null)
+          query = query.or(`category_id.in.(${categories.map(c => c.id).join(',')}),category_id.is.null`);
+        } else {
+          // If no platform categories found, show videos with no category
+          query = query.is('category_id', null);
         }
       }
 

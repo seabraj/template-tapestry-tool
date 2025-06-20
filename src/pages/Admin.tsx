@@ -194,6 +194,31 @@ const Admin = () => {
       // Upload to Cloudinary
       const { url, publicId, thumbnailUrl } = await uploadToCloudinary(selectedFile);
 
+      // Get default category (first available) or create if none exists
+      let defaultCategoryId = categories[0]?.id;
+      
+      if (!defaultCategoryId) {
+        // Create a default category if none exists
+        const { data: newCategory, error: categoryError } = await supabase
+          .from('video_categories')
+          .insert({
+            name: 'General',
+            aspect_ratio: '16:9',
+            description: 'General video category'
+          })
+          .select()
+          .single();
+
+        if (categoryError) {
+          console.warn('Could not create default category:', categoryError);
+          defaultCategoryId = null;
+        } else {
+          defaultCategoryId = newCategory.id;
+          // Refresh categories
+          fetchCategories();
+        }
+      }
+
       // Save metadata to Supabase
       const { error: insertError } = await supabase
         .from('video_assets')
@@ -204,7 +229,7 @@ const Admin = () => {
           file_url: url,
           thumbnail_url: thumbnailUrl,
           file_size: selectedFile.size,
-          category_id: categories[0]?.id || null, // Use first category as default
+          category_id: defaultCategoryId,
           cloudinary_public_id: publicId,
           tags: newAsset.tags.split(',').map(tag => tag.trim()).filter(Boolean)
         });
