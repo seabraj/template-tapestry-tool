@@ -201,39 +201,23 @@ async function buildConcatenationUrl(assetIds: string[], platform: string): Prom
   }
 
   const { width, height } = getPlatformDimensions(platform);
-
-  if (assetIds.length === 1) {
-    // Single video, just return its URL
-    return cloudinary.url(assetIds[0], {
-      resource_type: 'video',
-      transformation: [
-        { width, height, crop: 'fill', gravity: 'auto' },
-        { quality: 'auto:good', audio_codec: 'aac' }
-      ]
-    });
-  }
-
-  // For multiple videos, use the video overlay approach with fl_splice
   const baseVideo = assetIds[0];
   const overlayVideos = assetIds.slice(1);
 
   const transformations = [
-    { width, height, crop: 'fill', gravity: 'auto' }
+    // 1. Set the dimensions and cropping for the entire final video
+    { width, height, crop: 'fill', gravity: 'auto' },
   ];
 
-  // Add each overlay video with fl_splice
+  // 2. Splice the subsequent videos onto the base video
   overlayVideos.forEach((videoId) => {
     transformations.push({
       overlay: `video:${videoId}`,
-      flags: 'splice',
-      width,
-      height,
-      crop: 'fill',
-      gravity: 'auto'
+      flags: 'splice'
     });
   });
 
-  // Add final formatting
+  // 3. Add final formatting/quality transformations
   transformations.push({
     quality: 'auto:good',
     audio_codec: 'aac'
@@ -246,7 +230,7 @@ async function buildConcatenationUrl(assetIds: string[], platform: string): Prom
 }
 
 async function processVideo(
-  videos: any[], 
+  videos: any[],
   targetDuration: number,
   platform: string,
   progressTracker: ProgressTracker
