@@ -137,7 +137,7 @@ class ProgressTracker {
   }
 }
 
-// Platform-specific transformations with correct resolutions
+// FIXED: Platform-specific transformations with correct resolutions
 function getPlatformTransformations(platform: string) {
   switch (platform) {
     case 'youtube':
@@ -239,7 +239,7 @@ async function waitForAssetAvailability(
   return false;
 }
 
-// FIXED: Complete signature generation including transformations
+// FIXED: Complete signature generation including all parameters
 async function uploadToCloudinary(sourceUrl: string, publicId: string, transformations?: any[]): Promise<any> {
   const cloudName = 'dsxrmo3kt';
   const apiKey = Deno.env.get('CLOUDINARY_API_KEY');
@@ -252,10 +252,19 @@ async function uploadToCloudinary(sourceUrl: string, publicId: string, transform
   const uploadUrl = `https://api.cloudinary.com/v1_1/${cloudName}/video/upload`;
   const timestamp = Math.round(Date.now() / 1000);
   
-  // Build transformation string if provided
-  let transformationString = '';
+  // FIXED: Build all parameters for signature generation
+  const params: Record<string, string> = {
+    'api_key': apiKey,
+    'file': sourceUrl,
+    'public_id': publicId,
+    'overwrite': 'true',
+    'resource_type': 'video',
+    'timestamp': timestamp.toString()
+  };
+  
+  // Add transformation parameter if provided
   if (transformations && transformations.length > 0) {
-    transformationString = transformations.map(transform => {
+    const transformString = transformations.map(transform => {
       return Object.entries(transform).map(([key, value]) => {
         if (key === 'gravity') return `g_${value}`;
         if (key === 'crop') return `c_${value}`;
@@ -267,34 +276,22 @@ async function uploadToCloudinary(sourceUrl: string, publicId: string, transform
         return `${key}_${value}`;
       }).join(',');
     }).join('/');
+    params['transformation'] = transformString;
   }
   
-  // FIXED: Build all parameters for signature generation
-  const params: Record<string, string> = {
-    'overwrite': 'true',
-    'public_id': publicId,
-    'resource_type': 'video',
-    'timestamp': timestamp.toString()
-  };
+  // FIXED: Create signature string with ALL parameters (except file and api_key)
+  const sortedKeys = Object.keys(params)
+    .filter(key => key !== 'file' && key !== 'api_key')
+    .sort();
   
-  // IMPORTANT: Add transformation to params if it exists
-  if (transformationString) {
-    params['transformation'] = transformationString;
-  }
-  
-  // FIXED: Create signature string with ALL parameters sorted alphabetically
-  const sortedKeys = Object.keys(params).sort();
   const signatureString = sortedKeys
     .map(key => `${key}=${params[key]}`)
     .join('&') + apiSecret;
   
-  debugLog('Complete Cloudinary signature details:', { 
-    publicId,
-    transformationString: transformationString || 'none',
+  debugLog('Signature string for Cloudinary:', { 
+    signatureString: signatureString.replace(apiSecret, '[SECRET]'),
     sortedKeys,
-    signatureStringLength: signatureString.length,
-    // Show first part of signature string for debugging (without secret)
-    signaturePreview: signatureString.substring(0, 100) + '...[SECRET]'
+    hasTransformation: !!params.transformation
   });
   
   // Generate signature
@@ -304,7 +301,7 @@ async function uploadToCloudinary(sourceUrl: string, publicId: string, transform
   const hashArray = Array.from(new Uint8Array(hashBuffer));
   const signature = hashArray.map(b => b.toString(16).padStart(2, '0')).join('');
   
-  // Build form data with all required fields
+  // Build form data
   const formData = new FormData();
   formData.append('file', sourceUrl);
   formData.append('public_id', publicId);
@@ -314,17 +311,9 @@ async function uploadToCloudinary(sourceUrl: string, publicId: string, transform
   formData.append('timestamp', timestamp.toString());
   formData.append('signature', signature);
   
-  // Add transformation if it exists
-  if (transformationString) {
-    formData.append('transformation', transformationString);
+  if (params.transformation) {
+    formData.append('transformation', params.transformation);
   }
-  
-  debugLog('Cloudinary upload request details:', {
-    publicId,
-    hasTransformation: !!transformationString,
-    transformationString,
-    signatureLength: signature.length
-  });
   
   const response = await fetch(uploadUrl, {
     method: 'POST',
@@ -338,23 +327,12 @@ async function uploadToCloudinary(sourceUrl: string, publicId: string, transform
       statusText: response.statusText,
       error: errorText,
       publicId,
-      transformationString,
-      signatureUsed: signature.substring(0, 10) + '...' // Show first part for debugging
+      hasTransformation: !!params.transformation
     });
     throw new Error(`Cloudinary upload failed: ${response.status} ${errorText}`);
   }
   
-  const result = await response.json();
-  infoLog('Cloudinary upload successful:', {
-    publicId: result.public_id,
-    secureUrl: result.secure_url,
-    format: result.format,
-    width: result.width,
-    height: result.height,
-    duration: result.duration
-  });
-  
-  return result;
+  return await response.json();
 }
 
 async function processVideo(
@@ -397,18 +375,13 @@ async function processVideo(
         timestamp: new Date().toISOString()
       });
 
-      // FIXED: Create source URL with ONLY trimming, then apply platform transformations via API
-      const trimOnlyTransformations = [
-        { duration: proportionalDuration.toFixed(6) }
-      ];
-      
-      const sourceUrl = buildCloudinaryUrl(video.publicId, trimOnlyTransformations);
-      
-      // FIXED: Combine trimming + platform transformations for upload
-      const combinedTransformations = [
+      // FIXED: Create source URL with trimming and platform transformations
+      const sourceTransformations = [
         { duration: proportionalDuration.toFixed(6) },
         ...platformTransformations
       ];
+      
+      const sourceUrl = buildCloudinaryUrl(video.publicId, sourceTransformations);
       
       debugLog(`Creating trimmed and formatted video ${i + 1}/${videos.length}`, {
         originalId: video.publicId,
@@ -417,11 +390,10 @@ async function processVideo(
         originalDuration: video.duration,
         proportionalDuration: proportionalDuration.toFixed(6),
         sourceUrl,
-        combinedTransformations
+        transformations: sourceTransformations
       });
 
-      // FIXED: Pass transformations to uploadToCloudinary for proper signature generation
-      const uploadResult = await uploadToCloudinary(sourceUrl, trimmedId, combinedTransformations);
+      const uploadResult = await uploadToCloudinary(sourceUrl, trimmedId, sourceTransformations);
       
       createdAssets.push({ 
         publicId: uploadResult.public_id, 
@@ -497,7 +469,7 @@ async function processVideo(
       concatenationTransformations.push({ overlay: `video:${assetId}`, flags: 'splice' });
     });
     
-    // FIXED: Add platform transformations to ensure final output maintains format
+    // FIXED: Add platform transformations again to ensure final output is correct
     concatenationTransformations.push(...platformTransformations);
     
     infoLog('Waiting 10 seconds before final concatenation...');
@@ -506,7 +478,6 @@ async function processVideo(
     const baseVideoUrl = buildCloudinaryUrl(baseAssetId, concatenationTransformations);
     debugLog("Final concatenation URL:", baseVideoUrl);
     
-    // FIXED: Pass concatenation transformations for proper signature
     const finalVideoResult = await uploadToCloudinary(baseVideoUrl, finalVideoPublicId, concatenationTransformations);
 
     const finalUrl = finalVideoResult.secure_url;
@@ -599,7 +570,7 @@ async function performCleanup(temporaryAssetIds: Set<string>, finalVideoPublicId
               const timestamp = Math.round(Date.now() / 1000);
               
               // FIXED: Proper signature for delete operation
-              const deleteParams: Record<string, string> = {
+              const deleteParams = {
                 'public_id': assetId,
                 'timestamp': timestamp.toString()
               };
