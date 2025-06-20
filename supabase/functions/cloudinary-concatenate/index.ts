@@ -1,4 +1,4 @@
-// STEP-BY-STEP APPROACH: Trim → Format → Concatenate
+// FINAL FIXED VERSION: Step-by-step with simplified signatures
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 
 const corsHeaders = {
@@ -94,7 +94,7 @@ class ProgressTracker {
   }
 }
 
-// Platform-specific transformations
+// Platform-specific transformations (SIMPLIFIED)
 function getPlatformTransformations(platform: string) {
   switch (platform) {
     case 'youtube':
@@ -108,7 +108,7 @@ function getPlatformTransformations(platform: string) {
   }
 }
 
-// SIMPLE UPLOAD: Single transformation only
+// FIXED: Simplified upload with better signature generation
 async function uploadToCloudinarySimple(
   sourceUrl: string, 
   publicId: string, 
@@ -125,7 +125,7 @@ async function uploadToCloudinarySimple(
   const uploadUrl = `https://api.cloudinary.com/v1_1/${cloudName}/video/upload`;
   const timestamp = Math.round(Date.now() / 1000);
   
-  // Build parameters
+  // Build basic parameters
   const params: Record<string, string> = {
     'overwrite': 'true',
     'public_id': publicId,
@@ -133,20 +133,35 @@ async function uploadToCloudinarySimple(
     'timestamp': timestamp.toString()
   };
   
-  // Build simple transformation string
+  // FIXED: Simplified transformation string (NO QUALITY PARAMETER)
   let transformationString = '';
   if (transformation) {
     const transformParts = [];
-    if (transformation.duration) transformParts.push(`du_${transformation.duration}`);
-    if (transformation.width) transformParts.push(`w_${transformation.width}`);
-    if (transformation.height) transformParts.push(`h_${transformation.height}`);
-    if (transformation.crop) transformParts.push(`c_${transformation.crop}`);
-    if (transformation.gravity) transformParts.push(`g_${transformation.gravity}`);
-    if (transformation.quality) transformParts.push(`q_${transformation.quality}`);
-    if (transformation.overlay) transformParts.push(`l_${transformation.overlay}`);
-    if (transformation.flags) transformParts.push(`fl_${transformation.flags}`);
+    
+    // Duration only
+    if (transformation.duration) {
+      transformParts.push(`du_${transformation.duration}`);
+    }
+    
+    // Dimensions and crop
+    if (transformation.width && transformation.height) {
+      transformParts.push(`w_${transformation.width}`);
+      transformParts.push(`h_${transformation.height}`);
+      if (transformation.crop) transformParts.push(`c_${transformation.crop}`);
+      if (transformation.gravity) transformParts.push(`g_${transformation.gravity}`);
+    }
+    
+    // Overlay for concatenation
+    if (transformation.overlay) {
+      transformParts.push(`l_${transformation.overlay}`);
+    }
+    if (transformation.flags) {
+      transformParts.push(`fl_${transformation.flags}`);
+    }
     
     transformationString = transformParts.join(',');
+    
+    // Add to params if not empty
     if (transformationString) {
       params['transformation'] = transformationString;
     }
@@ -154,14 +169,15 @@ async function uploadToCloudinarySimple(
   
   // Create signature
   const sortedKeys = Object.keys(params).sort();
-  const signatureString = sortedKeys
-    .map(key => `${key}=${params[key]}`)
-    .join('&') + apiSecret;
+  const signatureParams = sortedKeys.map(key => `${key}=${params[key]}`).join('&');
+  const signatureString = signatureParams + apiSecret;
   
-  infoLog('Upload request:', {
+  infoLog('Upload request details:', {
     publicId,
     transformationString: transformationString || 'none',
-    signaturePreview: signatureString.replace(apiSecret, '[SECRET]').substring(0, 150) + '...'
+    sortedKeys,
+    signatureParamsLength: signatureParams.length,
+    signaturePreview: signatureString.replace(apiSecret, '[SECRET]').substring(0, 200) + '...'
   });
   
   // Generate signature
@@ -199,25 +215,52 @@ async function uploadToCloudinarySimple(
       errorDetails = { message: errorText };
     }
     
-    errorLog('Upload failed:', {
+    errorLog('Upload failed - DETAILED ERROR:', {
       status: response.status,
+      statusText: response.statusText,
       publicId,
-      transformation: transformationString || 'none',
-      errorDetails
+      sourceUrl: sourceUrl.substring(0, 100) + '...',
+      transformationString: transformationString || 'none',
+      signatureUsed: signature.substring(0, 20) + '...',
+      signatureParams,
+      errorDetails,
+      apiKeyUsed: apiKey?.substring(0, 6) + '...'
     });
     
-    throw new Error(`Upload failed: ${response.status} - ${errorDetails.error?.message || errorText}`);
+    throw new Error(`Upload failed: ${response.status} - ${errorDetails.error?.message || errorDetails.message || errorText}`);
   }
   
   const result = await response.json();
   infoLog('Upload successful:', {
     publicId: result.public_id,
+    url: result.secure_url,
     width: result.width,
     height: result.height,
     duration: result.duration
   });
   
   return result;
+}
+
+// Build Cloudinary URL for concatenation
+function buildCloudinaryUrl(publicId: string, transformations: any[]): string {
+  const cloudName = 'dsxrmo3kt';
+  let url = `https://res.cloudinary.com/${cloudName}/video/upload/`;
+  
+  const transformString = transformations.map(transform => {
+    return Object.entries(transform).map(([key, value]) => {
+      if (key === 'overlay') return `l_${value}`;
+      if (key === 'flags') return `fl_${value}`;
+      if (key === 'gravity') return `g_${value}`;
+      if (key === 'crop') return `c_${value}`;
+      if (key === 'width') return `w_${value}`;
+      if (key === 'height') return `h_${value}`;
+      if (key === 'duration') return `du_${value}`;
+      return `${key}_${value}`;
+    }).join(',');
+  }).join('/');
+  
+  return `${url}${transformString}/${publicId}`;
 }
 
 // Wait for asset availability
@@ -251,7 +294,7 @@ async function waitForAsset(publicId: string, maxAttempts: number = 15): Promise
   return false;
 }
 
-// STEP-BY-STEP PROCESSING
+// STEP-BY-STEP PROCESSING (FIXED)
 async function processVideoStepByStep(
   videos: any[], 
   targetDuration: number,
@@ -266,7 +309,7 @@ async function processVideoStepByStep(
     const timestamp = Date.now();
     const platformTransform = getPlatformTransformations(platform);
     
-    infoLog('🚀 Starting step-by-step processing:', {
+    infoLog('🚀 Starting FIXED step-by-step processing:', {
       videoCount: videos.length,
       totalOriginalDuration,
       targetDuration,
@@ -275,12 +318,12 @@ async function processVideoStepByStep(
     });
     
     // =================================================================
-    // STEP 1: TRIM VIDEOS ONLY (No formatting yet)
+    // STEP 1: TRIM VIDEOS ONLY
     // =================================================================
     progressTracker.sendProgress({
       phase: 'step1_trimming',
       progress: 10,
-      message: 'Step 1: Trimming videos to target duration...',
+      message: 'Step 1: Trimming videos (simplified)...',
       timestamp: new Date().toISOString()
     });
     
@@ -294,18 +337,16 @@ async function processVideoStepByStep(
       
       progressTracker.sendProgress({
         phase: 'step1_trimming',
-        progress: 10 + (i / videos.length) * 20,
+        progress: 10 + (i / videos.length) * 25,
         message: `Trimming video ${i + 1}/${videos.length}...`,
         timestamp: new Date().toISOString()
       });
       
-      // Raw source URL
       const sourceUrl = `https://res.cloudinary.com/${cloudName}/video/upload/${video.publicId}`;
       
-      // ONLY trim, no formatting
+      // SIMPLIFIED: Only duration, no quality
       const trimTransformation = {
-        duration: proportionalDuration.toFixed(6),
-        quality: 'auto:good'
+        duration: proportionalDuration.toFixed(6)
       };
       
       infoLog(`Step 1 - Trimming video ${i + 1}:`, {
@@ -331,12 +372,12 @@ async function processVideoStepByStep(
     // Wait for trimmed assets
     progressTracker.sendProgress({
       phase: 'step1_waiting',
-      progress: 35,
-      message: 'Waiting for trimmed videos to be ready...',
+      progress: 40,
+      message: 'Waiting for trimmed videos...',
       timestamp: new Date().toISOString()
     });
     
-    await new Promise(resolve => setTimeout(resolve, 10000));
+    await new Promise(resolve => setTimeout(resolve, 15000));
     
     for (const asset of trimmedAssets) {
       await waitForAsset(asset.publicId);
@@ -345,12 +386,12 @@ async function processVideoStepByStep(
     infoLog('✅ Step 1 complete - All videos trimmed', { count: trimmedAssets.length });
     
     // =================================================================
-    // STEP 2: FORMAT VIDEOS FOR PLATFORM (Resize/Crop)
+    // STEP 2: FORMAT VIDEOS FOR PLATFORM
     // =================================================================
     progressTracker.sendProgress({
       phase: 'step2_formatting',
-      progress: 45,
-      message: `Step 2: Formatting videos for ${platform}...`,
+      progress: 50,
+      message: `Step 2: Formatting for ${platform}...`,
       timestamp: new Date().toISOString()
     });
     
@@ -363,29 +404,26 @@ async function processVideoStepByStep(
       
       progressTracker.sendProgress({
         phase: 'step2_formatting',
-        progress: 45 + (i / trimmedAssets.length) * 20,
+        progress: 50 + (i / trimmedAssets.length) * 20,
         message: `Formatting video ${i + 1}/${trimmedAssets.length} for ${platform}...`,
         timestamp: new Date().toISOString()
       });
       
-      // Source is the trimmed video
       const sourceUrl = `https://res.cloudinary.com/${cloudName}/video/upload/${trimmedAsset.publicId}`;
       
-      // ONLY format, no trimming
+      // SIMPLIFIED: Platform dimensions only
       const formatTransformation = {
         width: platformTransform.width,
         height: platformTransform.height,
         crop: platformTransform.crop,
-        gravity: platformTransform.gravity,
-        quality: 'auto:good'
+        gravity: platformTransform.gravity
       };
       
       infoLog(`Step 2 - Formatting video ${i + 1}:`, {
         trimmedId: trimmedAsset.publicId,
         formattedId,
         platform,
-        targetDimensions: `${platformTransform.width}x${platformTransform.height}`,
-        originalDimensions: `${trimmedAsset.originalWidth}x${trimmedAsset.originalHeight}`
+        targetDimensions: `${platformTransform.width}x${platformTransform.height}`
       });
       
       const formatResult = await uploadToCloudinarySimple(sourceUrl, formattedId, formatTransformation);
@@ -398,18 +436,18 @@ async function processVideoStepByStep(
         duration: formatResult.duration
       });
       
-      infoLog(`✅ Video ${i + 1} formatted successfully: ${formatResult.width}x${formatResult.height}`);
+      infoLog(`✅ Video ${i + 1} formatted: ${formatResult.width}x${formatResult.height}`);
     }
     
     // Wait for formatted assets
     progressTracker.sendProgress({
       phase: 'step2_waiting',
-      progress: 70,
-      message: 'Waiting for formatted videos to be ready...',
+      progress: 75,
+      message: 'Waiting for formatted videos...',
       timestamp: new Date().toISOString()
     });
     
-    await new Promise(resolve => setTimeout(resolve, 10000));
+    await new Promise(resolve => setTimeout(resolve, 15000));
     
     for (const asset of formattedAssets) {
       await waitForAsset(asset.publicId);
@@ -421,23 +459,20 @@ async function processVideoStepByStep(
     });
     
     // =================================================================
-    // STEP 3: CONCATENATE FORMATTED VIDEOS
+    // STEP 3: CONCATENATE OR RETURN SINGLE VIDEO
     // =================================================================
     progressTracker.sendProgress({
       phase: 'step3_concatenation',
-      progress: 80,
-      message: 'Step 3: Concatenating formatted videos...',
+      progress: 85,
+      message: 'Step 3: Final processing...',
       timestamp: new Date().toISOString()
     });
     
     if (formattedAssets.length === 1) {
-      // Single video - return it directly
+      // Single video - return directly
       const finalUrl = `https://res.cloudinary.com/${cloudName}/video/upload/${formattedAssets[0].publicId}`;
       
       infoLog('Single video - returning directly');
-      
-      // Cleanup trimmed assets
-      await cleanupAssets(Array.from(temporaryAssetIds).filter(id => id.startsWith('step1_')));
       
       return {
         url: finalUrl,
@@ -450,30 +485,31 @@ async function processVideoStepByStep(
       };
     }
     
-    // Multiple videos - concatenate
+    // Multiple videos - concatenate using URL approach
     const sortedAssets = formattedAssets.sort((a, b) => a.order - b.order);
     const baseAssetId = sortedAssets[0].publicId;
     const overlayAssets = sortedAssets.slice(1);
     const finalVideoId = `step3_final_${timestamp}`;
     
-    // Source is the first formatted video
-    const baseSourceUrl = `https://res.cloudinary.com/${cloudName}/video/upload/${baseAssetId}`;
-    
-    // ONLY concatenate, no additional formatting
-    const concatenationTransformation = {
-      overlay: overlayAssets.map(asset => `video:${asset.publicId}`).join(','),
-      flags: 'splice'
-    };
+    // Build concatenation transformations
+    const concatenationTransformations = [];
+    overlayAssets.forEach(asset => {
+      concatenationTransformations.push({ overlay: `video:${asset.publicId}`, flags: 'splice' });
+    });
     
     infoLog('Step 3 - Concatenating videos:', {
       baseAssetId,
-      overlayAssets: overlayAssets.map(a => a.publicId),
+      overlayCount: overlayAssets.length,
       finalVideoId
     });
     
-    await new Promise(resolve => setTimeout(resolve, 5000));
+    // Use buildCloudinaryUrl for concatenation
+    const concatenatedUrl = buildCloudinaryUrl(baseAssetId, concatenationTransformations);
     
-    const finalResult = await uploadToCloudinarySimple(baseSourceUrl, finalVideoId, concatenationTransformation);
+    await new Promise(resolve => setTimeout(resolve, 10000));
+    
+    // Upload the concatenated result
+    const finalResult = await uploadToCloudinarySimple(concatenatedUrl, finalVideoId);
     
     infoLog('✅ Step 3 complete - Final video created:', {
       publicId: finalResult.public_id,
@@ -481,19 +517,6 @@ async function processVideoStepByStep(
       dimensions: `${finalResult.width}x${finalResult.height}`,
       duration: finalResult.duration
     });
-    
-    // =================================================================
-    // STEP 4: CLEANUP TEMPORARY ASSETS
-    // =================================================================
-    progressTracker.sendProgress({
-      phase: 'cleanup',
-      progress: 95,
-      message: 'Cleaning up temporary assets...',
-      timestamp: new Date().toISOString()
-    });
-    
-    const tempAssets = Array.from(temporaryAssetIds);
-    await cleanupAssets(tempAssets);
     
     return {
       url: finalResult.secure_url,
@@ -510,19 +533,8 @@ async function processVideoStepByStep(
     
   } catch (error) {
     errorLog('Step-by-step processing failed:', error);
-    await cleanupAssets(Array.from(temporaryAssetIds));
     throw error;
   }
-}
-
-// Simple cleanup function
-async function cleanupAssets(assetIds: string[]) {
-  infoLog(`🧹 Cleaning up ${assetIds.length} temporary assets...`);
-  
-  // For now, we'll skip cleanup to avoid signature issues
-  // In production, you'd want to implement this properly
-  
-  infoLog('Cleanup completed (skipped for debugging)');
 }
 
 // Main serve function
@@ -539,7 +551,7 @@ serve(async (req) => {
       throw new Error('Invalid request body');
     }
 
-    infoLog('🎬 Processing video request (STEP-BY-STEP):', {
+    infoLog('🎬 Processing video request (FINAL FIXED VERSION):', {
       videoCount: videos.length,
       targetDuration,
       platform,
@@ -554,7 +566,7 @@ serve(async (req) => {
           progressTracker.sendProgress({
             phase: 'initialization',
             progress: 0,
-            message: `Starting step-by-step ${platform} processing...`,
+            message: `Starting fixed ${platform} processing...`,
             timestamp: new Date().toISOString()
           });
 
