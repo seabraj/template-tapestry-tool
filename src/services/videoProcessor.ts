@@ -20,6 +20,7 @@ interface VideoWithExactDuration {
   originalDuration: number;
   detectionSource: 'exact' | 'fallback';
   name: string;
+  file_url: string; // Ensure file_url is carried through
 }
 
 interface ProgressUpdate {
@@ -65,17 +66,18 @@ export class VideoProcessor {
       const videosWithExactDurations = await this.detectAllExactDurations(validSequences, (progress) => onProgress?.(progress, { phase: 'duration_detection', message: 'Detecting durations...' }));
       onProgress?.(35, { phase: 'duration_detection', message: 'Durations detected.' });
 
-      // Step 3: Prepare request with exact durations and platform
+      // Step 3: Prepare request with all necessary data
       const requestBody = {
         videos: videosWithExactDurations.map(video => ({
           publicId: video.publicId,
           duration: video.duration,
+          file_url: video.file_url, // <-- FIX: Include the file_url
           source: video.detectionSource
         })),
         targetDuration: options.duration,
-        platform: options.platform, // <-- FIX: Pass platform to the backend
+        platform: options.platform,
         exactDurations: true,
-        enableProgress: false // Disable SSE for now
+        enableProgress: false 
       };
 
       console.log('📡 Calling edge function with traditional method:', requestBody);
@@ -141,7 +143,8 @@ export class VideoProcessor {
           duration: exactDuration,
           originalDuration: seq.duration,
           detectionSource: 'exact',
-          name: seq.name
+          name: seq.name,
+          file_url: seq.file_url // Carry file_url forward
         });
 
         const durationDiff = Math.abs(exactDuration - seq.duration);
@@ -164,7 +167,8 @@ export class VideoProcessor {
             duration: seq.duration,
             originalDuration: seq.duration,
             detectionSource: 'fallback',
-            name: seq.name
+            name: seq.name,
+            file_url: seq.file_url // Carry file_url forward
           });
           
           errors.push(`${seq.name}: ${error instanceof Error ? error.message : 'Unknown error'}`);

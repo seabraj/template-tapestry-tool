@@ -157,25 +157,15 @@ async function waitForAssetAvailability(
 ): Promise<boolean> {
   for (let attempt = 1; attempt <= maxAttempts; attempt++) {
     try {
+      debugLog(`waitForAssetAvailability: Attempt ${attempt} for ${publicId}`);
       await cloudinary.api.resource(publicId, { resource_type: resourceType });
-      debugLog(`Asset ${publicId} is available (attempt ${attempt})`);
+      debugLog(`Asset ${publicId} is available.`);
       return true;
     } catch (error) {
-      debugLog(`Asset ${publicId} not ready yet (attempt ${attempt}/${maxAttempts})`);
-      
-      if (progressTracker) {
-        progressTracker.sendProgress({
-          phase: 'asset_verification',
-          progress: 35 + (attempt / maxAttempts) * 5, // 35-40% range
-          message: `Verifying asset ${publicId.split('_').pop()}... (${attempt}/${maxAttempts})`,
-          timestamp: new Date().toISOString()
-        });
-      }
-      
+      debugLog(`Asset ${publicId} not ready yet.`);
       if (attempt === maxAttempts) {
         throw new Error(`Asset ${publicId} never became available after ${maxAttempts} attempts`);
       }
-      // Wait 2 seconds before retrying
       await new Promise(resolve => setTimeout(resolve, 2000));
     }
   }
@@ -219,9 +209,8 @@ async function processVideo(
             temporaryAssetIds.add(trimmedId);
 
             progressTracker.sendProgress({ phase: 'transformation', progress: 10 + (i / videos.length) * 30, message: `Processing video ${i + 1}/${videos.length}...`, timestamp: new Date().toISOString() });
-            
-            // Create a trimmed version, and EAGERLY create a cropped version of it
-            await cloudinary.uploader.upload(video.file_url, {
+
+            const uploadOptions = {
                 resource_type: 'video',
                 public_id: trimmedId,
                 overwrite: true,
@@ -229,8 +218,11 @@ async function processVideo(
                 eager: [
                     { width, height, crop: 'fill', gravity: 'auto' }
                 ],
-                eager_async: false // Wait for eager transformations to complete
-            });
+                eager_async: false
+            };
+
+            debugLog(`Uploading and Eagerly Transforming video ${i+1}`, { file: video.file_url, options: uploadOptions });
+            await cloudinary.uploader.upload(video.file_url, uploadOptions);
             
             return { publicId: trimmedId, order: i };
         });
@@ -243,39 +235,38 @@ async function processVideo(
         // ====================================================================
         progressTracker.sendProgress({ phase: 'concatenation', progress: 50, message: 'Preparing final concatenation...', timestamp: new Date().toISOString() });
 
-        // Construct the transformation string for the final asset
         const cropTransformation = `w_${width},h_${height},c_fill,g_auto`;
-
         const manifestLines = transformedAssets
             .sort((a, b) => a.order - b.order)
-            // Use the derived (eagerly transformed) version for concatenation
             .map(asset => `file '${cropTransformation}/${asset.publicId}.mp4'`);
 
         const manifestContent = manifestLines.join('\n');
-        debugLog("Generated Manifest:", manifestContent);
+        debugLog("Generated Manifest content:", manifestContent);
 
         const manifestPublicId = `p2_manifest_${timestamp}`;
         temporaryAssetIds.add(manifestPublicId);
 
-        progressTracker.sendProgress({ phase: 'concatenation', progress: 65, message: 'Uploading concatenation manifest...', timestamp: new Date().toISOString() });
-        await cloudinary.uploader.upload(`data:text/plain;base64,${btoa(manifestContent)}`, {
+        const manifestUploadOptions = {
             resource_type: 'raw',
             public_id: manifestPublicId,
             overwrite: true,
-        });
+        };
+        debugLog("Uploading Manifest", manifestUploadOptions);
+        await cloudinary.uploader.upload(`data:text/plain;base64,${btoa(manifestContent)}`, manifestUploadOptions);
 
         await waitForAssetAvailability(manifestPublicId, 'raw');
 
         progressTracker.sendProgress({ phase: 'concatenation', progress: 75, message: 'Generating final video from manifest...', timestamp: new Date().toISOString() });
         
         const finalVideoPublicId = `final_video_${timestamp}`;
-        
-        const finalVideoResult = await cloudinary.uploader.upload(cloudinary.url(manifestPublicId, { resource_type: 'raw' }), {
+        const finalVideoOptions = {
             resource_type: 'video',
             public_id: finalVideoPublicId,
             raw_convert: 'concatenate',
             overwrite: true,
-        });
+        };
+        debugLog("Uploading final video from manifest URL", { url: cloudinary.url(manifestPublicId, { resource_type: 'raw' }), options: finalVideoOptions });
+        const finalVideoResult = await cloudinary.uploader.upload(cloudinary.url(manifestPublicId, { resource_type: 'raw' }), finalVideoOptions);
         
         progressTracker.sendProgress({ phase: 'concatenation', progress: 90, message: 'Final video generated.', timestamp: new Date().toISOString() });
 
@@ -284,8 +275,15 @@ async function processVideo(
         // ====================================================================
         infoLog("Starting cleanup of temporary assets...", { assets: Array.from(temporaryAssetIds) });
         try {
-            await cloudinary.api.delete_resources(Array.from(temporaryAssetIds).filter(id => !id.includes('manifest')), { resource_type: 'video' });
-            await cloudinary.api.delete_resources([manifestPublicId], { resource_type: 'raw' });
+            const videoIdsToDelete = Array.from(temporaryAssetIds).filter(id => !id.includes('manifest'));
+            const manifestIdsToDelete = [manifestPublicId];
+            
+            if (videoIdsToDelete.length > 0) {
+              debugLog("Deleting temporary video assets", videoIdsToDelete);
+              await cloudinary.api.delete_resources(videoIdsToDelete, { resource_type: 'video' });
+            }
+            debugLog("Deleting temporary manifest asset", manifestIdsToDelete);
+            await cloudinary.api.delete_resources(manifestIdsToDelete, { resource_type: 'raw' });
             infoLog("Cleanup successful.");
         } catch (cleanupError) {
             errorLog("Cleanup process failed, some temporary files may remain.", cleanupError);
@@ -321,7 +319,7 @@ serve(async (req) => {
     const { videos, targetDuration, platform, enableProgress = false } = requestBody;
 
     if (!videos || videos.length === 0 || !targetDuration || targetDuration <= 0 || !platform) {
-      throw new Error('Invalid request body');
+      throw new Error('Invalid request body: Missing one of videos, targetDuration, or platform.');
     }
 
     // Check if client wants progress updates
