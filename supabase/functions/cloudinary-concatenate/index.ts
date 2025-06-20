@@ -195,40 +195,6 @@ function getPlatformDimensions(platform: string): { width: number; height: numbe
   }
 }
 
-async function buildConcatenationUrl(assetIds: string[], platform: string): Promise<string> {
-  if (assetIds.length === 0) {
-    throw new Error('No assets to concatenate');
-  }
-
-  const { width, height } = getPlatformDimensions(platform);
-  const baseVideo = assetIds[0];
-  const overlayVideos = assetIds.slice(1);
-
-  const transformations = [
-    // 1. Set the dimensions and cropping for the entire final video
-    { width, height, crop: 'fill', gravity: 'auto' },
-  ];
-
-  // 2. Splice the subsequent videos onto the base video
-  overlayVideos.forEach((videoId) => {
-    transformations.push({
-      overlay: `video:${videoId}`,
-      flags: 'splice'
-    });
-  });
-
-  // 3. Add final formatting/quality transformations
-  transformations.push({
-    quality: 'auto:good',
-    audio_codec: 'aac'
-  });
-
-  return cloudinary.url(baseVideo, {
-    resource_type: 'video',
-    transformation: transformations
-  });
-}
-
 async function processVideo(
   videos: any[],
   targetDuration: number,
@@ -236,434 +202,122 @@ async function processVideo(
   progressTracker: ProgressTracker
 ): Promise<{ url: string; method: string; stats: any }> {
   const temporaryAssetIds = new Set<string>();
-  
+  const timestamp = Date.now();
+
   try {
+    const { width, height } = getPlatformDimensions(platform);
+    const totalOriginalDuration = videos.reduce((sum, v) => sum + v.duration, 0);
+
     // ====================================================================
     // PHASE 1: CREATE TRIMMED VIDEOS
     // ====================================================================
-    progressTracker.sendProgress({
-      phase: 'trimming',
-      progress: 5,
-      message: 'Starting video trimming process...',
-      timestamp: new Date().toISOString()
-    });
-
-    const totalOriginalDuration = videos.reduce((sum, v) => sum + v.duration, 0);
-    const timestamp = Date.now();
-    const createdAssets = [];
-    
+    progressTracker.sendProgress({ phase: 'trimming', progress: 5, message: 'Starting video trimming...', timestamp: new Date().toISOString() });
+    const trimmedAssets = [];
     for (let i = 0; i < videos.length; i++) {
-      const video = videos[i];
-      const proportionalDuration = (video.duration / totalOriginalDuration) * targetDuration;
-      const trimmedId = `p1_trimmed_${i}_${timestamp}`;
-      temporaryAssetIds.add(trimmedId);
+        const video = videos[i];
+        const proportionalDuration = (video.duration / totalOriginalDuration) * targetDuration;
+        const trimmedId = `p1_trimmed_${i}_${timestamp}`;
+        temporaryAssetIds.add(trimmedId);
 
-      progressTracker.sendProgress({
-        phase: 'trimming',
-        progress: 5 + (i / videos.length) * 25, // 5-30% range
-        message: `Trimming video ${i + 1} of ${videos.length}...`,
-        details: { videoIndex: i, trimmedId },
-        timestamp: new Date().toISOString()
-      });
+        progressTracker.sendProgress({ phase: 'trimming', progress: 5 + (i / videos.length) * 15, message: `Trimming video ${i + 1}/${videos.length}...`, timestamp: new Date().toISOString() });
 
-      const trimmedUrl = cloudinary.url(video.publicId, {
-        resource_type: 'video',
-        transformation: [{ duration: proportionalDuration.toFixed(6) }]
-      });
-      
-      debugLog(`Creating trimmed video ${i + 1}/${videos.length}`, {
-        originalId: video.publicId,
-        trimmedId,
-        originalDuration: video.duration,
-        proportionalDuration: proportionalDuration.toFixed(6)
-      });
-
-      const uploadResult = await cloudinary.uploader.upload(trimmedUrl, {
-        resource_type: 'video',
-        public_id: trimmedId,
-        overwrite: true,
-      });
-      
-      createdAssets.push({ 
-        publicId: uploadResult.public_id, 
-        order: i,
-        proportionalDuration 
-      });
+        const trimmedUrl = cloudinary.url(video.publicId, { resource_type: 'video', transformation: [{ duration: proportionalDuration.toFixed(6) }] });
+        const uploadResult = await cloudinary.uploader.upload(trimmedUrl, { resource_type: 'video', public_id: trimmedId, overwrite: true });
+        
+        trimmedAssets.push({ publicId: uploadResult.public_id, order: i });
     }
-    
-    progressTracker.sendProgress({
-      phase: 'trimming',
-      progress: 30,
-      message: `All ${createdAssets.length} videos trimmed successfully`,
-      timestamp: new Date().toISOString()
-    });
-    
-    // ====================================================================
-    // PHASE 1.5: WAIT FOR ASSET AVAILABILITY
-    // ====================================================================
-    progressTracker.sendProgress({
-      phase: 'asset_verification',
-      progress: 35,
-      message: 'Verifying all assets are ready...',
-      timestamp: new Date().toISOString()
-    });
+    progressTracker.sendProgress({ phase: 'trimming', progress: 20, message: 'All videos trimmed.', timestamp: new Date().toISOString() });
 
-    const sortedAssets = createdAssets.sort((a, b) => a.order - b.order);
-    
-    for (const asset of sortedAssets) {
-      await waitForAssetAvailability(asset.publicId, 'video', 10, progressTracker);
+    // ====================================================================
+    // PHASE 2: CROP & RESIZE TRIMMED VIDEOS
+    // ====================================================================
+    progressTracker.sendProgress({ phase: 'cropping', progress: 25, message: 'Starting video cropping/resizing...', timestamp: new Date().toISOString() });
+    const croppedAssets = [];
+    for (let i = 0; i < trimmedAssets.length; i++) {
+        const asset = trimmedAssets[i];
+        await waitForAssetAvailability(asset.publicId, 'video'); // Wait for trimmed asset
+        
+        const croppedId = `p2_cropped_${i}_${timestamp}`;
+        temporaryAssetIds.add(croppedId);
+
+        progressTracker.sendProgress({ phase: 'cropping', progress: 25 + (i / trimmedAssets.length) * 25, message: `Cropping video ${i + 1}/${trimmedAssets.length}...`, timestamp: new Date().toISOString() });
+        
+        const croppedUrl = cloudinary.url(asset.publicId, { resource_type: 'video', transformation: [{ width, height, crop: 'fill', gravity: 'auto' }] });
+        const uploadResult = await cloudinary.uploader.upload(croppedUrl, { resource_type: 'video', public_id: croppedId, overwrite: true });
+
+        croppedAssets.push({ publicId: uploadResult.public_id, order: i });
     }
-    
-    progressTracker.sendProgress({
-      phase: 'asset_verification',
-      progress: 40,
-      message: 'All assets verified and ready',
-      timestamp: new Date().toISOString()
-    });
-    
+    progressTracker.sendProgress({ phase: 'cropping', progress: 50, message: 'All videos cropped.', timestamp: new Date().toISOString() });
+
     // ====================================================================
-    // PHASE 2: CONCATENATE VIDEOS
+    // PHASE 3: CONCATENATE CROPPED VIDEOS VIA MANIFEST
     // ====================================================================
-    progressTracker.sendProgress({
-      phase: 'concatenation',
-      progress: 45,
-      message: 'Starting video concatenation...',
-      timestamp: new Date().toISOString()
-    });
+    progressTracker.sendProgress({ phase: 'concatenation', progress: 55, message: 'Starting concatenation...', timestamp: new Date().toISOString() });
+    const sortedCroppedAssets = croppedAssets.sort((a, b) => a.order - b.order);
+    for (const asset of sortedCroppedAssets) {
+        await waitForAssetAvailability(asset.publicId, 'video'); // Wait for cropped asset
+    }
+
+    const manifestLines = sortedCroppedAssets.map(asset => `file '${asset.publicId}'`);
+    const manifestContent = manifestLines.join('\n');
+    const manifestPublicId = `p3_manifest_${timestamp}`;
+    temporaryAssetIds.add(manifestPublicId);
+
+    progressTracker.sendProgress({ phase: 'concatenation', progress: 65, message: 'Uploading concatenation manifest...', timestamp: new Date().toISOString() });
+    await cloudinary.uploader.upload(`data:text/plain;base64,${btoa(manifestContent)}`, { resource_type: 'raw', public_id: manifestPublicId, overwrite: true });
+    await waitForAssetAvailability(manifestPublicId, 'raw');
+
+    progressTracker.sendProgress({ phase: 'concatenation', progress: 75, message: 'Generating final video from manifest...', timestamp: new Date().toISOString() });
     
-    const publicIdsToConcat = sortedAssets.map(asset => asset.publicId);
-    debugLog("Assets to concatenate in order:", publicIdsToConcat);
-
-    // Method A: Try URL-based concatenation first (more reliable)
-    try {
-      progressTracker.sendProgress({
-        phase: 'concatenation',
-        progress: 50,
-        message: 'Building concatenation URL...',
-        timestamp: new Date().toISOString()
-      });
-
-      const concatenationUrl = await buildConcatenationUrl(publicIdsToConcat, platform);
-      debugLog("Built concatenation URL:", concatenationUrl);
-
-      progressTracker.sendProgress({
-        phase: 'concatenation',
-        progress: 60,
-        message: 'Uploading final concatenated video...',
-        timestamp: new Date().toISOString()
-      });
-
-      const finalVideoPublicId = `p2_final_video_${timestamp}`;
-      
-      const finalVideoResult = await cloudinary.uploader.upload(concatenationUrl, {
-        resource_type: 'video',
-        public_id: finalVideoPublicId,
-        overwrite: true,
-        transformation: [
-          { quality: 'auto:good' }
-        ]
-      });
-
-      const finalUrl = finalVideoResult.secure_url;
-      
-      // DO NOT add final video to cleanup list - this is the output we want to keep
-      infoLog(`Final video created and will be preserved: ${finalVideoPublicId}`);
-      
-      progressTracker.sendProgress({
-        phase: 'concatenation',
-        progress: 80,
-        message: 'Video concatenation completed successfully',
-        details: { method: 'url_concatenation', finalUrl, finalVideoId: finalVideoPublicId },
-        timestamp: new Date().toISOString()
-      });
-
-      // ====================================================================
-      // PHASE 3: ENHANCED CLEANUP (ONLY TEMP FILES)
-      // ====================================================================
-      progressTracker.sendProgress({
-        phase: 'cleanup',
-        progress: 85,
-        message: 'Cleaning up temporary assets...',
-        timestamp: new Date().toISOString()
-      });
-
-      if (temporaryAssetIds.size > 0) {
-        // Filter to only delete temporary trimmed files, NOT final videos
-        const idsToDelete = Array.from(temporaryAssetIds).filter(id => 
-          id.startsWith('p1_trimmed_') || id.startsWith('p2_manifest_')
-        );
-        
-        // Do NOT delete p2_final_video_* files - these are the final outputs
-        const finalVideoIds = Array.from(temporaryAssetIds).filter(id => 
-          id.startsWith('p2_final_video_')
-        );
-        
-        infoLog(`Cleanup strategy: Delete ${idsToDelete.length} temp files, keep ${finalVideoIds.length} final videos`, {
-          toDelete: idsToDelete,
-          toKeep: finalVideoIds
-        });
-        
-        if (idsToDelete.length > 0) {
-          try {
-            // Wait longer for assets to be fully processed and available for deletion
-            infoLog('Waiting 5 seconds for temp assets to be fully processed...');
-            await new Promise(resolve => setTimeout(resolve, 5000));
-            
-            let successCount = 0;
-            let failCount = 0;
-            
-            // Delete only temporary assets one by one with detailed logging and retries
-            for (const assetId of idsToDelete) {
-              let deleted = false;
-              let lastError = null;
-              
-              // Try up to 3 times for each temp asset
-              for (let attempt = 1; attempt <= 3; attempt++) {
-                try {
-                  infoLog(`Cleanup attempt ${attempt}/3 for temp asset: ${assetId}`);
-                  
-                  const result = await cloudinary.api.delete_resources([assetId], { 
-                    resource_type: assetId.startsWith('p2_manifest_') ? 'raw' : 'video',
-                    invalidate: true // Force cache invalidation
-                  });
-                  
-                  infoLog(`Deletion API response for ${assetId}:`, result);
-                  
-                  // Check if actually deleted
-                  if (result.deleted && result.deleted[assetId] === 'deleted') {
-                    successCount++;
-                    deleted = true;
-                    infoLog(`✅ Successfully deleted temp asset: ${assetId}`);
-                    break;
-                  } else if (result.deleted && result.deleted[assetId] === 'not_found') {
-                    successCount++;
-                    deleted = true;
-                    infoLog(`✅ Temp asset not found (already deleted?): ${assetId}`);
-                    break;
-                  } else {
-                    lastError = `Unexpected deletion result: ${JSON.stringify(result)}`;
-                    warnLog(`Attempt ${attempt} failed for ${assetId}:`, lastError);
-                  }
-                  
-                } catch (deleteError) {
-                  lastError = deleteError.message;
-                  warnLog(`Attempt ${attempt} failed for ${assetId}:`, deleteError.message);
-                  
-                  // Wait before retry
-                  if (attempt < 3) {
-                    await new Promise(resolve => setTimeout(resolve, 2000));
-                  }
-                }
-              }
-              
-              if (!deleted) {
-                failCount++;
-                errorLog(`❌ Failed to delete temp asset after 3 attempts: ${assetId}`, lastError);
-              }
-              
-              // Small delay between assets
-              await new Promise(resolve => setTimeout(resolve, 500));
-            }
-            
-            infoLog(`Cleanup summary: ${successCount}/${idsToDelete.length} temp assets deleted`, {
-              successCount,
-              failCount,
-              totalTempAssets: idsToDelete.length,
-              keptFinalVideos: finalVideoIds.length,
-              successRate: `${((successCount / idsToDelete.length) * 100).toFixed(1)}%`
-            });
-            
-          } catch (cleanupError) {
-            errorLog("Cleanup process failed", {
-              error: cleanupError.message,
-              stack: cleanupError.stack,
-              tempAssetsToDelete: idsToDelete
-            });
-          }
-        } else {
-          infoLog("No temporary assets to clean up");
-        }
-      }
-      
-      progressTracker.sendProgress({
-        phase: 'cleanup',
-        progress: 95,
-        message: 'Cleanup completed - temp files removed, final videos preserved',
-        timestamp: new Date().toISOString()
-      });
-
-      return {
-        url: finalUrl,
-        method: 'url_concatenation',
-        stats: {
-          inputVideos: videos.length,
-          totalOriginalDuration: totalOriginalDuration.toFixed(3),
-          targetDuration: targetDuration.toFixed(3),
-          trimmedAssets: createdAssets.length
-        }
-      };
-
-    } catch (urlError) {
-      warnLog("URL-based concatenation failed, trying manifest method", urlError);
-      
-      progressTracker.sendProgress({
-        phase: 'concatenation',
-        progress: 50,
-        message: 'URL method failed, trying manifest-based concatenation...',
-        timestamp: new Date().toISOString()
-      });
-      
-      // Method B: Fallback to manifest-based concatenation
-      const manifestLines = ['# Video Concatenation Manifest'];
-      sortedAssets.forEach(asset => {
-        manifestLines.push(`file '${asset.publicId}'`);
-      });
-      const manifestContent = manifestLines.join('\n');
-      
-      debugLog("Manifest content:", manifestContent);
-      
-      const manifestPublicId = `p2_manifest_${timestamp}`;
-      temporaryAssetIds.add(manifestPublicId);
-      
-      // Upload manifest as raw text file
-      await cloudinary.uploader.upload(`data:text/plain;base64,${btoa(manifestContent)}`, {
-        resource_type: 'raw',
-        public_id: manifestPublicId,
-        overwrite: true,
-      });
-      
-      // Wait for manifest to be available
-      await waitForAssetAvailability(manifestPublicId, 'raw');
-      
-      progressTracker.sendProgress({
-        phase: 'concatenation',
-        progress: 65,
-        message: 'Creating final video from manifest...',
-        timestamp: new Date().toISOString()
-      });
-      
-      // Get the manifest URL
-      const manifestUrl = cloudinary.url(manifestPublicId, { resource_type: 'raw' });
-      
-      const finalVideoPublicId = `p2_final_video_${timestamp}`;
-      
-      // Try using the manifest URL directly
-      const finalVideoResult = await cloudinary.uploader.upload(manifestUrl, {
+    const finalVideoPublicId = `final_video_${timestamp}`;
+    // We DO NOT add final video to cleanup list
+    const finalVideoResult = await cloudinary.uploader.upload(cloudinary.url(manifestPublicId, { resource_type: 'raw' }), {
         resource_type: 'video',
         public_id: finalVideoPublicId,
         raw_convert: 'concatenate',
         overwrite: true,
-      });
-
-      const finalUrl = finalVideoResult.secure_url;
-      
-      // DO NOT add final video to cleanup list - this is the output we want to keep
-      infoLog(`Final video created via manifest and will be preserved: ${finalVideoPublicId}`);
-      
-      progressTracker.sendProgress({
-        phase: 'concatenation',
-        progress: 80,
-        message: 'Video concatenation completed via manifest method',
-        details: { method: 'manifest_concatenation', finalUrl, finalVideoId: finalVideoPublicId },
-        timestamp: new Date().toISOString()
-      });
-
-      // Cleanup with improved deletion - only temp files
-      temporaryAssetIds.add(manifestPublicId);
-      if (temporaryAssetIds.size > 0) {
-        // Wait for assets to be fully processed
-        await new Promise(resolve => setTimeout(resolve, 2000));
-        
-        // Only delete temp files, NOT final videos
-        const tempVideoIds = Array.from(temporaryAssetIds).filter(id => 
-          id.startsWith('p1_trimmed_') && id !== finalVideoPublicId
-        );
-        
-        infoLog(`Manifest cleanup: Will delete ${tempVideoIds.length} temp files, keeping final video ${finalVideoPublicId}`);
-        
-        try {
-          // Delete temp video assets only
-          if (tempVideoIds.length > 0) {
-            for (const videoId of tempVideoIds) {
-              try {
-                await cloudinary.api.delete_resources([videoId], { resource_type: 'video' });
-                debugLog(`Successfully deleted temp video asset: ${videoId}`);
-              } catch (err) {
-                warnLog(`Failed to delete temp video asset: ${videoId}`, err.message);
-              }
-            }
-          }
-          
-          // Delete manifest asset (always temp)
-          try {
-            await cloudinary.api.delete_resources([manifestPublicId], { resource_type: 'raw' });
-            debugLog(`Successfully deleted manifest: ${manifestPublicId}`);
-          } catch (err) {
-            warnLog(`Failed to delete manifest: ${manifestPublicId}`, err.message);
-          }
-          
-          infoLog("Manifest method cleanup completed - temp files deleted, final video preserved");
-        } catch (cleanupError) {
-          errorLog("Manifest cleanup failed", {
-            error: cleanupError.message,
-            tempVideoAssets: tempVideoIds,
-            manifestAsset: manifestPublicId,
-            keptFinalVideo: finalVideoPublicId
-          });
-        }
-      }
-
-      progressTracker.sendProgress({
-        phase: 'cleanup',
-        progress: 95,
-        message: 'Cleanup completed',
-        timestamp: new Date().toISOString()
-      });
-
-      return {
-        url: finalUrl,
-        method: 'manifest_concatenation',
-        stats: {
-          inputVideos: videos.length,
-          totalOriginalDuration: totalOriginalDuration.toFixed(3),
-          targetDuration: targetDuration.toFixed(3),
-          trimmedAssets: createdAssets.length
-        }
-      };
+    });
+    
+    progressTracker.sendProgress({ phase: 'concatenation', progress: 90, message: 'Final video generated.', timestamp: new Date().toISOString() });
+    
+    // ====================================================================
+    // PHASE 4: CLEANUP
+    // ====================================================================
+    infoLog("Starting cleanup of temporary assets...", { assets: Array.from(temporaryAssetIds) });
+    try {
+      await cloudinary.api.delete_resources(Array.from(temporaryAssetIds), { resource_type: 'video' });
+      await cloudinary.api.delete_resources([manifestPublicId], { resource_type: 'raw' });
+      infoLog("Cleanup successful.");
+    } catch (cleanupError) {
+      errorLog("Cleanup process failed, some temporary files may remain.", cleanupError);
     }
+    progressTracker.sendProgress({ phase: 'cleanup', progress: 95, message: 'Cleanup complete.', timestamp: new Date().toISOString() });
 
+    return {
+      url: finalVideoResult.secure_url,
+      method: 'staged_manifest_concatenation',
+      stats: {
+        inputVideos: videos.length,
+        totalOriginalDuration: totalOriginalDuration.toFixed(3),
+        targetDuration: targetDuration.toFixed(3),
+      }
+    };
   } catch (error) {
-    // Cleanup on error with improved deletion - only temp files
-    if (temporaryAssetIds.size > 0) {
-      try {
-        // Only delete temp files on error, not final videos
-        const tempIdsToDelete = Array.from(temporaryAssetIds).filter(id => 
-          id.startsWith('p1_trimmed_') || id.startsWith('p2_manifest_')
-        );
-        
-        infoLog(`Error cleanup: attempting to delete ${tempIdsToDelete.length} temp assets`, tempIdsToDelete);
-        
-        // Delete temp assets individually for better error handling
-        for (const assetId of tempIdsToDelete) {
-          try {
-            const resourceType = assetId.startsWith('p2_manifest_') ? 'raw' : 'video';
-            await cloudinary.api.delete_resources([assetId], { resource_type: resourceType });
-            debugLog(`Error cleanup: deleted ${assetId}`);
-          } catch (deleteErr) {
-            warnLog(`Error cleanup: failed to delete ${assetId}`, deleteErr.message);
+      errorLog("Video processing pipeline failed.", error);
+      // Aggressive cleanup on failure
+      if (temporaryAssetIds.size > 0) {
+        warnLog("Attempting to cleanup failed assets...");
+        try {
+          await cloudinary.api.delete_resources(Array.from(temporaryAssetIds), { resource_type: 'video' });
+          const manifestId = Array.from(temporaryAssetIds).find(id => id.includes('_manifest_'));
+          if (manifestId) {
+            await cloudinary.api.delete_resources([manifestId], { resource_type: 'raw' });
           }
+        } catch (cleanupError) {
+          errorLog("Cleanup after error also failed.", cleanupError);
         }
-        
-        infoLog("Error cleanup completed - temp files cleaned up");
-      } catch (cleanupError) {
-        errorLog("Cleanup after error also failed:", {
-          originalError: error.message,
-          cleanupError: cleanupError.message,
-          tempAssetsToDelete: Array.from(temporaryAssetIds)
-        });
       }
-    }
-    throw error;
+      throw error;
   }
 }
 
