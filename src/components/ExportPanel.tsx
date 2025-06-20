@@ -1,3 +1,4 @@
+
 import { Card, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
@@ -6,7 +7,7 @@ import { useState } from 'react';
 import { useToast } from '@/hooks/use-toast';
 import { VideoProcessor } from '@/services/videoProcessor';
 import { supabase } from '@/integrations/supabase/client';
-import { ArrowLeft, Play, Download, Check, AlertCircle, Video, Scissors, Monitor } from 'lucide-react';
+import { ArrowLeft, Play, Download, Check, AlertCircle, Video } from 'lucide-react';
 
 interface ExportPanelProps {
   platform: Platform;
@@ -42,61 +43,36 @@ const ExportPanel = ({
   const [processingError, setProcessingError] = useState<string | null>(null);
   const { toast } = useToast();
 
-  // FIXED: Platform specifications with correct resolutions
-  const getPlatformSpecs = () => {
+  const getAspectRatio = () => {
     switch (platform) {
-      case 'youtube':
-        return {
-          ratio: '16:9',
-          resolution: '1920×1080',
-          description: 'HD Landscape',
-          icon: '📺',
-          color: 'red'
-        };
-      case 'facebook':
-        return {
-          ratio: '1:1',
-          resolution: '1080×1080',
-          description: 'Square HD',
-          icon: '📱',
-          color: 'blue'
-        };
-      case 'instagram':
-        return {
-          ratio: '9:16',
-          resolution: '1080×1920', // FIXED: Was 1980×1920
-          description: 'Vertical HD',
-          icon: '📲',
-          color: 'purple'
-        };
-      default:
-        return {
-          ratio: '16:9',
-          resolution: '1920×1080',
-          description: 'HD Landscape',
-          icon: '📺',
-          color: 'red'
-        };
+      case 'youtube': return '16:9';
+      case 'facebook': return '1:1';
+      case 'instagram': return '9:16';
+      default: return '16:9';
     }
   };
 
-  const platformSpecs = getPlatformSpecs();
+  const getResolution = () => {
+    switch (platform) {
+      case 'youtube': return '1920x1080';
+      case 'facebook': return '1080x1080';
+      case 'instagram': return '1080x1920';
+      default: return '1920x1080';
+    }
+  };
 
   const getPhaseDescription = (phase: string) => {
     const phaseDescriptions: Record<string, string> = {
       'idle': 'Ready to begin',
       'starting': 'Initializing video processor',
-      'initialization': 'Setting up platform-specific processing environment',
-      'validation': 'Validating video sequences for platform processing',
-      'duration_detection': 'Analyzing video files and detecting exact durations',
-      'platform_processing': `Applying ${platform} transformations (${platformSpecs.resolution})`,
-      'platform_complete': `${platform} formatting completed successfully`,
+      'initialization': 'Setting up processing environment',
+      'duration_detection': 'Analyzing video files and detecting durations',
       'trimming': 'Creating trimmed video segments from original files',
       'asset_verification': 'Verifying all processed assets are ready',
-      'concatenation': `Combining video segments for ${platform} format`,
+      'concatenation': 'Combining video segments into final output',
       'cleanup': 'Removing temporary files and optimizing storage',
-      'download': `Preparing final ${platform} video for download`,
-      'complete': `${platform} video processing completed successfully`,
+      'download': 'Preparing final video for download',
+      'complete': 'Processing completed successfully',
       'error': 'An error occurred during processing'
     };
     return phaseDescriptions[phase] || 'Processing...';
@@ -105,9 +81,8 @@ const ExportPanel = ({
   const getProgressBarColor = () => {
     if (progressState.progress < 0) return 'bg-red-600';
     if (progressState.progress === 100) return 'bg-green-600';
-    if (progressState.phase === 'platform_processing') return 'bg-purple-600';
-    if (progressState.phase === 'concatenation') return 'bg-blue-600';
-    return `bg-${platformSpecs.color}-600`;
+    if (progressState.phase === 'concatenation') return 'bg-purple-600';
+    return 'bg-blue-600';
   };
 
   const selectedSequences = sequences.filter(s => s.selected);
@@ -141,7 +116,7 @@ const ExportPanel = ({
   };
 
   const handleGenerateVideo = async () => {
-    console.log(`🎬 Generate ${platform} Video button clicked`);
+    console.log('🎬 Generate Video button clicked');
     
     setProcessingError(null);
     
@@ -156,10 +131,9 @@ const ExportPanel = ({
       return;
     }
 
-    console.log(`📋 Processing request for ${platform} with:`, {
+    console.log('📋 Processing request with:', {
       selectedSequences: selectedSequences.length,
       platform,
-      platformSpecs,
       language,
       duration,
       totalDuration,
@@ -177,14 +151,14 @@ const ExportPanel = ({
       setProgressState({
         progress: 0,
         phase: 'starting',
-        message: `Initializing ${platform} video processing...`
+        message: 'Initializing video processing...'
       });
       
-      console.log(`🚀 Creating VideoProcessor instance for ${platform}...`);
+      console.log('🚀 Creating VideoProcessor instance...');
       const videoProcessor = new VideoProcessor();
       console.log('✅ VideoProcessor created successfully');
       
-      console.log(`🎯 Starting ${platform} video processing...`);
+      console.log('🎯 Starting video processing...');
       const videoBlob = await videoProcessor.processVideo({
         sequences: selectedSequences.map(seq => ({
           id: seq.id,
@@ -193,11 +167,11 @@ const ExportPanel = ({
           file_url: seq.file_url || ''
         })),
         customization,
-        platform, // Critical: Platform passed to processor
+        platform,
         duration: duration,
         enableProgress: true
       }, (progress: number, details?: any) => {
-        console.log(`📊 ${platform} Progress update:`, progress + '%', details);
+        console.log('📊 Progress update:', progress + '%', details);
         
         setProgress(progress);
         
@@ -210,7 +184,7 @@ const ExportPanel = ({
         });
       });
 
-      console.log(`✅ ${platform} video processing completed, creating download URL...`);
+      console.log('✅ Video processing completed, creating download URL...');
       
       const url = URL.createObjectURL(videoBlob);
       setProcessedVideoUrl(url);
@@ -218,13 +192,13 @@ const ExportPanel = ({
       setProgressState({
         progress: 100,
         phase: 'complete',
-        message: `${platform} video processing completed successfully!`
+        message: 'Video processing completed successfully!'
       });
 
-      console.log(`🎉 ${platform} video generation successful!`);
+      console.log('🎉 Video generation successful!');
       toast({
-        title: `${platform} Video Generated Successfully!`,
-        description: `Your video has been processed for ${platform} (${platformSpecs.resolution}) and ${duration < totalDuration ? 'trimmed ' : ''}is ready for download.`,
+        title: "Video Generated Successfully!",
+        description: `Your video has been processed and ${duration < totalDuration ? 'trimmed ' : ''}is ready for download.`,
       });
 
       console.log('🧹 Starting background cleanup of temporary assets...');
@@ -233,7 +207,7 @@ const ExportPanel = ({
       }, 2000);
 
     } catch (error) {
-      console.error(`❌ ${platform} video processing failed:`, error);
+      console.error('❌ Video processing failed:', error);
       
       const errorMessage = error instanceof Error ? error.message : 'Unknown error occurred';
       setProcessingError(errorMessage);
@@ -244,13 +218,13 @@ const ExportPanel = ({
       });
       
       toast({
-        title: `${platform} Processing Failed`,
+        title: "Processing Failed",
         description: errorMessage,
         variant: "destructive",
       });
     } finally {
       setIsProcessing(false);
-      console.log(`🏁 ${platform} video processing attempt completed`);
+      console.log('🏁 Video processing attempt completed');
     }
   };
 
@@ -265,7 +239,7 @@ const ExportPanel = ({
       
       toast({
         title: "Download Started",
-        description: `Your ${platform} video download has begun.`,
+        description: "Your video download has begun.",
       });
     }
   };
@@ -291,7 +265,7 @@ const ExportPanel = ({
           <AlertCircle className="text-white text-4xl" />
         </div>
         <h3 className="text-2xl font-bold text-red-400">
-          {platform} Processing Failed
+          Processing Failed
         </h3>
         
         <div className="bg-red-950/50 border border-red-600 rounded-lg p-4 max-w-2xl mx-auto">
@@ -330,23 +304,12 @@ const ExportPanel = ({
           <Check className="text-white text-4xl" />
         </div>
         <h3 className="text-2xl font-bold text-green-400">
-          {platform} Video Generated Successfully!
+          Video Generated Successfully!
         </h3>
         
-        <div className="bg-green-950/30 border border-green-600/50 rounded-xl p-6 max-w-2xl mx-auto">
-          <div className="flex items-center justify-center space-x-3 mb-4">
-            <span className="text-2xl">{platformSpecs.icon}</span>
-            <div>
-              <h4 className="font-semibold text-green-300">Platform: {platform}</h4>
-              <p className="text-green-200 text-sm">
-                Resolution: {platformSpecs.resolution} ({platformSpecs.ratio})
-              </p>
-            </div>
-          </div>
-          <p className="text-green-200">
-            Your {selectedSequences.length} sequence(s) have been successfully processed and formatted for {platform}.
-          </p>
-        </div>
+        <p className="text-gray-300">
+          Your {selectedSequences.length} sequence(s) have been successfully processed and combined.
+        </p>
         
         <div className="flex justify-center space-x-4">
           <Button 
@@ -354,7 +317,7 @@ const ExportPanel = ({
             className="bg-green-600 hover:bg-green-700"
           >
             <Download className="h-4 w-4 mr-2" />
-            Download {platform} Video
+            Download Video
           </Button>
           <Button 
             variant="outline" 
@@ -376,15 +339,15 @@ const ExportPanel = ({
     );
   }
 
-  // Processing state with enhanced platform-specific progress tracking
+  // Processing state with enhanced progress tracking
   if (isProcessing) {
     return (
       <div className="text-center space-y-8">
-        <div className={`w-24 h-24 bg-${platformSpecs.color}-600 rounded-full flex items-center justify-center mx-auto`}>
+        <div className="w-24 h-24 bg-blue-600 rounded-full flex items-center justify-center mx-auto">
           <Video className="text-white text-2xl animate-pulse" />
         </div>
         <h3 className="text-2xl font-bold text-white">
-          Generating Your {platform} Video...
+          Generating Your Video...
         </h3>
         
         <div className="max-w-md mx-auto space-y-6">
@@ -396,37 +359,24 @@ const ExportPanel = ({
             ></div>
           </div>
           
-          {/* Platform-specific Progress Details */}
+          {/* Progress Details */}
           <div className="space-y-4">
             <div className="flex items-center justify-between">
               <span className="text-sm font-medium text-gray-300">
-                {platform} Processing:
+                Current Phase:
               </span>
               <span className="text-sm font-medium text-gray-300">
                 {progressState.progress >= 0 ? `${progressState.progress.toFixed(1)}%` : 'Error'}
               </span>
             </div>
             
-            <div className={`bg-${platformSpecs.color}-950/30 rounded-xl p-4`}>
-              <h5 className={`text-sm font-semibold text-${platformSpecs.color}-300 mb-2 capitalize flex items-center`}>
-                <span className="mr-2">{platformSpecs.icon}</span>
+            <div className="bg-blue-950/30 rounded-xl p-4">
+              <h5 className="text-sm font-semibold text-blue-300 mb-2 capitalize">
                 {progressState.phase.replace('_', ' ')}
               </h5>
-              <p className={`text-sm text-${platformSpecs.color}-200`}>
+              <p className="text-sm text-blue-200">
                 {progressState.message}
               </p>
-              
-              {/* Platform specs display */}
-              <div className="mt-3 pt-3 border-t border-white/10">
-                <div className="flex justify-between text-xs">
-                  <span className="text-white/60">Target:</span>
-                  <span className="text-white">{platformSpecs.resolution}</span>
-                </div>
-                <div className="flex justify-between text-xs">
-                  <span className="text-white/60">Format:</span>
-                  <span className="text-white">{platformSpecs.ratio} {platformSpecs.description}</span>
-                </div>
-              </div>
             </div>
             
             {progressState.timestamp && (
@@ -437,13 +387,13 @@ const ExportPanel = ({
           </div>
           
           {/* Processing Stats */}
-          <p className={`text-sm text-${platformSpecs.color}-400 font-medium`}>
-            Processing {selectedSequences.length} video sequence(s) for {platform}...
+          <p className="text-sm text-blue-400 font-medium">
+            Processing {selectedSequences.length} video sequence(s)...
           </p>
         </div>
         
         <p className="text-sm text-gray-400">
-          Platform-specific transformations being applied: cropping and resizing to {platformSpecs.resolution}
+          Please wait while we generate your video with real-time progress tracking
         </p>
       </div>
     );
@@ -452,21 +402,18 @@ const ExportPanel = ({
   // Review and generate state
   return (
     <div className="space-y-8">
-      {/* Enhanced Project Summary with Platform Info */}
+      {/* Project Summary */}
       <div className="bg-[#1a1a2e] border border-white/10 rounded-3xl p-8">
         <h4 className="font-semibold text-xl mb-6 text-white flex items-center">
           <Video className="h-6 w-6 mr-3" />
-          {platform} Video Summary
+          Video Summary
         </h4>
         
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
           <div className="text-center">
-            <h5 className={`font-medium text-${platformSpecs.color}-300 mb-2`}>Platform</h5>
-            <p className={`text-2xl font-bold text-${platformSpecs.color}-400 capitalize mb-1 flex items-center justify-center`}>
-              <span className="mr-2">{platformSpecs.icon}</span>
-              {platform}
-            </p>
-            <p className={`text-sm text-${platformSpecs.color}-300/80`}>{platformSpecs.ratio}</p>
+            <h5 className="font-medium text-blue-300 mb-2">Platform</h5>
+            <p className="text-2xl font-bold text-blue-400 capitalize mb-1">{platform}</p>
+            <p className="text-sm text-blue-300/80">{getAspectRatio()}</p>
           </div>
           
           <div className="text-center">
@@ -478,7 +425,7 @@ const ExportPanel = ({
           <div className="text-center">
             <h5 className="font-medium text-green-300 mb-2">Quality</h5>
             <p className="text-2xl font-bold text-green-400 mb-1">HD</p>
-            <p className="text-sm text-green-300/80">{platformSpecs.resolution}</p>
+            <p className="text-sm text-green-300/80">{getResolution()}</p>
           </div>
 
           <div className="text-center">
@@ -496,50 +443,16 @@ const ExportPanel = ({
         </div>
       </div>
 
-      {/* Platform Processing Info */}
-      <div className={`border border-${platformSpecs.color}-600/50 bg-${platformSpecs.color}-950/30 rounded-3xl p-6`}>
-        <div className="flex items-center space-x-3 mb-4">
-          <Monitor className={`h-6 w-6 flex-shrink-0 text-${platformSpecs.color}-400`} />
-          <div>
-            <h4 className={`font-semibold text-lg text-${platformSpecs.color}-400`}>
-              Platform-Specific Processing Enabled
-            </h4>
-            <p className={`text-sm text-${platformSpecs.color}-300/90 mt-1`}>
-              Videos will be automatically resized and cropped to {platformSpecs.resolution} ({platformSpecs.ratio}) with intelligent auto-gravity cropping
-            </p>
-          </div>
-        </div>
-        
-        <div className="grid grid-cols-2 md:grid-cols-4 gap-4 text-sm">
-          <div>
-            <span className="text-white/60">Crop Mode:</span>
-            <span className="text-white font-medium ml-2 block">Fill + Auto Gravity</span>
-          </div>
-          <div>
-            <span className="text-white/60">Target Size:</span>
-            <span className="text-white font-medium ml-2 block">{platformSpecs.resolution}</span>
-          </div>
-          <div>
-            <span className="text-white/60">Aspect Ratio:</span>
-            <span className="text-white font-medium ml-2 block">{platformSpecs.ratio}</span>
-          </div>
-          <div>
-            <span className="text-white/60">Quality:</span>
-            <span className="text-white font-medium ml-2 block">Auto Good</span>
-          </div>
-        </div>
-      </div>
-
       {/* Duration Warning */}
       {duration < totalDuration && (
         <div className="border border-yellow-600/50 bg-yellow-950/30 rounded-3xl p-6">
           <div className="flex items-center space-x-3 text-yellow-400">
-            <Scissors className="h-6 w-6 flex-shrink-0" />
+            <AlertCircle className="h-6 w-6 flex-shrink-0" />
             <div>
               <h4 className="font-semibold text-lg">Proportional Trimming Enabled</h4>
               <p className="text-sm text-yellow-300/90 mt-1">
                 Videos will be trimmed proportionally from {totalDuration}s to {duration}s 
-                ({Math.round((duration / totalDuration) * 100)}% of original duration), then formatted for {platform}
+                ({Math.round((duration / totalDuration) * 100)}% of original duration)
               </p>
             </div>
           </div>
@@ -608,13 +521,13 @@ const ExportPanel = ({
         <Button 
           onClick={handleGenerateVideo}
           size="lg"
-          className={`bg-gradient-to-r from-orange-500 to-pink-500 hover:from-orange-600 hover:to-pink-600 text-white px-12 py-4 text-lg font-semibold rounded-xl shadow-lg hover:shadow-xl transition-all duration-300`}
+          className="bg-gradient-to-r from-orange-500 to-pink-500 hover:from-orange-600 hover:to-pink-600 text-white px-12 py-4 text-lg font-semibold rounded-xl shadow-lg hover:shadow-xl transition-all duration-300"
           disabled={selectedSequences.length === 0}
         >
           <Video className="h-5 w-5 mr-2" />
           {duration < totalDuration 
-            ? `Generate ${platform} Video (Trim to ${duration}s)`
-            : `Generate ${platform} Video`
+            ? `Generate & Trim to ${duration}s`
+            : 'Generate Video'
           }
         </Button>
         {selectedSequences.length === 0 ? (
@@ -623,9 +536,9 @@ const ExportPanel = ({
           </p>
         ) : (
           <p className="text-sm text-white/60 mt-3">
-            Generate your final video optimized for {platform} ({platformSpecs.resolution})
+            Generate your final video with {selectedSequences.length} sequence(s)
             {duration < totalDuration && (
-              <span className="text-yellow-400"> • Proportional trimming + platform formatting will be applied</span>
+              <span className="text-yellow-400"> • Proportional trimming will be applied</span>
             )}
           </p>
         )}

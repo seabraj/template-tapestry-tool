@@ -1,3 +1,4 @@
+
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 
 const corsHeaders = {
@@ -83,7 +84,6 @@ async function findTemporaryAssets(): Promise<{ videos: string[], manifests: str
   }
 }
 
-// FIXED: Complete signature generation for delete operations
 async function deleteAssetsSafely(assetIds: string[], resourceType: 'video' | 'raw'): Promise<{
   deleted: string[],
   failed: string[],
@@ -119,35 +119,22 @@ async function deleteAssetsSafely(assetIds: string[], resourceType: 'video' | 'r
         
         // Use Cloudinary's destroy API directly
         const deleteUrl = `https://api.cloudinary.com/v1_1/${cloudName}/${resourceType}/destroy`;
+        
+        const formData = new FormData();
+        formData.append('public_id', assetId);
+        formData.append('api_key', apiKey);
+        
+        // Generate signature for the request
         const timestamp = Math.round(Date.now() / 1000);
+        const stringToSign = `public_id=${assetId}&timestamp=${timestamp}${apiSecret}`;
         
-        // FIXED: Build all parameters for signature generation
-        const deleteParams: Record<string, string> = {
-          'public_id': assetId,
-          'timestamp': timestamp.toString()
-        };
-        
-        // FIXED: Create signature string with sorted parameters
-        const sortedKeys = Object.keys(deleteParams).sort();
-        const stringToSign = sortedKeys
-          .map(key => `${key}=${deleteParams[key]}`)
-          .join('&') + apiSecret;
-        
-        log(`Delete signature string for ${assetId}:`, { 
-          stringToSign: stringToSign.replace(apiSecret, '[SECRET]'),
-          sortedKeys 
-        });
-        
-        // Generate signature
+        // Simple signature generation (for production, use proper crypto)
         const encoder = new TextEncoder();
         const data = encoder.encode(stringToSign);
         const hashBuffer = await crypto.subtle.digest('SHA-1', data);
         const hashArray = Array.from(new Uint8Array(hashBuffer));
         const signature = hashArray.map(b => b.toString(16).padStart(2, '0')).join('');
         
-        const formData = new FormData();
-        formData.append('public_id', assetId);
-        formData.append('api_key', apiKey);
         formData.append('timestamp', timestamp.toString());
         formData.append('signature', signature);
         
@@ -171,11 +158,7 @@ async function deleteAssetsSafely(assetIds: string[], resourceType: 'video' | 'r
           details.push({ assetId, attempt: attempts, result });
         } else {
           const errorText = await response.text();
-          log(`❌ HTTP error deleting ${assetId}:`, { 
-            status: response.status, 
-            statusText: response.statusText, 
-            error: errorText 
-          });
+          log(`❌ HTTP error deleting ${assetId}:`, errorText);
           if (attempts === maxAttempts) {
             failed.push(assetId);
             details.push({ assetId, attempt: attempts, error: errorText });
