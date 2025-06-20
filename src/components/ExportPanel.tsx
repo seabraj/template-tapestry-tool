@@ -61,28 +61,28 @@ const ExportPanel = ({
     }
   };
 
-  const getPhaseEmoji = (phase: string) => {
-    const phaseEmojis: Record<string, string> = {
-      'idle': '⏸️',
-      'starting': '🚀',
-      'initialization': '🔧',
-      'duration_detection': '🔍',
-      'trimming': '✂️',
-      'asset_verification': '✅',
-      'concatenation': '🔗',
-      'cleanup': '🧹',
-      'download': '📥',
-      'complete': '🎉',
-      'error': '❌'
+  const getPhaseDescription = (phase: string) => {
+    const phaseDescriptions: Record<string, string> = {
+      'idle': 'Ready to begin',
+      'starting': 'Initializing video processor',
+      'initialization': 'Setting up processing environment',
+      'duration_detection': 'Analyzing video files and detecting durations',
+      'trimming': 'Creating trimmed video segments from original files',
+      'asset_verification': 'Verifying all processed assets are ready',
+      'concatenation': 'Combining video segments into final output',
+      'cleanup': 'Removing temporary files and optimizing storage',
+      'download': 'Preparing final video for download',
+      'complete': 'Processing completed successfully',
+      'error': 'An error occurred during processing'
     };
-    return phaseEmojis[phase] || '⚙️';
+    return phaseDescriptions[phase] || 'Processing...';
   };
 
   const getProgressBarColor = () => {
-    if (progressState.progress < 0) return 'bg-red-600'; // Error
-    if (progressState.progress === 100) return 'bg-green-600'; // Complete
-    if (progressState.phase === 'concatenation') return 'bg-purple-600'; // Critical phase
-    return 'bg-blue-600'; // Processing
+    if (progressState.progress < 0) return 'bg-red-600';
+    if (progressState.progress === 100) return 'bg-green-600';
+    if (progressState.phase === 'concatenation') return 'bg-purple-600';
+    return 'bg-blue-600';
   };
 
   const selectedSequences = sequences.filter(s => s.selected);
@@ -92,39 +92,34 @@ const ExportPanel = ({
     try {
       console.log('🧹 Starting cleanup of temporary Cloudinary assets...');
       
-      const response = await fetch('https://rihlnnxodrxzaxunwurc.supabase.co/functions/v1/cleanup-temp-assets', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InJpaGxubnhvZHJ4emF4dW53dXJjIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NTAwNzMyMjIsImV4cCI6MjA2NTY0OTIyMn0.0NfXK2GWdduughXFjPhRR2wGx1AROIRkaMcarj2cBYg`
-        },
-        body: JSON.stringify({})
+      const { data, error } = await supabase.functions.invoke('cleanup-temp-assets', {
+        body: {}
       });
 
-      const result = await response.json();
+      if (error) {
+        console.warn('⚠️ Cleanup function returned an error:', error);
+        return;
+      }
       
-      if (result.success) {
-        console.log('✅ Cleanup completed successfully:', result.stats);
+      if (data?.success) {
+        console.log('✅ Cleanup completed successfully:', data.stats);
         toast({
           title: "Cleanup Complete",
-          description: `${result.stats.totalDeleted} temporary files cleaned up`,
+          description: `${data.stats.totalDeleted} temporary files cleaned up`,
         });
       } else {
-        console.warn('⚠️ Cleanup completed with warnings:', result);
+        console.warn('⚠️ Cleanup completed with warnings:', data);
       }
     } catch (error) {
       console.error('❌ Cleanup failed:', error);
-      // Don't show error toast to user as this is a background operation
     }
   };
 
   const handleGenerateVideo = async () => {
     console.log('🎬 Generate Video button clicked');
     
-    // Clear any previous errors
     setProcessingError(null);
     
-    // Validate sequences
     if (selectedSequences.length === 0) {
       const errorMsg = 'No sequences selected';
       console.error('❌', errorMsg);
@@ -174,18 +169,16 @@ const ExportPanel = ({
         customization,
         platform,
         duration: duration,
-        enableProgress: true // 🆕 Enable real-time progress tracking
+        enableProgress: true
       }, (progress: number, details?: any) => {
         console.log('📊 Progress update:', progress + '%', details);
         
-        // Update basic progress
         setProgress(progress);
         
-        // Update detailed progress state
         setProgressState({
           progress: Math.max(0, Math.min(100, progress)),
           phase: details?.phase || 'processing',
-          message: details?.message || `Processing... ${progress.toFixed(1)}%`,
+          message: getPhaseDescription(details?.phase || 'processing'),
           details: details?.details,
           timestamp: details?.timestamp
         });
@@ -193,14 +186,13 @@ const ExportPanel = ({
 
       console.log('✅ Video processing completed, creating download URL...');
       
-      // Create download URL
       const url = URL.createObjectURL(videoBlob);
       setProcessedVideoUrl(url);
       setProgress(100);
       setProgressState({
         progress: 100,
         phase: 'complete',
-        message: '🎉 Video processing completed successfully!'
+        message: 'Video processing completed successfully!'
       });
 
       console.log('🎉 Video generation successful!');
@@ -209,20 +201,20 @@ const ExportPanel = ({
         description: `Your video has been processed and ${duration < totalDuration ? 'trimmed ' : ''}is ready for download.`,
       });
 
-      // 🆕 Start cleanup of temporary assets in the background
       console.log('🧹 Starting background cleanup of temporary assets...');
-      cleanupTemporaryAssets();
+      setTimeout(() => {
+        cleanupTemporaryAssets();
+      }, 2000);
 
     } catch (error) {
       console.error('❌ Video processing failed:', error);
       
-      // Store error for display
       const errorMessage = error instanceof Error ? error.message : 'Unknown error occurred';
       setProcessingError(errorMessage);
       setProgressState({
         progress: -1,
         phase: 'error',
-        message: `❌ Error: ${errorMessage}`
+        message: `Error: ${errorMessage}`
       });
       
       toast({
@@ -350,7 +342,7 @@ const ExportPanel = ({
   // Processing state with enhanced progress tracking
   if (isProcessing) {
     return (
-      <div className="text-center space-y-6">
+      <div className="text-center space-y-8">
         <div className="w-24 h-24 bg-blue-600 rounded-full flex items-center justify-center mx-auto">
           <Video className="text-white text-2xl animate-pulse" />
         </div>
@@ -358,7 +350,7 @@ const ExportPanel = ({
           Generating Your Video...
         </h3>
         
-        <div className="max-w-md mx-auto space-y-4">
+        <div className="max-w-md mx-auto space-y-6">
           {/* Enhanced Progress Bar */}
           <div className="w-full bg-gray-200 rounded-full h-4">
             <div 
@@ -368,19 +360,24 @@ const ExportPanel = ({
           </div>
           
           {/* Progress Details */}
-          <div className="space-y-2">
+          <div className="space-y-4">
             <div className="flex items-center justify-between">
               <span className="text-sm font-medium text-gray-300">
-                {getPhaseEmoji(progressState.phase)} {progressState.phase.replace('_', ' ')}
+                Current Phase:
               </span>
               <span className="text-sm font-medium text-gray-300">
                 {progressState.progress >= 0 ? `${progressState.progress.toFixed(1)}%` : 'Error'}
               </span>
             </div>
             
-            <p className="text-sm text-gray-300 text-center">
-              {progressState.message}
-            </p>
+            <div className="bg-blue-950/30 rounded-xl p-4">
+              <h5 className="text-sm font-semibold text-blue-300 mb-2 capitalize">
+                {progressState.phase.replace('_', ' ')}
+              </h5>
+              <p className="text-sm text-blue-200">
+                {progressState.message}
+              </p>
+            </div>
             
             {progressState.timestamp && (
               <p className="text-xs text-gray-400 text-center">
@@ -393,30 +390,16 @@ const ExportPanel = ({
           <p className="text-sm text-blue-400 font-medium">
             Processing {selectedSequences.length} video sequence(s)...
           </p>
-          
-          {/* Phase Guide */}
-          <div className="mt-6 p-3 bg-blue-950/30 rounded-lg">
-            <h5 className="text-xs font-semibold text-blue-300 mb-2">Current Phase:</h5>
-            <div className="text-xs text-blue-200">
-              {progressState.phase === 'duration_detection' && '🔍 Analyzing video durations...'}
-              {progressState.phase === 'trimming' && '✂️ Creating trimmed video assets...'}
-              {progressState.phase === 'asset_verification' && '✅ Verifying assets are ready...'}
-              {progressState.phase === 'concatenation' && '🔗 Combining videos together...'}
-              {progressState.phase === 'cleanup' && '🧹 Cleaning up temporary files...'}
-              {progressState.phase === 'download' && '📥 Preparing final video...'}
-              {!['duration_detection', 'trimming', 'asset_verification', 'concatenation', 'cleanup', 'download'].includes(progressState.phase) && '⚙️ Processing...'}
-            </div>
-          </div>
         </div>
         
         <p className="text-sm text-gray-400">
-          Please wait while we generate your video with enhanced progress tracking
+          Please wait while we generate your video with real-time progress tracking
         </p>
       </div>
     );
   }
 
-  // Review and generate state (unchanged)
+  // Review and generate state
   return (
     <div className="space-y-8">
       {/* Project Summary */}
@@ -532,39 +515,6 @@ const ExportPanel = ({
           </div>
         )}
       </div>
-
-      {/* Customization Summary */}
-      {(customization.supers.text || customization.endFrame.enabled || customization.cta.enabled) && (
-        <div className="bg-[#1a1a2e] border border-white/10 rounded-3xl p-6">
-          <h4 className="font-semibold text-lg mb-4 text-white">Applied Customizations</h4>
-          <div className="space-y-3">
-            {customization.supers.text && (
-              <div className="flex justify-between items-center">
-                <span className="text-white/80">Text Overlay:</span>
-                <Badge variant="outline" className="border-white/20 text-white/90 rounded-xl">
-                  {customization.supers.text}
-                </Badge>
-              </div>
-            )}
-            {customization.endFrame.enabled && (
-              <div className="flex justify-between items-center">
-                <span className="text-white/80">End Frame:</span>
-                <Badge variant="outline" className="border-white/20 text-white/90 rounded-xl">
-                  Enabled
-                </Badge>
-              </div>
-            )}
-            {customization.cta.enabled && (
-              <div className="flex justify-between items-center">
-                <span className="text-white/80">Call to Action:</span>
-                <Badge variant="outline" className="border-white/20 text-white/90 rounded-xl">
-                  {customization.cta.text || 'Enabled'}
-                </Badge>
-              </div>
-            )}
-          </div>
-        </div>
-      )}
 
       {/* Generate Button */}
       <div className="text-center">
