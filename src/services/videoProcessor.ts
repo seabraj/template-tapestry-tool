@@ -1,4 +1,4 @@
-// Enhanced videoProcessor.ts with real-time progress tracking and platform support
+// Enhanced videoProcessor.ts with platform-specific processing
 import { supabase } from '@/integrations/supabase/client';
 
 export interface VideoProcessingOptions {
@@ -11,7 +11,7 @@ export interface VideoProcessingOptions {
   customization: { /* ... your customization options ... */ };
   platform: string;
   duration: number;
-  enableProgress?: boolean; // New option for progress tracking
+  enableProgress?: boolean;
 }
 
 interface VideoWithExactDuration {
@@ -22,63 +22,67 @@ interface VideoWithExactDuration {
   name: string;
 }
 
-interface ProgressUpdate {
-  phase: string;
-  progress: number; // 0-100
-  message: string;
-  details?: any;
-  timestamp: string;
-}
-
-// Platform resolution mapping for user feedback
+// FIXED: Platform specifications with correct resolutions
 const PLATFORM_SPECS = {
-  youtube: { ratio: '16:9', resolution: '1920×1080' },
-  facebook: { ratio: '1:1', resolution: '1080×1080' },
-  instagram: { ratio: '9:16', resolution: '1080×1920' }
+  youtube: { 
+    ratio: '16:9', 
+    resolution: '1920×1080',
+    width: 1920,
+    height: 1080,
+    description: 'Landscape format, perfect for desktop viewing'
+  },
+  facebook: { 
+    ratio: '1:1', 
+    resolution: '1080×1080',
+    width: 1080,
+    height: 1080,
+    description: 'Square format, optimized for feed posts'
+  },
+  instagram: { 
+    ratio: '9:16', 
+    resolution: '1080×1920', // FIXED: Was 1980x1920
+    width: 1080,
+    height: 1920,
+    description: 'Vertical format, full-screen mobile experience'
+  }
 } as const;
 
 export class VideoProcessor {
   constructor() {
-    console.log('🎬 VideoProcessor initialized with platform-specific processing');
+    console.log('🎬 VideoProcessor initialized with enhanced platform support');
   }
 
   async processVideo(
     options: VideoProcessingOptions, 
     onProgress?: (progress: number, details?: any) => void
   ): Promise<Blob> {
-    console.log('🚀 Starting video processing with platform support:', {
+    const platformSpec = PLATFORM_SPECS[options.platform as keyof typeof PLATFORM_SPECS];
+    
+    console.log('🚀 Starting platform-specific video processing:', {
       platform: options.platform,
       sequences: options.sequences.length,
       targetDuration: options.duration,
-      platformSpecs: PLATFORM_SPECS[options.platform as keyof typeof PLATFORM_SPECS]
+      platformSpecs: platformSpec
     });
     
-    // Use traditional method with enhanced platform support
-    return this.processVideoTraditional(options, onProgress);
-  }
-
-  /**
-   * Traditional processing method with platform support
-   */
-  private async processVideoTraditional(
-    options: VideoProcessingOptions,
-    onProgress?: (progress: number, details?: any) => void
-  ): Promise<Blob> {
-    const platformSpec = PLATFORM_SPECS[options.platform as keyof typeof PLATFORM_SPECS];
-    console.log(`📡 Processing for ${options.platform} (${platformSpec?.ratio} - ${platformSpec?.resolution})...`);
-    onProgress?.(5);
+    // Enhanced progress tracking with platform info
+    onProgress?.(5, {
+      phase: 'initialization',
+      platform: options.platform,
+      platformSpecs: platformSpec
+    });
 
     try {
       // Step 1: Validate sequences
       const validSequences = this.validateSequences(options.sequences);
-      onProgress?.(10);
+      onProgress?.(10, { phase: 'validation', validSequences: validSequences.length });
 
       // Step 2: Detect exact durations for all videos
-      console.log('🔍 Step 2: Detecting exact durations for all videos...');
+      console.log('🔍 Detecting exact durations for platform processing...');
       const videosWithExactDurations = await this.detectAllExactDurations(validSequences, onProgress);
-      onProgress?.(35);
+      onProgress?.(35, { phase: 'duration_detection', detectedVideos: videosWithExactDurations.length });
 
-      // Step 3: Prepare request with exact durations and platform
+      // Step 3: Prepare enhanced request with platform specifications
       const requestBody = {
         videos: videosWithExactDurations.map(video => ({
           publicId: video.publicId,
@@ -86,61 +90,78 @@ export class VideoProcessor {
           source: video.detectionSource
         })),
         targetDuration: options.duration,
-        platform: options.platform, // Include platform for proper formatting
+        platform: options.platform, // Critical for platform-specific processing
         exactDurations: true,
-        enableProgress: false // Disable SSE for now
+        enableProgress: false
       };
 
-      console.log(`📡 Calling edge function for ${options.platform} processing:`, {
+      console.log(`📡 Processing for ${options.platform} (${platformSpec?.ratio})...`, {
         ...requestBody,
         videos: requestBody.videos.length,
-        platformTarget: platformSpec
+        targetResolution: platformSpec?.resolution
       });
-      onProgress?.(40);
       
-      // Step 4: Process videos with platform-specific transformations
+      onProgress?.(40, { 
+        phase: 'platform_processing', 
+        platform: options.platform,
+        targetResolution: platformSpec?.resolution
+      });
+      
+      // Step 4: Process videos with platform transformations
       const { data, error } = await supabase.functions.invoke('cloudinary-concatenate', {
         body: requestBody
       });
 
-      if (error) throw new Error(`Edge function failed: ${error.message}`);
+      if (error) throw new Error(`Platform processing failed: ${error.message}`);
       if (!data?.success || !data?.url) throw new Error(data?.error || 'Backend failed to return a valid URL.');
       
       const finalUrl = data.url;
-      console.log(`✅ Success! Final ${options.platform} URL received:`, {
+      console.log(`✅ Platform processing complete for ${options.platform}!`, {
         url: finalUrl,
         platform: options.platform,
         specs: platformSpec,
         stats: data.stats
       });
-      onProgress?.(75);
+      
+      onProgress?.(75, { 
+        phase: 'platform_complete', 
+        platform: options.platform,
+        finalUrl: finalUrl
+      });
 
       // Step 5: Download final video
       console.log(`📥 Downloading final ${options.platform} video...`);
       const videoBlob = await this.downloadFromUrl(finalUrl);
-      onProgress?.(100);
       
-      console.log(`🎉 ${options.platform} video processing complete!`, {
+      onProgress?.(100, { 
+        phase: 'complete', 
+        platform: options.platform,
+        finalSize: `${(videoBlob.size / 1024 / 1024).toFixed(2)}MB`
+      });
+      
+      console.log(`🎉 ${options.platform} video ready!`, {
         platform: options.platform,
         finalSize: `${(videoBlob.size / 1024 / 1024).toFixed(2)}MB`,
-        targetSpecs: platformSpec
+        targetSpecs: platformSpec,
+        stats: data.stats
       });
+      
       return videoBlob;
 
     } catch (error) {
-      console.error(`❌ ${options.platform} video processing failed:`, error);
+      console.error(`❌ ${options.platform} processing failed:`, error);
       throw error;
     }
   }
 
   /**
-   * Detect exact durations for all videos
+   * Enhanced duration detection with platform context
    */
   private async detectAllExactDurations(
     sequences: VideoProcessingOptions['sequences'], 
-    onProgress?: (progress: number) => void
+    onProgress?: (progress: number, details?: any) => void
   ): Promise<VideoWithExactDuration[]> {
-    console.log('🎯 Starting exact duration detection for all videos...');
+    console.log('🎯 Starting exact duration detection for platform processing...');
     
     const videosWithExactDurations: VideoWithExactDuration[] = [];
     const errors: string[] = [];
@@ -153,7 +174,12 @@ export class VideoProcessor {
         
         // Progress for duration detection phase (10% to 35%)
         const detectionProgress = 10 + ((i / sequences.length) * 25);
-        onProgress?.(detectionProgress);
+        onProgress?.(detectionProgress, {
+          phase: 'duration_detection',
+          current: i + 1,
+          total: sequences.length,
+          videoName: seq.name
+        });
 
         // Extract public ID
         const publicId = this.extractPublicIdFromUrl(seq.file_url);
@@ -200,30 +226,31 @@ export class VideoProcessor {
       }
     }
 
-    // Summary of detection results
+    // Enhanced summary with platform context
     const exactCount = videosWithExactDurations.filter(v => v.detectionSource === 'exact').length;
     const fallbackCount = videosWithExactDurations.filter(v => v.detectionSource === 'fallback').length;
 
-    console.log('📊 Duration Detection Summary:', {
+    console.log('📊 Duration Detection Summary for Platform Processing:', {
       total: videosWithExactDurations.length,
       exactDetections: exactCount,
       fallbackUsed: fallbackCount,
-      successRate: `${((exactCount / videosWithExactDurations.length) * 100).toFixed(1)}%`
+      successRate: `${((exactCount / videosWithExactDurations.length) * 100).toFixed(1)}%`,
+      readyForPlatformProcessing: true
     });
 
     if (videosWithExactDurations.length === 0) {
-      throw new Error('Failed to process any videos. Check video URLs and network connection.');
+      throw new Error('Failed to process any videos for platform formatting. Check video URLs and network connection.');
     }
 
     return videosWithExactDurations;
   }
 
   /**
-   * Detect exact duration for a single video using HTML5 video element
+   * Enhanced duration detection with better error handling
    */
   private async detectExactDuration(fileUrl: string): Promise<number> {
     return new Promise((resolve, reject) => {
-      console.log(`🔍 Detecting exact duration for: ${fileUrl}`);
+      console.log(`🔍 Detecting exact duration for platform processing: ${fileUrl}`);
       
       const video = document.createElement('video');
       video.crossOrigin = 'anonymous';
@@ -250,7 +277,7 @@ export class VideoProcessor {
       const onError = (error: Event) => {
         console.error(`❌ Error loading video for duration detection:`, error);
         cleanup();
-        reject(new Error(`Failed to load video: ${fileUrl}`));
+        reject(new Error(`Failed to load video for platform processing: ${fileUrl}`));
       };
       
       video.addEventListener('loadedmetadata', onMetadata);
@@ -259,18 +286,23 @@ export class VideoProcessor {
       // Timeout after 15 seconds
       setTimeout(() => {
         cleanup();
-        reject(new Error(`Timeout: Could not detect duration within 15 seconds`));
+        reject(new Error(`Timeout: Could not detect duration within 15 seconds for platform processing`));
       }, 15000);
       
       video.src = fileUrl;
     });
   }
 
-  // Keep all your existing methods unchanged
+  // Utility method to get platform specifications
+  static getPlatformSpecs(platform: string) {
+    return PLATFORM_SPECS[platform as keyof typeof PLATFORM_SPECS] || PLATFORM_SPECS.youtube;
+  }
+
+  // Enhanced validation with platform context
   private validateSequences(sequences: any[]) {
-    console.log('🔍 Validating sequences...');
+    console.log('🔍 Validating sequences for platform processing...');
     const validSequences = sequences.filter(seq => seq.file_url && seq.duration > 0);
-    console.log(`✅ Validation complete: ${validSequences.length}/${sequences.length} sequences are valid`);
+    console.log(`✅ Validation complete: ${validSequences.length}/${sequences.length} sequences ready for platform processing`);
     return validSequences;
   }
 

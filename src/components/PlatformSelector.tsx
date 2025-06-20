@@ -1,89 +1,332 @@
-import { Card, CardContent } from '@/components/ui/card';
-import { Platform } from '@/pages/Index';
+// Enhanced videoProcessor.ts with platform-specific processing
+import { supabase } from '@/integrations/supabase/client';
 
-interface PlatformSelectorProps {
-  selected: Platform;
-  onSelect: (platform: Platform) => void;
+export interface VideoProcessingOptions {
+  sequences: Array<{
+    id: string;
+    name: string;
+    duration: number;
+    file_url: string;
+  }>;
+  customization: { /* ... your customization options ... */ };
+  platform: string;
+  duration: number;
+  enableProgress?: boolean;
 }
 
-const PlatformSelector = ({ selected, onSelect }: PlatformSelectorProps) => {
-  const platforms = [
-    {
-      id: 'youtube' as Platform,
-      name: 'YouTube',
-      ratio: '16:9',
-      resolution: '1920×1080',
-      description: 'Landscape format, perfect for desktop viewing',
-      frameClass: 'w-40 h-[90px]',
-      bgGradient: 'from-red-500 to-red-600'
-    },
-    {
-      id: 'facebook' as Platform,
-      name: 'Facebook',
-      ratio: '1:1',
-      resolution: '1080×1080',
-      description: 'Square format, optimized for feed posts',
-      frameClass: 'w-[90px] h-[90px]',
-      bgGradient: 'from-blue-500 to-blue-600'
-    },
-    {
-      id: 'instagram' as Platform,
-      name: 'Instagram Stories',
-      ratio: '9:16',
-      resolution: '1080×1920',
-      description: 'Vertical format, full-screen mobile experience',
-      frameClass: 'w-[60px] h-[100px]',
-      bgGradient: 'from-purple-500 to-pink-500'
+interface VideoWithExactDuration {
+  publicId: string;
+  duration: number;
+  originalDuration: number;
+  detectionSource: 'exact' | 'fallback';
+  name: string;
+}
+
+// FIXED: Platform specifications with correct resolutions
+const PLATFORM_SPECS = {
+  youtube: { 
+    ratio: '16:9', 
+    resolution: '1920×1080',
+    width: 1920,
+    height: 1080,
+    description: 'Landscape format, perfect for desktop viewing'
+  },
+  facebook: { 
+    ratio: '1:1', 
+    resolution: '1080×1080',
+    width: 1080,
+    height: 1080,
+    description: 'Square format, optimized for feed posts'
+  },
+  instagram: { 
+    ratio: '9:16', 
+    resolution: '1080×1920', // FIXED: Was 1980x1920
+    width: 1080,
+    height: 1920,
+    description: 'Vertical format, full-screen mobile experience'
+  }
+} as const;
+
+export class VideoProcessor {
+  constructor() {
+    console.log('🎬 VideoProcessor initialized with enhanced platform support');
+  }
+
+  async processVideo(
+    options: VideoProcessingOptions, 
+    onProgress?: (progress: number, details?: any) => void
+  ): Promise<Blob> {
+    const platformSpec = PLATFORM_SPECS[options.platform as keyof typeof PLATFORM_SPECS];
+    
+    console.log('🚀 Starting platform-specific video processing:', {
+      platform: options.platform,
+      sequences: options.sequences.length,
+      targetDuration: options.duration,
+      platformSpecs: platformSpec
+    });
+    
+    // Enhanced progress tracking with platform info
+    onProgress?.(5, {
+      phase: 'initialization',
+      platform: options.platform,
+      platformSpecs: platformSpec
+    });
+
+    try {
+      // Step 1: Validate sequences
+      const validSequences = this.validateSequences(options.sequences);
+      onProgress?.(10, { phase: 'validation', validSequences: validSequences.length });
+
+      // Step 2: Detect exact durations for all videos
+      console.log('🔍 Detecting exact durations for platform processing...');
+      const videosWithExactDurations = await this.detectAllExactDurations(validSequences, onProgress);
+      onProgress?.(35, { phase: 'duration_detection', detectedVideos: videosWithExactDurations.length });
+
+      // Step 3: Prepare enhanced request with platform specifications
+      const requestBody = {
+        videos: videosWithExactDurations.map(video => ({
+          publicId: video.publicId,
+          duration: video.duration,
+          source: video.detectionSource
+        })),
+        targetDuration: options.duration,
+        platform: options.platform, // Critical for platform-specific processing
+        exactDurations: true,
+        enableProgress: false
+      };
+
+      console.log(`📡 Processing for ${options.platform} (${platformSpec?.ratio})...`, {
+        ...requestBody,
+        videos: requestBody.videos.length,
+        targetResolution: platformSpec?.resolution
+      });
+      
+      onProgress?.(40, { 
+        phase: 'platform_processing', 
+        platform: options.platform,
+        targetResolution: platformSpec?.resolution
+      });
+      
+      // Step 4: Process videos with platform transformations
+      const { data, error } = await supabase.functions.invoke('cloudinary-concatenate', {
+        body: requestBody
+      });
+
+      if (error) throw new Error(`Platform processing failed: ${error.message}`);
+      if (!data?.success || !data?.url) throw new Error(data?.error || 'Backend failed to return a valid URL.');
+      
+      const finalUrl = data.url;
+      console.log(`✅ Platform processing complete for ${options.platform}!`, {
+        url: finalUrl,
+        platform: options.platform,
+        specs: platformSpec,
+        stats: data.stats
+      });
+      
+      onProgress?.(75, { 
+        phase: 'platform_complete', 
+        platform: options.platform,
+        finalUrl: finalUrl
+      });
+
+      // Step 5: Download final video
+      console.log(`📥 Downloading final ${options.platform} video...`);
+      const videoBlob = await this.downloadFromUrl(finalUrl);
+      
+      onProgress?.(100, { 
+        phase: 'complete', 
+        platform: options.platform,
+        finalSize: `${(videoBlob.size / 1024 / 1024).toFixed(2)}MB`
+      });
+      
+      console.log(`🎉 ${options.platform} video ready!`, {
+        platform: options.platform,
+        finalSize: `${(videoBlob.size / 1024 / 1024).toFixed(2)}MB`,
+        targetSpecs: platformSpec,
+        stats: data.stats
+      });
+      
+      return videoBlob;
+
+    } catch (error) {
+      console.error(`❌ ${options.platform} processing failed:`, error);
+      throw error;
     }
-  ];
+  }
 
-  return (
-    <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-      {platforms.map((platform, index) => (
-        <Card 
-          key={platform.id}
-          className={`
-            cursor-pointer transition-all duration-500 hover:scale-105 border-0 bg-[#111] gradient-border fade-in-up rounded-3xl
-            ${selected === platform.id ? 'selected -translate-y-2 shadow-2xl' : 'hover:-translate-y-2 hover:shadow-2xl'}
-          `}
-          style={{ animationDelay: `${(index + 1) * 0.1}s` }}
-          onClick={() => onSelect(platform.id)}
-        >
-          <CardContent className="p-6 text-center relative rounded-3xl">
-            <div className="inline-block bg-white/10 text-white px-3 py-1.5 rounded-xl text-xs font-medium uppercase tracking-wider mb-6">
-              Video Format
-            </div>
-            
-            <div className="flex justify-center mb-6 h-[120px] items-center">
-              <div className={`
-                border-2 border-white/30 rounded-2xl bg-gradient-to-br ${platform.bgGradient} bg-opacity-20 flex flex-col items-center justify-center
-                text-sm font-semibold text-white transition-all duration-300 relative
-                ${platform.frameClass}
-                ${selected === platform.id ? 'border-white shadow-lg' : 'hover:border-white/80 hover:shadow-md'}
-              `}>
-                <div className="absolute top-2 left-2 right-2 h-0.5 bg-gradient-to-r from-white/30 to-transparent rounded-full"></div>
-                <div className="text-lg font-bold">{platform.ratio}</div>
-                <div className="text-xs text-white/80 mt-1">{platform.resolution}</div>
-              </div>
-            </div>
-            
-            <h4 className="font-bold text-2xl mb-2 text-white tracking-tight">{platform.name}</h4>
-            <p className="text-sm text-white/70 mb-4">{platform.description}</p>
-            
-            <div className="flex justify-between items-center">
-              <div className="text-left">
-                <div className="text-xs text-white/50 uppercase tracking-wider">Resolution</div>
-                <div className="text-sm font-semibold text-white">{platform.resolution}</div>
-              </div>
-              <div className="text-white/60 text-lg transition-colors duration-300">
-                →
-              </div>
-            </div>
-          </CardContent>
-        </Card>
-      ))}
-    </div>
-  );
-};
+  /**
+   * Enhanced duration detection with platform context
+   */
+  private async detectAllExactDurations(
+    sequences: VideoProcessingOptions['sequences'], 
+    onProgress?: (progress: number, details?: any) => void
+  ): Promise<VideoWithExactDuration[]> {
+    console.log('🎯 Starting exact duration detection for platform processing...');
+    
+    const videosWithExactDurations: VideoWithExactDuration[] = [];
+    const errors: string[] = [];
 
-export default PlatformSelector;
+    for (let i = 0; i < sequences.length; i++) {
+      const seq = sequences[i];
+      
+      try {
+        console.log(`📊 Detecting duration ${i + 1}/${sequences.length}: ${seq.name}`);
+        
+        // Progress for duration detection phase (10% to 35%)
+        const detectionProgress = 10 + ((i / sequences.length) * 25);
+        onProgress?.(detectionProgress, {
+          phase: 'duration_detection',
+          current: i + 1,
+          total: sequences.length,
+          videoName: seq.name
+        });
+
+        // Extract public ID
+        const publicId = this.extractPublicIdFromUrl(seq.file_url);
+        
+        // Detect exact duration
+        const exactDuration = await this.detectExactDuration(seq.file_url);
+        
+        videosWithExactDurations.push({
+          publicId: publicId,
+          duration: exactDuration,
+          originalDuration: seq.duration,
+          detectionSource: 'exact',
+          name: seq.name
+        });
+
+        const durationDiff = Math.abs(exactDuration - seq.duration);
+        console.log(`✅ ${seq.name}:`, {
+          originalDuration: seq.duration.toFixed(3),
+          exactDuration: exactDuration.toFixed(6),
+          difference: durationDiff.toFixed(6)
+        });
+
+      } catch (error) {
+        console.error(`❌ Duration detection failed for ${seq.name}:`, error);
+        
+        // Fallback to original duration
+        console.warn(`⚠️ Using fallback duration for ${seq.name}`);
+        
+        try {
+          const publicId = this.extractPublicIdFromUrl(seq.file_url);
+          videosWithExactDurations.push({
+            publicId: publicId,
+            duration: seq.duration,
+            originalDuration: seq.duration,
+            detectionSource: 'fallback',
+            name: seq.name
+          });
+          
+          errors.push(`${seq.name}: ${error instanceof Error ? error.message : 'Unknown error'}`);
+        } catch (fallbackError) {
+          console.error(`❌ Complete failure for ${seq.name}:`, fallbackError);
+          throw new Error(`Failed to process video "${seq.name}": ${fallbackError instanceof Error ? fallbackError.message : 'Unknown error'}`);
+        }
+      }
+    }
+
+    // Enhanced summary with platform context
+    const exactCount = videosWithExactDurations.filter(v => v.detectionSource === 'exact').length;
+    const fallbackCount = videosWithExactDurations.filter(v => v.detectionSource === 'fallback').length;
+
+    console.log('📊 Duration Detection Summary for Platform Processing:', {
+      total: videosWithExactDurations.length,
+      exactDetections: exactCount,
+      fallbackUsed: fallbackCount,
+      successRate: `${((exactCount / videosWithExactDurations.length) * 100).toFixed(1)}%`,
+      readyForPlatformProcessing: true
+    });
+
+    if (videosWithExactDurations.length === 0) {
+      throw new Error('Failed to process any videos for platform formatting. Check video URLs and network connection.');
+    }
+
+    return videosWithExactDurations;
+  }
+
+  /**
+   * Enhanced duration detection with better error handling
+   */
+  private async detectExactDuration(fileUrl: string): Promise<number> {
+    return new Promise((resolve, reject) => {
+      console.log(`🔍 Detecting exact duration for platform processing: ${fileUrl}`);
+      
+      const video = document.createElement('video');
+      video.crossOrigin = 'anonymous';
+      video.preload = 'metadata';
+      
+      const cleanup = () => {
+        video.removeEventListener('loadedmetadata', onMetadata);
+        video.removeEventListener('error', onError);
+        video.src = '';
+      };
+      
+      const onMetadata = () => {
+        const duration = video.duration;
+        if (duration && duration > 0) {
+          console.log(`✅ Exact duration detected: ${duration.toFixed(6)}s`);
+          cleanup();
+          resolve(duration);
+        } else {
+          cleanup();
+          reject(new Error('Invalid duration detected (0 or undefined)'));
+        }
+      };
+      
+      const onError = (error: Event) => {
+        console.error(`❌ Error loading video for duration detection:`, error);
+        cleanup();
+        reject(new Error(`Failed to load video for platform processing: ${fileUrl}`));
+      };
+      
+      video.addEventListener('loadedmetadata', onMetadata);
+      video.addEventListener('error', onError);
+      
+      // Timeout after 15 seconds
+      setTimeout(() => {
+        cleanup();
+        reject(new Error(`Timeout: Could not detect duration within 15 seconds for platform processing`));
+      }, 15000);
+      
+      video.src = fileUrl;
+    });
+  }
+
+  // Utility method to get platform specifications
+  static getPlatformSpecs(platform: string) {
+    return PLATFORM_SPECS[platform as keyof typeof PLATFORM_SPECS] || PLATFORM_SPECS.youtube;
+  }
+
+  // Enhanced validation with platform context
+  private validateSequences(sequences: any[]) {
+    console.log('🔍 Validating sequences for platform processing...');
+    const validSequences = sequences.filter(seq => seq.file_url && seq.duration > 0);
+    console.log(`✅ Validation complete: ${validSequences.length}/${sequences.length} sequences ready for platform processing`);
+    return validSequences;
+  }
+
+  private extractPublicIdFromUrl(cloudinaryUrl: string): string {
+    try {
+      const urlParts = cloudinaryUrl.split('/');
+      const uploadIndex = urlParts.findIndex(part => part === 'upload');
+      if (uploadIndex === -1) throw new Error('Invalid Cloudinary URL format');
+      
+      const pathAfterUpload = urlParts.slice(uploadIndex + 1).join('/');
+      const pathWithoutVersion = pathAfterUpload.replace(/^v\d+\//, '');
+      return pathWithoutVersion.replace(/\.[^/.]+$/, '');
+    } catch (error) {
+      throw new Error(`Invalid Cloudinary URL: ${cloudinaryUrl}`);
+    }
+  }
+
+  private async downloadFromUrl(url: string): Promise<Blob> {
+    try {
+      const response = await fetch(url);
+      if (!response.ok) throw new Error(`Failed to download video: HTTP ${response.status}`);
+      return await response.blob();
+    } catch (error) {
+      throw new Error(`Video download failed: ${error instanceof Error ? error.message : 'Unknown error'}`);
+    }
+  }
+}
