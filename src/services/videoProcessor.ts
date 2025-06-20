@@ -1,3 +1,4 @@
+
 // Enhanced videoProcessor.ts with real-time progress tracking
 import { supabase } from '@/integrations/supabase/client';
 
@@ -65,7 +66,7 @@ export class VideoProcessor {
       const videosWithExactDurations = await this.detectAllExactDurations(validSequences, onProgress);
       onProgress?.(35);
 
-      // Step 3: Prepare request with exact durations
+      // Step 3: Prepare request with exact durations and platform
       const requestBody = {
         videos: videosWithExactDurations.map(video => ({
           publicId: video.publicId,
@@ -73,14 +74,15 @@ export class VideoProcessor {
           source: video.detectionSource
         })),
         targetDuration: options.duration,
+        platform: options.platform, // Include platform for proper formatting
         exactDurations: true,
         enableProgress: false // Disable SSE for now
       };
 
-      console.log('📡 Calling edge function with traditional method:', requestBody);
+      console.log('📡 Calling edge function with platform-specific processing:', requestBody);
       onProgress?.(40);
       
-      // Step 4: Process videos traditionally
+      // Step 4: Process videos traditionally with platform formatting
       const { data, error } = await supabase.functions.invoke('cloudinary-concatenate', {
         body: requestBody
       });
@@ -89,7 +91,7 @@ export class VideoProcessor {
       if (!data?.success || !data?.url) throw new Error(data?.error || 'Backend failed to return a valid URL.');
       
       const finalUrl = data.url;
-      console.log(`✅ Success! Final URL received: ${finalUrl}`);
+      console.log(`✅ Success! Final ${options.platform} URL received: ${finalUrl}`);
       onProgress?.(75);
 
       // Step 5: Download final video

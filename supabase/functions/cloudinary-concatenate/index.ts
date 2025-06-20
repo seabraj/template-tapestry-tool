@@ -149,6 +149,32 @@ class ProgressTracker {
   }
 }
 
+// Platform-specific transformations
+function getPlatformTransformations(platform: string) {
+  switch (platform) {
+    case 'youtube':
+      return [
+        { width: 1920, height: 1080, crop: 'fill', gravity: 'auto' },
+        { quality: 'auto:good', audio_codec: 'aac' }
+      ];
+    case 'facebook':
+      return [
+        { width: 1080, height: 1080, crop: 'fill', gravity: 'auto' },
+        { quality: 'auto:good', audio_codec: 'aac' }
+      ];
+    case 'instagram':
+      return [
+        { width: 1080, height: 1920, crop: 'fill', gravity: 'auto' },
+        { quality: 'auto:good', audio_codec: 'aac' }
+      ];
+    default:
+      return [
+        { width: 1920, height: 1080, crop: 'fill', gravity: 'auto' },
+        { quality: 'auto:good', audio_codec: 'aac' }
+      ];
+  }
+}
+
 async function waitForAssetAvailability(
   publicId: string, 
   resourceType: string = 'video', 
@@ -182,19 +208,18 @@ async function waitForAssetAvailability(
   return false;
 }
 
-async function buildConcatenationUrl(assetIds: string[]): Promise<string> {
+async function buildConcatenationUrl(assetIds: string[], platform: string): Promise<string> {
   if (assetIds.length === 0) {
     throw new Error('No assets to concatenate');
   }
 
+  const platformTransformations = getPlatformTransformations(platform);
+
   if (assetIds.length === 1) {
-    // Single video, just return its URL
+    // Single video, just return its URL with platform transformations
     return cloudinary.url(assetIds[0], {
       resource_type: 'video',
-      transformation: [
-        { width: 1920, height: 1080, crop: 'pad', background: 'black' },
-        { quality: 'auto:good', audio_codec: 'aac' }
-      ]
+      transformation: platformTransformations
     });
   }
 
@@ -212,18 +237,8 @@ async function buildConcatenationUrl(assetIds: string[]): Promise<string> {
     });
   });
 
-  // Add final formatting
-  transformations.push({
-    width: 1920,
-    height: 1080,
-    crop: 'pad',
-    background: 'black'
-  });
-
-  transformations.push({
-    quality: 'auto:good',
-    audio_codec: 'aac'
-  });
+  // Add platform-specific transformations
+  transformations.push(...platformTransformations);
 
   return cloudinary.url(baseVideo, {
     resource_type: 'video',
@@ -234,24 +249,26 @@ async function buildConcatenationUrl(assetIds: string[]): Promise<string> {
 async function processVideo(
   videos: any[], 
   targetDuration: number,
+  platform: string,
   progressTracker: ProgressTracker
 ): Promise<{ url: string; method: string; stats: any }> {
   const temporaryAssetIds = new Set<string>();
   
   try {
     // ====================================================================
-    // PHASE 1: CREATE TRIMMED VIDEOS
+    // PHASE 1: CREATE TRIMMED VIDEOS WITH PLATFORM FORMATTING
     // ====================================================================
     progressTracker.sendProgress({
       phase: 'trimming',
       progress: 5,
-      message: 'Starting video trimming process...',
+      message: `Preparing videos for ${platform} format...`,
       timestamp: new Date().toISOString()
     });
 
     const totalOriginalDuration = videos.reduce((sum, v) => sum + v.duration, 0);
     const timestamp = Date.now();
     const createdAssets = [];
+    const platformTransformations = getPlatformTransformations(platform);
     
     for (let i = 0; i < videos.length; i++) {
       const video = videos[i];
@@ -262,21 +279,27 @@ async function processVideo(
       progressTracker.sendProgress({
         phase: 'trimming',
         progress: 5 + (i / videos.length) * 25, // 5-30% range
-        message: `Trimming video ${i + 1} of ${videos.length}...`,
-        details: { videoIndex: i, trimmedId },
+        message: `Processing video ${i + 1} of ${videos.length} for ${platform}...`,
+        details: { videoIndex: i, trimmedId, platform },
         timestamp: new Date().toISOString()
       });
 
+      // Apply both duration trimming and platform formatting
       const trimmedUrl = cloudinary.url(video.publicId, {
         resource_type: 'video',
-        transformation: [{ duration: proportionalDuration.toFixed(6) }]
+        transformation: [
+          { duration: proportionalDuration.toFixed(6) },
+          ...platformTransformations
+        ]
       });
       
-      debugLog(`Creating trimmed video ${i + 1}/${videos.length}`, {
+      debugLog(`Creating trimmed and formatted video ${i + 1}/${videos.length}`, {
         originalId: video.publicId,
         trimmedId,
+        platform,
         originalDuration: video.duration,
-        proportionalDuration: proportionalDuration.toFixed(6)
+        proportionalDuration: proportionalDuration.toFixed(6),
+        transformations: platformTransformations
       });
 
       const uploadResult = await cloudinary.uploader.upload(trimmedUrl, {
@@ -295,7 +318,7 @@ async function processVideo(
     progressTracker.sendProgress({
       phase: 'trimming',
       progress: 30,
-      message: `All ${createdAssets.length} videos trimmed successfully`,
+      message: `All ${createdAssets.length} videos processed for ${platform} format`,
       timestamp: new Date().toISOString()
     });
     
@@ -305,7 +328,7 @@ async function processVideo(
     progressTracker.sendProgress({
       phase: 'asset_verification',
       progress: 35,
-      message: 'Verifying all assets are ready...',
+      message: 'Verifying all processed assets are ready...',
       timestamp: new Date().toISOString()
     });
 
@@ -318,7 +341,7 @@ async function processVideo(
     progressTracker.sendProgress({
       phase: 'asset_verification',
       progress: 40,
-      message: 'All assets verified and ready',
+      message: 'All assets verified and ready for concatenation',
       timestamp: new Date().toISOString()
     });
     
@@ -328,7 +351,7 @@ async function processVideo(
     progressTracker.sendProgress({
       phase: 'concatenation',
       progress: 45,
-      message: 'Starting video concatenation...',
+      message: `Combining videos for ${platform} output...`,
       timestamp: new Date().toISOString()
     });
     
@@ -340,17 +363,17 @@ async function processVideo(
       progressTracker.sendProgress({
         phase: 'concatenation',
         progress: 50,
-        message: 'Building concatenation URL...',
+        message: `Building ${platform} concatenation URL...`,
         timestamp: new Date().toISOString()
       });
 
-      const concatenationUrl = await buildConcatenationUrl(publicIdsToConcat);
-      debugLog("Built concatenation URL:", concatenationUrl);
+      const concatenationUrl = await buildConcatenationUrl(publicIdsToConcat, platform);
+      debugLog("Built concatenation URL with platform formatting:", concatenationUrl);
 
       progressTracker.sendProgress({
         phase: 'concatenation',
         progress: 60,
-        message: 'Uploading final concatenated video...',
+        message: `Creating final ${platform} video...`,
         timestamp: new Date().toISOString()
       });
 
@@ -368,13 +391,13 @@ async function processVideo(
       const finalUrl = finalVideoResult.secure_url;
       
       // DO NOT add final video to cleanup list - this is the output we want to keep
-      infoLog(`Final video created and will be preserved: ${finalVideoPublicId}`);
+      infoLog(`Final ${platform} video created and will be preserved: ${finalVideoPublicId}`);
       
       progressTracker.sendProgress({
         phase: 'concatenation',
         progress: 80,
-        message: 'Video concatenation completed successfully',
-        details: { method: 'url_concatenation', finalUrl, finalVideoId: finalVideoPublicId },
+        message: `${platform} video concatenation completed successfully`,
+        details: { method: 'url_concatenation', finalUrl, finalVideoId: finalVideoPublicId, platform },
         timestamp: new Date().toISOString()
       });
 
@@ -384,7 +407,7 @@ async function processVideo(
       progressTracker.sendProgress({
         phase: 'cleanup',
         progress: 85,
-        message: 'Cleaning up temporary assets...',
+        message: 'Cleaning up temporary processing files...',
         timestamp: new Date().toISOString()
       });
 
@@ -500,7 +523,9 @@ async function processVideo(
           inputVideos: videos.length,
           totalOriginalDuration: totalOriginalDuration.toFixed(3),
           targetDuration: targetDuration.toFixed(3),
-          trimmedAssets: createdAssets.length
+          trimmedAssets: createdAssets.length,
+          platform,
+          platformTransformations
         }
       };
 
@@ -539,7 +564,7 @@ async function processVideo(
       progressTracker.sendProgress({
         phase: 'concatenation',
         progress: 65,
-        message: 'Creating final video from manifest...',
+        message: `Creating final ${platform} video from manifest...`,
         timestamp: new Date().toISOString()
       });
       
@@ -548,24 +573,25 @@ async function processVideo(
       
       const finalVideoPublicId = `p2_final_video_${timestamp}`;
       
-      // Try using the manifest URL directly
+      // Try using the manifest URL directly with platform transformations
       const finalVideoResult = await cloudinary.uploader.upload(manifestUrl, {
         resource_type: 'video',
         public_id: finalVideoPublicId,
         raw_convert: 'concatenate',
         overwrite: true,
+        transformation: getPlatformTransformations(platform)
       });
 
       const finalUrl = finalVideoResult.secure_url;
       
       // DO NOT add final video to cleanup list - this is the output we want to keep
-      infoLog(`Final video created via manifest and will be preserved: ${finalVideoPublicId}`);
+      infoLog(`Final ${platform} video created via manifest and will be preserved: ${finalVideoPublicId}`);
       
       progressTracker.sendProgress({
         phase: 'concatenation',
         progress: 80,
-        message: 'Video concatenation completed via manifest method',
-        details: { method: 'manifest_concatenation', finalUrl, finalVideoId: finalVideoPublicId },
+        message: `${platform} video concatenation completed via manifest method`,
+        details: { method: 'manifest_concatenation', finalUrl, finalVideoId: finalVideoPublicId, platform },
         timestamp: new Date().toISOString()
       });
 
@@ -628,7 +654,9 @@ async function processVideo(
           inputVideos: videos.length,
           totalOriginalDuration: totalOriginalDuration.toFixed(3),
           targetDuration: targetDuration.toFixed(3),
-          trimmedAssets: createdAssets.length
+          trimmedAssets: createdAssets.length,
+          platform,
+          platformTransformations
         }
       };
     }
@@ -675,11 +703,18 @@ serve(async (req) => {
 
   try {
     const requestBody = await req.json();
-    const { videos, targetDuration, enableProgress = false } = requestBody;
+    const { videos, targetDuration, platform = 'youtube', enableProgress = false } = requestBody;
 
     if (!videos || videos.length === 0 || !targetDuration || targetDuration <= 0) {
       throw new Error('Invalid request body');
     }
+
+    infoLog('Processing video request', {
+      videoCount: videos.length,
+      targetDuration,
+      platform,
+      enableProgress
+    });
 
     // Check if client wants progress updates
     if (enableProgress) {
@@ -692,12 +727,12 @@ serve(async (req) => {
           progressTracker.sendProgress({
             phase: 'initialization',
             progress: 0,
-            message: 'Starting video processing...',
+            message: `Starting ${platform} video processing...`,
             timestamp: new Date().toISOString()
           });
 
           // Process video asynchronously
-          processVideo(videos, targetDuration, progressTracker)
+          processVideo(videos, targetDuration, platform, progressTracker)
             .then(result => {
               progressTracker.complete(result);
             })
@@ -719,7 +754,7 @@ serve(async (req) => {
     } else {
       // Traditional request-response with enhanced cleanup
       const progressTracker = new ProgressTracker(); // No SSE controller, but still tracks progress
-      const result = await processVideo(videos, targetDuration, progressTracker);
+      const result = await processVideo(videos, targetDuration, platform, progressTracker);
       
       return new Response(JSON.stringify({ 
         success: true, 
