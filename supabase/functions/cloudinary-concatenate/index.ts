@@ -2,8 +2,10 @@ import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { v2 as cloudinary } from 'npm:cloudinary@^1.41.1';
 
 const corsHeaders = {
-  'Access-Control-Allow-Origin': '*',
+  'Access-Control-Allow-Origin': '*',  // Use '*' or specify allowed domains
   'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
+  'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
+  'Access-Control-Allow-Credentials': 'true'
 };
 
 cloudinary.config({
@@ -210,7 +212,6 @@ async function processVideo(
     const timestamp = Date.now();
 
     try {
-        const { width, height } = getPlatformDimensions(platform);
         const totalOriginalDuration = videos.reduce((sum, v) => sum + v.duration, 0);
 
         // ====================================================================
@@ -315,7 +316,9 @@ async function processVideo(
 
         const finalVideoPublicId = `final_video_${timestamp}`;
         const sortedSegments = finalSegments.sort((a, b) => a.order - b.order);
-        const { width, height } = getPlatformDimensions(platform);
+const dimensions = getPlatformDimensions(platform);
+        const width = dimensions.width;
+        const height = dimensions.height;
         
         // Handle single video case by renaming the asset
         if (sortedSegments.length === 1) {
