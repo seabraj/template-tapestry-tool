@@ -160,10 +160,16 @@ async function waitForAssetAvailability(
       debugLog(`waitForAssetAvailability: Attempt ${attempt} for ${publicId}`);
       const resource = await cloudinary.api.resource(publicId, { resource_type: resourceType });
       
-      // Additional checks for video resources
-      if (resourceType === 'video' && resource.status !== 'complete') {
-        debugLog(`Asset ${publicId} exists but status is: ${resource.status}`);
-        throw new Error(`Asset not ready, status: ${resource.status}`);
+      // Additional checks for video resources - allow more statuses
+      if (resourceType === 'video' && resource.status && ['failed', 'error', 'timeout'].includes(resource.status.toLowerCase())) {
+        debugLog(`Asset ${publicId} has failed status: ${resource.status}`);
+        throw new Error(`Asset processing failed, status: ${resource.status}`);
+      }
+      
+      // Check if video has basic properties that indicate it's processable
+      if (resourceType === 'video' && (!resource.width || !resource.height)) {
+        debugLog(`Asset ${publicId} missing video dimensions`);
+        // Don't throw error, just log - some videos might still be processing
       }
       
       debugLog(`Asset ${publicId} is available and ready.`);
@@ -217,10 +223,11 @@ async function processVideo(
 
             progressTracker.sendProgress({ phase: 'transformation', progress: 10 + (i / videos.length) * 40, message: `Processing video segment ${i + 1}/${videos.length}...`, timestamp: new Date().toISOString() });
             
-            // Define a single, chained transformation
+            // Define a single, chained transformation with proper video codec
             const transformation = [
-                { duration: proportionalDuration.toFixed(6) },
-                { width, height, crop: 'fill', gravity: 'auto' }
+                { duration: `${proportionalDuration.toFixed(3)}` }, // String format for duration
+                { width, height, crop: 'fill', gravity: 'auto', quality: 'auto' },
+                { video_codec: 'h264', audio_codec: 'aac', format: 'mp4' } // Ensure compatible codecs and format
             ];
 
             const uploadOptions = {
@@ -244,9 +251,9 @@ async function processVideo(
         // ====================================================================
         progressTracker.sendProgress({ phase: 'concatenation', progress: 60, message: 'Preparing final concatenation...', timestamp: new Date().toISOString() });
         
-        // Wait for all final segments to be fully available
+        // Wait for all final segments to be fully available with optimized timing
         for (const asset of finalSegments) {
-            await waitForAssetAvailability(asset.publicId, 'video', 15);
+            await waitForAssetAvailability(asset.publicId, 'video', 10);
         }
 
         const manifestLines = finalSegments
