@@ -211,6 +211,19 @@ serve(async (req) => {
       }
 
       // ====================================================================
+      // PHASE 4: CLEANUP (before sending response)
+      // ====================================================================
+      if (temporaryAssetIds.size > 0) {
+        debugLog("--- CLEANUP: Deleting temporary assets ---", { ids: Array.from(temporaryAssetIds) });
+        try {
+          await cloudinary.api.delete_resources(Array.from(temporaryAssetIds), { resource_type: 'video' });
+          debugLog("✅ Cleanup completed successfully");
+        } catch (cleanupError) {
+          debugLog("⚠️ Cleanup failed but processing succeeded", cleanupError);
+        }
+      }
+
+      // ====================================================================
       // FINAL RESPONSE
       // ====================================================================
       return new Response(JSON.stringify({ success: true, url: finalUrl }), {
@@ -225,16 +238,18 @@ serve(async (req) => {
 
   } catch (error) {
     debugLog("❌ FATAL ERROR", { message: error.message, stack: error.stack });
+    
+    // Cleanup on error (safely)
+    if (temporaryAssetIds.size > 0) {
+      debugLog("--- CLEANUP ON ERROR: Deleting temporary assets ---", { ids: Array.from(temporaryAssetIds) });
+      cloudinary.api.delete_resources(Array.from(temporaryAssetIds), { resource_type: 'video' }).catch(err => {
+        debugLog("⚠️ Error cleanup failed", err);
+      });
+    }
+    
     return new Response(JSON.stringify({ success: false, error: error.message }), {
       status: 500,
       headers: { ...corsHeaders, "Content-Type": "application/json" },
     });
-  } finally {
-      if (temporaryAssetIds.size > 0) {
-          debugLog("--- CLEANUP: Deleting temporary assets ---", { ids: Array.from(temporaryAssetIds) });
-          cloudinary.api.delete_resources(Array.from(temporaryAssetIds), { resource_type: 'video' }).catch(err => {
-              debugLog("⚠️ Cleanup failed", err);
-          });
-      }
   }
 });
