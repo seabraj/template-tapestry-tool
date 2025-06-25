@@ -177,45 +177,51 @@ serve(async (req) => {
     debugLog("--- PHASE 2 COMPLETE ---");
 
     // ====================================================================
-    // PHASE 3: Concatenate Segments with Splice
+    // PHASE 3: Concatenate using URL-based method (PROVEN WORKING)
     // ====================================================================
     debugLog("--- PHASE 3: Concatenating segments ---");
     const finalVideoPublicId = `final_video_${timestamp}`;
-    const baseVideoId = sortedSegments[0].publicId;
-
-    const concatTransformation = sortedSegments.slice(1).map(segment => ({
-      overlay: `video:${segment.publicId}`,
-      flags: "splice"
-    }));
     
-    // Final formatting transformation
-    concatTransformation.push({ ...platformConfig });
-    concatTransformation.push({ quality: 'auto', audio_codec: 'aac' });
+    const publicIdsToConcat = sortedSegments.map(asset => asset.publicId);
+    debugLog("Assets to concatenate in order:", publicIdsToConcat);
 
+    // Use the EXACT method from your working code
+    try {
+      debugLog("Attempting URL-based concatenation...");
+      const concatenationUrl = await buildConcatenationUrl(publicIdsToConcat);
+      debugLog("Built concatenation URL:", concatenationUrl);
 
-    const finalVideoResult = await cloudinary.uploader.explicit(baseVideoId, {
-      type: 'upload',
-      resource_type: 'video',
-      public_id: finalVideoPublicId,
-      overwrite: true,
-      eager: [{ transformation: concatTransformation }]
-    });
+      const finalVideoResult = await cloudinary.uploader.upload(concatenationUrl, {
+        resource_type: 'video',
+        public_id: finalVideoPublicId,
+        overwrite: true,
+        transformation: [
+          { quality: 'auto:good' }
+        ]
+      });
 
-    const finalUrl = finalVideoResult.eager?.[0]?.secure_url || finalVideoResult.secure_url;
-    
-    if (!finalUrl) {
-      throw new Error("Concatenation failed to produce a final URL.");
+      const finalUrl = finalVideoResult.secure_url;
+      debugLog("--- PHASE 3 COMPLETE: Final video created via URL method ---", { 
+        finalUrl, 
+        public_id: finalVideoPublicId 
+      });
+
+      if (!finalUrl) {
+        throw new Error("URL-based concatenation failed to produce a final URL.");
+      }
+
+      // ====================================================================
+      // FINAL RESPONSE
+      // ====================================================================
+      return new Response(JSON.stringify({ success: true, url: finalUrl }), {
+        headers: { ...corsHeaders, "Content-Type": "application/json" },
+        status: 200,
+      });
+
+    } catch (urlError) {
+      debugLog("❌ URL-based concatenation failed", urlError);
+      throw new Error(`Concatenation failed: ${urlError.message}`);
     }
-    
-    debugLog("--- PHASE 3 COMPLETE ---", { finalUrl });
-
-    // ====================================================================
-    // FINAL RESPONSE
-    // ====================================================================
-    return new Response(JSON.stringify({ success: true, url: finalUrl }), {
-      headers: { ...corsHeaders, "Content-Type": "application/json" },
-      status: 200,
-    });
 
   } catch (error) {
     debugLog("❌ FATAL ERROR", { message: error.message, stack: error.stack });
