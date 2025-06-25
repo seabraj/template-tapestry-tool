@@ -103,8 +103,7 @@ async function buildConcatenationUrl(assetIds: string[], platformConfig: any): P
     });
   });
 
-  // Add final formatting with platform dimensions
-  transformations.push({ ...platformConfig });
+  // Add final quality settings only (platform dimensions already applied to segments)
   transformations.push({
     quality: 'auto:good',
     audio_codec: 'aac'
