@@ -43,32 +43,37 @@ async function waitForAssetAvailability(publicId: string, resourceType: string =
   return false;
 }
 
-// Platform dimensions
+// Platform dimensions with explicit cropping
 function getPlatformDimensions(platform: string) {
-  switch (platform) {
+  switch (platform?.toLowerCase()) {
     case 'youtube':
       return { width: 1920, height: 1080, crop: 'pad', background: 'black' };
     case 'instagram':
+    case 'instagram_post':
       return { width: 1080, height: 1080, crop: 'fill', gravity: 'auto' };
     case 'instagram_story':
       return { width: 1080, height: 1920, crop: 'fill', gravity: 'auto' };
+    case 'facebook':
+      return { width: 1200, height: 630, crop: 'fill', gravity: 'auto' }; // Facebook video format
+    case 'tiktok':
+      return { width: 1080, height: 1920, crop: 'fill', gravity: 'auto' }; // TikTok vertical
     default:
       return { width: 1920, height: 1080, crop: 'pad', background: 'black' };
   }
 }
 
-// Build concatenation URL - from your working version
-async function buildConcatenationUrl(assetIds: string[]): Promise<string> {
+// Build concatenation URL with platform dimensions
+async function buildConcatenationUrl(assetIds: string[], platformConfig: any): Promise<string> {
   if (assetIds.length === 0) {
     throw new Error('No assets to concatenate');
   }
 
   if (assetIds.length === 1) {
-    // Single video, just return its URL
+    // Single video, apply platform dimensions
     return cloudinary.url(assetIds[0], {
       resource_type: 'video',
       transformation: [
-        { width: 1920, height: 1080, crop: 'pad', background: 'black' },
+        { ...platformConfig },
         { quality: 'auto:good', audio_codec: 'aac' }
       ]
     });
@@ -88,14 +93,8 @@ async function buildConcatenationUrl(assetIds: string[]): Promise<string> {
     });
   });
 
-  // Add final formatting
-  transformations.push({
-    width: 1920,
-    height: 1080,
-    crop: 'pad',
-    background: 'black'
-  });
-
+  // Add final formatting with platform dimensions
+  transformations.push({ ...platformConfig });
   transformations.push({
     quality: 'auto:good',
     audio_codec: 'aac'
@@ -188,7 +187,7 @@ serve(async (req) => {
     // Use the EXACT method from your working code
     try {
       debugLog("Attempting URL-based concatenation...");
-      const concatenationUrl = await buildConcatenationUrl(publicIdsToConcat);
+      const concatenationUrl = await buildConcatenationUrl(publicIdsToConcat, platformConfig);
       debugLog("Built concatenation URL:", concatenationUrl);
 
       const finalVideoResult = await cloudinary.uploader.upload(concatenationUrl, {
