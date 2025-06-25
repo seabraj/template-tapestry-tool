@@ -1,15 +1,13 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { v2 as cloudinary } from 'npm:cloudinary@^1.41.1';
 
-// CORS headers - need to be very explicit
+// CORS headers - simplified and explicit
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
-  'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type, x-requested-with',
-  'Access-Control-Allow-Methods': 'GET, POST, PUT, DELETE, OPTIONS',
-  'Access-Control-Max-Age': '86400',
+  'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
 };
 
-// Cloudinary Configuration
+// Cloudinary config
 cloudinary.config({
   cloud_name: 'dsxrmo3kt',
   api_key: Deno.env.get('CLOUDINARY_API_KEY'),
@@ -17,7 +15,7 @@ cloudinary.config({
   secure: true,
 });
 
-// Enhanced logging
+// Simple logging
 function debugLog(message: string, data?: any) {
   const timestamp = new Date().toISOString();
   console.log(`[${timestamp}] ${message}`);
@@ -26,53 +24,99 @@ function debugLog(message: string, data?: any) {
   }
 }
 
-// Robust asset availability checker
-async function waitForAssetAvailability(publicId: string, resourceType: string = 'video', maxAttempts: number = 20): Promise<void> {
+// Simple asset wait - based on your working version
+async function waitForAssetAvailability(publicId: string, resourceType: string = 'video', maxAttempts: number = 10): Promise<boolean> {
   for (let attempt = 1; attempt <= maxAttempts; attempt++) {
     try {
-      const resource = await cloudinary.api.resource(publicId, { resource_type: resourceType });
-      
-      // For videos, also check if they have proper metadata
-      if (resourceType === 'video') {
-        if (!resource.width || !resource.height || !resource.duration) {
-          throw new Error(`Video ${publicId} missing essential metadata`);
-        }
-      }
-      
-      debugLog(`✅ Asset ${publicId} is available and ready.`);
-      return;
+      await cloudinary.api.resource(publicId, { resource_type: resourceType });
+      debugLog(`✅ Asset ${publicId} is available (attempt ${attempt})`);
+      return true;
     } catch (error) {
+      debugLog(`⏳ Asset ${publicId} not ready yet (attempt ${attempt}/${maxAttempts})`);
       if (attempt === maxAttempts) {
-        throw new Error(`Asset ${publicId} failed after ${maxAttempts} attempts: ${error.message}`);
+        throw new Error(`Asset ${publicId} never became available after ${maxAttempts} attempts`);
       }
-      debugLog(`⏳ Asset ${publicId} not ready, attempt ${attempt}/${maxAttempts}. Waiting 4s...`);
-      await new Promise(resolve => setTimeout(resolve, 4000));
+      // Wait 2 seconds before retrying - same as your working version
+      await new Promise(resolve => setTimeout(resolve, 2000));
     }
   }
+  return false;
 }
 
-// Platform configuration
+// Platform dimensions
 function getPlatformDimensions(platform: string) {
-  switch (platform?.toLowerCase()) {
+  switch (platform) {
     case 'youtube':
       return { width: 1920, height: 1080, crop: 'pad', background: 'black' };
-    case 'instagram_story':
-    case 'instagram-story':
-      return { width: 1080, height: 1920, crop: 'fill', gravity: 'auto' };
-    case 'instagram_post':
-    case 'instagram-post':
     case 'instagram':
       return { width: 1080, height: 1080, crop: 'fill', gravity: 'auto' };
-    case 'facebook':
-      return { width: 1200, height: 630, crop: 'fill', gravity: 'auto' };
+    case 'instagram_story':
+      return { width: 1080, height: 1920, crop: 'fill', gravity: 'auto' };
     default:
       return { width: 1920, height: 1080, crop: 'pad', background: 'black' };
   }
 }
 
+// Build concatenation URL - from your working version
+async function buildConcatenationUrl(assetIds: string[]): Promise<string> {
+  if (assetIds.length === 0) {
+    throw new Error('No assets to concatenate');
+  }
+
+  if (assetIds.length === 1) {
+    // Single video, just return its URL
+    return cloudinary.url(assetIds[0], {
+      resource_type: 'video',
+      transformation: [
+        { width: 1920, height: 1080, crop: 'pad', background: 'black' },
+        { quality: 'auto:good', audio_codec: 'aac' }
+      ]
+    });
+  }
+
+  // For multiple videos, use the video overlay approach with fl_splice
+  const baseVideo = assetIds[0];
+  const overlayVideos = assetIds.slice(1);
+
+  const transformations = [];
+
+  // Add each overlay video with fl_splice
+  overlayVideos.forEach((videoId, index) => {
+    transformations.push({
+      overlay: `video:${videoId}`,
+      flags: 'splice'
+    });
+  });
+
+  // Add final formatting
+  transformations.push({
+    width: 1920,
+    height: 1080,
+    crop: 'pad',
+    background: 'black'
+  });
+
+  transformations.push({
+    quality: 'auto:good',
+    audio_codec: 'aac'
+  });
+
+  return cloudinary.url(baseVideo, {
+    resource_type: 'video',
+    transformation: transformations
+  });
+}
+
 serve(async (req) => {
+  // Handle CORS preflight
   if (req.method === 'OPTIONS') {
-    return new Response(null, { headers: corsHeaders });
+    return new Response('ok', { 
+      headers: {
+        ...corsHeaders,
+        'Access-Control-Allow-Methods': 'POST, OPTIONS',
+      },
+      status: 200
+    });
   }
 
   const temporaryAssetIds = new Set<string>();
