@@ -310,95 +310,79 @@ async function processVideo(
             await waitForAssetAvailability(asset.publicId, 'video', 10);
         }
 
-        // Use Cloudinary's proper video concatenation method
-        progressTracker.sendProgress({ phase: 'concatenation', progress: 70, message: 'Starting video concatenation...', timestamp: new Date().toISOString() });
-        
+        // Use Cloudinary's 'splice' flag for proper concatenation
+        progressTracker.sendProgress({ phase: 'concatenation', progress: 70, message: 'Starting video concatenation with splice method...', timestamp: new Date().toISOString() });
+
         const finalVideoPublicId = `final_video_${timestamp}`;
-        
-        // Create concatenation using Cloudinary's overlay method
         const sortedSegments = finalSegments.sort((a, b) => a.order - b.order);
-        const baseVideo = sortedSegments[0].publicId;
+        const { width, height } = getPlatformDimensions(platform);
         
-        debugLog("Starting concatenation with base video:", baseVideo);
-        debugLog("Additional segments to concatenate:", sortedSegments.slice(1).map(s => s.publicId));
-        
-        // Build the transformation for concatenation
-        const concatenationTransformation = [];
-        
-        // Add each subsequent video as an overlay with timeline positioning
-        let currentTime = 0;
-        for (let i = 1; i < sortedSegments.length; i++) {
-            const segment = sortedSegments[i];
-            concatenationTransformation.push({
-                overlay: {
-                    resource_type: 'video',
-                    public_id: segment.publicId
-                },
-                flags: 'splice',
-                audio_codec: 'aac'
-            });
-        }
-        
-        // If we only have one video, just copy it
+        // Handle single video case by renaming the asset
         if (sortedSegments.length === 1) {
-            debugLog("Single video detected, creating copy");
-            const finalVideoResult = await cloudinary.uploader.upload(
-                cloudinary.url(baseVideo, { resource_type: 'video' }),
-                {
-                    resource_type: 'video',
-                    public_id: finalVideoPublicId,
-                    overwrite: true
-                }
-            );
+            debugLog("Single video detected, renaming asset.");
+            const finalVideoResult = await cloudinary.uploader.rename(sortedSegments[0].publicId, finalVideoPublicId, { resource_type: 'video', overwrite: true });
             
             progressTracker.sendProgress({ phase: 'concatenation', progress: 90, message: 'Single video processing complete.', timestamp: new Date().toISOString() });
             
             return {
                 url: finalVideoResult.secure_url,
-                method: 'single_video_copy',
+                method: 'single_video_rename',
                 stats: {
                     inputVideos: videos.length,
-                    totalOriginalDuration: videos.reduce((sum, v) => sum + v.duration, 0).toFixed(3),
+                    totalOriginalDuration: totalOriginalDuration.toFixed(3),
                     targetDuration: targetDuration.toFixed(3),
                 }
             };
         }
+
+        // Handle multiple videos using the splice flag
+        const baseVideoPublicId = sortedSegments[0].publicId;
+        debugLog("Multiple videos detected, concatenating with splice flag.", { base: baseVideoPublicId });
+
+        const concatenationTransformation = [];
         
-        // For multiple videos, create a concatenated video using video layers
-        debugLog("Multiple videos detected, using video layering for concatenation");
+        // Set dimensions for the base video
+        concatenationTransformation.push({
+            width, height, crop: 'fill'
+        });
         
-        // Create a base video transformation that includes all videos as layers
-        const layerTransformations = [];
-        
-        // Start with the first video as base
-        let startOffset = 0;
-        
-        // Add subsequent videos as video layers with timeline positioning
+        // Chain subsequent videos using the splice flag
         for (let i = 1; i < sortedSegments.length; i++) {
             const segment = sortedSegments[i];
-            layerTransformations.push({
-                overlay: {
-                    resource_type: 'video',
-                    public_id: segment.publicId
-                },
-                flags: 'layer_apply',
-                start_offset: `${startOffset}so`
+            concatenationTransformation.push({
+                overlay: `video:${segment.publicId}`,
+                flags: 'splice',
+                width, height, crop: 'fill'
             });
-            startOffset += 10; // Assume each segment is roughly 10 seconds - adjust as needed
         }
         
-        debugLog("Layer transformations:", layerTransformations);
+        // Add a final transformation to ensure correct output format and codecs
+        concatenationTransformation.push({
+            format: 'mp4',
+            video_codec: 'h264',
+            audio_codec: 'aac'
+        });
+
+        debugLog("Applying eager transformation for concatenation:", JSON.stringify(concatenationTransformation, null, 2));
+
+        // Use explicit transformation on the base video to apply the chain
+        const explicitResult = await cloudinary.uploader.explicit(baseVideoPublicId, {
+            type: 'upload',
+            resource_type: 'video',
+            public_id: finalVideoPublicId,
+            eager: [{
+                transformation: concatenationTransformation
+            }],
+            overwrite: true,
+        });
+
+        const finalUrl = explicitResult.eager && explicitResult.eager[0] ? explicitResult.eager[0].secure_url : explicitResult.secure_url;
         
-        const finalVideoResult = await cloudinary.uploader.upload(
-            cloudinary.url(baseVideo, { resource_type: 'video' }),
-            {
-                resource_type: 'video',
-                public_id: finalVideoPublicId,
-                transformation: layerTransformations,
-                overwrite: true
-            }
-        );
-        
+        if (!finalUrl) {
+            errorLog("Concatenation failed: final URL not found in Cloudinary response.", explicitResult);
+            throw new Error('Concatenation failed: final URL not found in Cloudinary response.');
+        }
+
         progressTracker.sendProgress({ phase: 'concatenation', progress: 90, message: 'Final video generated.', timestamp: new Date().toISOString() });
 
         // ====================================================================
@@ -419,8 +403,8 @@ async function processVideo(
         progressTracker.sendProgress({ phase: 'cleanup', progress: 95, message: 'Cleanup complete.', timestamp: new Date().toISOString() });
 
         return {
-            url: finalVideoResult.secure_url,
-            method: 'video_layering_concatenation',
+            url: finalUrl,
+            method: 'video_splice_concatenation',
             stats: {
                 inputVideos: videos.length,
                 totalOriginalDuration: totalOriginalDuration.toFixed(3),
