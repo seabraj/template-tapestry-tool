@@ -1,17 +1,26 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { v2 as cloudinary } from 'npm:cloudinary@^1.41.1';
 
-// CORS headers - simplified and explicit
+// CORS headers - comprehensive
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
-  'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
+  'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type, x-requested-with',
+  'Access-Control-Allow-Methods': 'POST, GET, OPTIONS, PUT, DELETE',
+  'Access-Control-Max-Age': '86400',
 };
 
 // Cloudinary config
+const cloudinaryApiKey = Deno.env.get('CLOUDINARY_API_KEY');
+const cloudinaryApiSecret = Deno.env.get('CLOUDINARY_API_SECRET');
+
+if (!cloudinaryApiKey || !cloudinaryApiSecret) {
+  throw new Error('Missing Cloudinary API credentials. Please set CLOUDINARY_API_KEY and CLOUDINARY_API_SECRET environment variables.');
+}
+
 cloudinary.config({
   cloud_name: 'dsxrmo3kt',
-  api_key: Deno.env.get('CLOUDINARY_API_KEY'),
-  api_secret: Deno.env.get('CLOUDINARY_API_SECRET'),
+  api_key: cloudinaryApiKey,
+  api_secret: cloudinaryApiSecret,
   secure: true,
 });
 
@@ -48,13 +57,14 @@ function getPlatformDimensions(platform: string) {
   switch (platform?.toLowerCase()) {
     case 'youtube':
       return { width: 1920, height: 1080, crop: 'pad', background: 'black' };
+    case 'facebook':
+      return { width: 1080, height: 1080, crop: 'fill', gravity: 'auto' }; // Square format 1:1
     case 'instagram':
+      return { width: 1080, height: 1920, crop: 'fill', gravity: 'auto' }; // Vertical format 9:16
     case 'instagram_post':
       return { width: 1080, height: 1080, crop: 'fill', gravity: 'auto' };
     case 'instagram_story':
       return { width: 1080, height: 1920, crop: 'fill', gravity: 'auto' };
-    case 'facebook':
-      return { width: 1200, height: 630, crop: 'fill', gravity: 'auto' }; // Facebook video format
     case 'tiktok':
       return { width: 1080, height: 1920, crop: 'fill', gravity: 'auto' }; // TikTok vertical
     default:
@@ -215,8 +225,16 @@ serve(async (req) => {
       if (temporaryAssetIds.size > 0) {
         debugLog("--- CLEANUP: Deleting temporary assets ---", { ids: Array.from(temporaryAssetIds) });
         try {
-          await cloudinary.api.delete_resources(Array.from(temporaryAssetIds), { resource_type: 'video' });
-          debugLog("✅ Cleanup completed successfully");
+          // Delete assets one by one to avoid bulk delete issues
+          for (const assetId of temporaryAssetIds) {
+            try {
+              await cloudinary.uploader.destroy(assetId, { resource_type: 'video' });
+              debugLog(`✅ Deleted ${assetId}`);
+            } catch (deleteError) {
+              debugLog(`⚠️ Failed to delete ${assetId}:`, deleteError.message);
+            }
+          }
+          debugLog("✅ Cleanup completed");
         } catch (cleanupError) {
           debugLog("⚠️ Cleanup failed but processing succeeded", cleanupError);
         }
@@ -241,9 +259,12 @@ serve(async (req) => {
     // Cleanup on error (safely)
     if (temporaryAssetIds.size > 0) {
       debugLog("--- CLEANUP ON ERROR: Deleting temporary assets ---", { ids: Array.from(temporaryAssetIds) });
-      cloudinary.api.delete_resources(Array.from(temporaryAssetIds), { resource_type: 'video' }).catch(err => {
-        debugLog("⚠️ Error cleanup failed", err);
-      });
+      // Don't wait for cleanup on error - just fire and forget
+      for (const assetId of temporaryAssetIds) {
+        cloudinary.uploader.destroy(assetId, { resource_type: 'video' }).catch(err => {
+          debugLog(`⚠️ Failed to delete ${assetId} during error cleanup:`, err.message);
+        });
+      }
     }
     
     return new Response(JSON.stringify({ success: false, error: error.message }), {
