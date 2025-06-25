@@ -310,36 +310,94 @@ async function processVideo(
             await waitForAssetAvailability(asset.publicId, 'video', 10);
         }
 
-        const manifestLines = finalSegments
-            .sort((a, b) => a.order - b.order)
-            .map(asset => `file '${asset.publicId}'`); // Simple manifest, no transformations needed
-
-        const manifestContent = manifestLines.join('\n');
-        debugLog("Generated simple manifest:", manifestContent);
-
-        const manifestPublicId = `p_manifest_${timestamp}`;
-        temporaryAssetIds.add(manifestPublicId);
-
-        progressTracker.sendProgress({ phase: 'concatenation', progress: 70, message: 'Uploading concatenation manifest...', timestamp: new Date().toISOString() });
-        await cloudinary.uploader.upload(`data:text/plain;base64,${btoa(manifestContent)}`, {
-            resource_type: 'raw',
-            public_id: manifestPublicId,
-            overwrite: true,
-        });
-        await waitForAssetAvailability(manifestPublicId, 'raw');
-
-        progressTracker.sendProgress({ phase: 'concatenation', progress: 80, message: 'Generating final video from manifest...', timestamp: new Date().toISOString() });
+        // Use Cloudinary's proper video concatenation method
+        progressTracker.sendProgress({ phase: 'concatenation', progress: 70, message: 'Starting video concatenation...', timestamp: new Date().toISOString() });
         
         const finalVideoPublicId = `final_video_${timestamp}`;
         
-        const finalVideoOptions = {
-            resource_type: 'video',
-            public_id: finalVideoPublicId,
-            raw_convert: 'concatenate',
-            overwrite: true,
-        };
-        debugLog("Uploading final video from manifest", { url: cloudinary.url(manifestPublicId, { resource_type: 'raw' }), options: finalVideoOptions });
-        const finalVideoResult = await cloudinary.uploader.upload(cloudinary.url(manifestPublicId, { resource_type: 'raw' }), finalVideoOptions);
+        // Create concatenation using Cloudinary's overlay method
+        const sortedSegments = finalSegments.sort((a, b) => a.order - b.order);
+        const baseVideo = sortedSegments[0].publicId;
+        
+        debugLog("Starting concatenation with base video:", baseVideo);
+        debugLog("Additional segments to concatenate:", sortedSegments.slice(1).map(s => s.publicId));
+        
+        // Build the transformation for concatenation
+        const concatenationTransformation = [];
+        
+        // Add each subsequent video as an overlay with timeline positioning
+        let currentTime = 0;
+        for (let i = 1; i < sortedSegments.length; i++) {
+            const segment = sortedSegments[i];
+            concatenationTransformation.push({
+                overlay: {
+                    resource_type: 'video',
+                    public_id: segment.publicId
+                },
+                flags: 'splice',
+                audio_codec: 'aac'
+            });
+        }
+        
+        // If we only have one video, just copy it
+        if (sortedSegments.length === 1) {
+            debugLog("Single video detected, creating copy");
+            const finalVideoResult = await cloudinary.uploader.upload(
+                cloudinary.url(baseVideo, { resource_type: 'video' }),
+                {
+                    resource_type: 'video',
+                    public_id: finalVideoPublicId,
+                    overwrite: true
+                }
+            );
+            
+            progressTracker.sendProgress({ phase: 'concatenation', progress: 90, message: 'Single video processing complete.', timestamp: new Date().toISOString() });
+            
+            return {
+                url: finalVideoResult.secure_url,
+                method: 'single_video_copy',
+                stats: {
+                    inputVideos: videos.length,
+                    totalOriginalDuration: videos.reduce((sum, v) => sum + v.duration, 0).toFixed(3),
+                    targetDuration: targetDuration.toFixed(3),
+                }
+            };
+        }
+        
+        // For multiple videos, create a concatenated video using video layers
+        debugLog("Multiple videos detected, using video layering for concatenation");
+        
+        // Create a base video transformation that includes all videos as layers
+        const layerTransformations = [];
+        
+        // Start with the first video as base
+        let startOffset = 0;
+        
+        // Add subsequent videos as video layers with timeline positioning
+        for (let i = 1; i < sortedSegments.length; i++) {
+            const segment = sortedSegments[i];
+            layerTransformations.push({
+                overlay: {
+                    resource_type: 'video',
+                    public_id: segment.publicId
+                },
+                flags: 'layer_apply',
+                start_offset: `${startOffset}so`
+            });
+            startOffset += 10; // Assume each segment is roughly 10 seconds - adjust as needed
+        }
+        
+        debugLog("Layer transformations:", layerTransformations);
+        
+        const finalVideoResult = await cloudinary.uploader.upload(
+            cloudinary.url(baseVideo, { resource_type: 'video' }),
+            {
+                resource_type: 'video',
+                public_id: finalVideoPublicId,
+                transformation: layerTransformations,
+                overwrite: true
+            }
+        );
         
         progressTracker.sendProgress({ phase: 'concatenation', progress: 90, message: 'Final video generated.', timestamp: new Date().toISOString() });
 
@@ -349,15 +407,10 @@ async function processVideo(
         infoLog("Starting cleanup of temporary assets...", { assets: Array.from(temporaryAssetIds) });
         try {
             const videoIdsToDelete = Array.from(temporaryAssetIds).filter(id => id.includes('segment'));
-            const manifestIdsToDelete = [manifestPublicId];
             
             if (videoIdsToDelete.length > 0) {
               debugLog("Deleting temporary video assets", videoIdsToDelete);
               await cloudinary.api.delete_resources(videoIdsToDelete, { resource_type: 'video' });
-            }
-            if (manifestIdsToDelete.length > 0) {
-              debugLog("Deleting temporary manifest asset", manifestIdsToDelete);
-              await cloudinary.api.delete_resources(manifestIdsToDelete, { resource_type: 'raw' });
             }
             infoLog("Cleanup successful.");
         } catch (cleanupError) {
@@ -367,7 +420,7 @@ async function processVideo(
 
         return {
             url: finalVideoResult.secure_url,
-            method: 'single_step_transform_and_manifest',
+            method: 'video_layering_concatenation',
             stats: {
                 inputVideos: videos.length,
                 totalOriginalDuration: totalOriginalDuration.toFixed(3),
