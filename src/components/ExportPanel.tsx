@@ -130,6 +130,19 @@ const ExportPanel = ({
       return;
     }
 
+    // Validate all sequences have file URLs
+    const invalidSequences = selectedSequences.filter(seq => !seq.file_url);
+    if (invalidSequences.length > 0) {
+      const errorMsg = `${invalidSequences.length} sequence(s) missing file URLs`;
+      console.error('❌', errorMsg, invalidSequences);
+      toast({
+        title: "Invalid Video Sequences",
+        description: "Some selected sequences are missing video files. Please refresh the video library.",
+        variant: "destructive",
+      });
+      return;
+    }
+
     console.log('📋 Processing request with:', {
       selectedSequences: selectedSequences.length,
       platform,

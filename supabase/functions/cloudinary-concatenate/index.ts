@@ -152,21 +152,28 @@ class ProgressTracker {
 async function waitForAssetAvailability(
   publicId: string, 
   resourceType: string = 'video', 
-  maxAttempts: number = 10,
+  maxAttempts: number = 20, // Increased from 10 to 20
   progressTracker?: ProgressTracker
 ): Promise<boolean> {
   for (let attempt = 1; attempt <= maxAttempts; attempt++) {
     try {
       debugLog(`waitForAssetAvailability: Attempt ${attempt} for ${publicId}`);
-      await cloudinary.api.resource(publicId, { resource_type: resourceType });
-      debugLog(`Asset ${publicId} is available.`);
+      const resource = await cloudinary.api.resource(publicId, { resource_type: resourceType });
+      
+      // Additional checks for video resources
+      if (resourceType === 'video' && resource.status !== 'complete') {
+        debugLog(`Asset ${publicId} exists but status is: ${resource.status}`);
+        throw new Error(`Asset not ready, status: ${resource.status}`);
+      }
+      
+      debugLog(`Asset ${publicId} is available and ready.`);
       return true;
     } catch (error) {
-      debugLog(`Asset ${publicId} not ready yet.`);
+      debugLog(`Asset ${publicId} not ready yet. Attempt ${attempt}/${maxAttempts}`);
       if (attempt === maxAttempts) {
-        throw new Error(`Asset ${publicId} never became available after ${maxAttempts} attempts`);
+        throw new Error(`Asset ${publicId} never became available after ${maxAttempts} attempts. Last error: ${error.message}`);
       }
-      await new Promise(resolve => setTimeout(resolve, 2500)); // Increased delay
+      await new Promise(resolve => setTimeout(resolve, 3000)); // Increased delay to 3 seconds
     }
   }
   return false;
@@ -324,8 +331,29 @@ serve(async (req) => {
     const requestBody = await req.json();
     const { videos, targetDuration, platform, enableProgress = false } = requestBody;
 
+    infoLog('Processing request with:', {
+      videoCount: videos?.length || 0,
+      targetDuration,
+      platform,
+      enableProgress
+    });
+
     if (!videos || videos.length === 0 || !targetDuration || targetDuration <= 0 || !platform) {
       throw new Error('Invalid request body: Missing one of videos, targetDuration, or platform.');
+    }
+
+    // Validate video objects have required fields
+    for (let i = 0; i < videos.length; i++) {
+      const video = videos[i];
+      if (!video.publicId && !video.file_url) {
+        throw new Error(`Video ${i + 1}: Missing both publicId and file_url`);
+      }
+      if (!video.duration || video.duration <= 0) {
+        throw new Error(`Video ${i + 1}: Invalid duration: ${video.duration}`);
+      }
+      if (!video.file_url) {
+        throw new Error(`Video ${i + 1}: Missing file_url for processing`);
+      }
     }
 
     // Check if client wants progress updates

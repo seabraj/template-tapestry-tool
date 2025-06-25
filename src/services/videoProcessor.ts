@@ -71,8 +71,9 @@ export class VideoProcessor {
         videos: videosWithExactDurations.map(video => ({
           publicId: video.publicId,
           duration: video.duration,
-          file_url: video.file_url, // <-- FIX: Include the file_url
-          source: video.detectionSource
+          file_url: video.file_url, // Include the file_url for processing
+          source: video.detectionSource,
+          name: video.name // Add name for better debugging
         })),
         targetDuration: options.duration,
         platform: options.platform,
@@ -83,13 +84,53 @@ export class VideoProcessor {
       console.log('📡 Calling edge function with traditional method:', requestBody);
       onProgress?.(40, { phase: 'processing', message: 'Sending to backend...' });
       
-      // Step 4: Process videos traditionally
-      const { data, error } = await supabase.functions.invoke('cloudinary-concatenate', {
-        body: requestBody
-      });
-
-      if (error) throw new Error(`Edge function failed: ${error.message}`);
-      if (!data?.success || !data?.url) throw new Error(data?.error || 'Backend failed to return a valid URL.');
+      // Step 4: Process videos with retry logic
+      const maxRetries = 3;
+      let lastError: Error | null = null;
+      let data: any = null;
+      
+      for (let attempt = 1; attempt <= maxRetries; attempt++) {
+        try {
+          console.log(`📡 Attempt ${attempt}/${maxRetries} - Calling edge function...`);
+          
+          const response = await supabase.functions.invoke('cloudinary-concatenate', {
+            body: requestBody
+          });
+          
+          if (response.error) {
+            throw new Error(`Edge function error: ${response.error.message}`);
+          }
+          
+          if (!response.data?.success) {
+            throw new Error(response.data?.error || 'Backend processing failed');
+          }
+          
+          if (!response.data?.url) {
+            throw new Error('Backend failed to return a valid video URL');
+          }
+          
+          data = response.data;
+          break; // Success, exit retry loop
+          
+        } catch (error) {
+          lastError = error instanceof Error ? error : new Error(String(error));
+          console.error(`❌ Attempt ${attempt} failed:`, lastError.message);
+          
+          if (attempt === maxRetries) {
+            throw new Error(`Video processing failed after ${maxRetries} attempts. Last error: ${lastError.message}`);
+          }
+          
+          // Wait before retrying (exponential backoff)
+          const waitTime = Math.pow(2, attempt) * 1000; // 2s, 4s, 8s
+          console.log(`⏳ Waiting ${waitTime}ms before retry...`);
+          await new Promise(resolve => setTimeout(resolve, waitTime));
+          
+          onProgress?.(40 + (attempt * 5), { 
+            phase: 'processing', 
+            message: `Retrying... (${attempt}/${maxRetries})` 
+          });
+        }
+      }
       
       const finalUrl = data.url;
       console.log(`✅ Success! Final URL received: ${finalUrl}`);
@@ -248,7 +289,49 @@ export class VideoProcessor {
   // Keep all your existing methods unchanged
   private validateSequences(sequences: any[]) {
     console.log('🔍 Validating sequences...');
-    const validSequences = sequences.filter(seq => seq.file_url && seq.duration > 0);
+    
+    // Enhanced validation with detailed error reporting
+    const validSequences = [];
+    const errors = [];
+    
+    for (let i = 0; i < sequences.length; i++) {
+      const seq = sequences[i];
+      
+      if (!seq.file_url) {
+        errors.push(`Sequence ${i + 1} (${seq.name || 'Unnamed'}): Missing file_url`);
+        continue;
+      }
+      
+      if (!seq.duration || seq.duration <= 0) {
+        errors.push(`Sequence ${i + 1} (${seq.name || 'Unnamed'}): Invalid duration (${seq.duration})`);
+        continue;
+      }
+      
+      // Validate URL format (basic check)
+      try {
+        new URL(seq.file_url);
+      } catch (e) {
+        errors.push(`Sequence ${i + 1} (${seq.name || 'Unnamed'}): Invalid URL format`);
+        continue;
+      }
+      
+      // Check if it's a Cloudinary URL
+      if (!seq.file_url.includes('cloudinary.com')) {
+        console.warn(`⚠️ Sequence ${i + 1} is not a Cloudinary URL: ${seq.file_url}`);
+      }
+      
+      validSequences.push(seq);
+    }
+    
+    if (errors.length > 0) {
+      console.error('❌ Validation errors found:', errors);
+      if (validSequences.length === 0) {
+        throw new Error(`All sequences failed validation:\n${errors.join('\n')}`);
+      } else {
+        console.warn(`⚠️ Some sequences failed validation but continuing with ${validSequences.length} valid sequences`);
+      }
+    }
+    
     console.log(`✅ Validation complete: ${validSequences.length}/${sequences.length} sequences are valid`);
     return validSequences;
   }
