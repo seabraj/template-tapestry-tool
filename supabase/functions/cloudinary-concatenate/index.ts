@@ -158,7 +158,9 @@ async function waitForAssetAvailability(
   for (let attempt = 1; attempt <= maxAttempts; attempt++) {
     try {
       debugLog(`waitForAssetAvailability: Attempt ${attempt} for ${publicId}`);
-      const resource = await cloudinary.api.resource(publicId, { resource_type: resourceType });
+debugLog(`Fetching resource: ${publicId}`);
+const resource = await cloudinary.api.resource(publicId, { resource_type: resourceType });
+debugLog(`Fetched resource ${publicId} with status: ${resource.status}`);
       
       // Additional checks for video resources - allow more statuses
       if (resourceType === 'video' && resource.status && ['failed', 'error', 'timeout'].includes(resource.status.toLowerCase())) {
@@ -238,7 +240,59 @@ async function processVideo(
             };
 
             debugLog(`Uploading and Transforming video ${i+1}`, { file: video.file_url, options: uploadOptions });
-            await cloudinary.uploader.upload(video.file_url, uploadOptions);
+            debugLog(`Starting upload and transformation for video: ${video.file_url}`);
+            
+            // First, validate the URL is accessible
+            try {
+                const response = await fetch(video.file_url, { method: 'HEAD' });
+                if (!response.ok) {
+                    throw new Error(`Video URL not accessible: ${response.status} ${response.statusText}`);
+                }
+                debugLog(`Video URL validated successfully: ${video.file_url}`);
+            } catch (fetchError) {
+                errorLog(`Failed to validate video URL: ${video.file_url}`, fetchError);
+                throw new Error(`Video file not accessible: ${fetchError.message}`);
+            }
+            
+            // Use a two-step approach: upload first, then transform
+            try {
+                // Step 1: Upload without transformation to avoid corruption issues
+                const simpleOptions = {
+                    resource_type: 'video',
+                    public_id: finalSegmentId,
+                    overwrite: true
+                };
+                
+                debugLog(`Step 1: Uploading video without transformation: ${video.file_url}`);
+                const uploadResult = await cloudinary.uploader.upload(video.file_url, simpleOptions);
+                debugLog(`Step 1 completed - Upload successful:`, {
+                    publicId: uploadResult.public_id,
+                    status: uploadResult.status || 'completed',
+                    format: uploadResult.format,
+                    duration: uploadResult.duration
+                });
+                
+                // Wait for the upload to be fully processed
+                await waitForAssetAvailability(finalSegmentId, 'video', 5);
+                
+                // Step 2: Apply transformation separately
+                debugLog(`Step 2: Applying transformation to uploaded video: ${finalSegmentId}`);
+                const transformResult = await cloudinary.uploader.explicit(finalSegmentId, {
+                    resource_type: 'video',
+                    type: 'upload',
+                    eager: transformation,
+                    overwrite: true
+                });
+                debugLog(`Step 2 completed - Transformation applied successfully`);
+                
+            } catch (error) {
+                errorLog(`Two-step processing failed for: ${video.file_url}`, {
+                    error: error.message,
+                    code: error.code,
+                    httpCode: error.http_code
+                });
+                throw new Error(`Video processing failed: ${error.message}`);
+            }
             
             return { publicId: finalSegmentId, order: i };
         });
