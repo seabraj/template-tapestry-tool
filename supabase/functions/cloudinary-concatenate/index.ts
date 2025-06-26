@@ -1,3 +1,4 @@
+
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
 import { v2 as cloudinary } from 'npm:cloudinary@^1.41.1';
@@ -241,11 +242,11 @@ async function applyCustomizationOverlays(baseVideoId: string, customization: an
     if (customization?.endFrame?.enabled && startTime < targetDuration) {
       const logoSize = Math.min(platformConfig.width, platformConfig.height) * 0.15;
       
-      // Add logo
+      // Add logo with .png extension
       if (customization.endFrame.logoPosition === 'center') {
-        transformationParts.push(`l_branding:itmatters_logo,w_${Math.round(logoSize)},g_center,y_-50,so_${startTime},eo_${targetDuration}`);
+        transformationParts.push(`l_branding:itmatters_logo.png,w_${Math.round(logoSize)},g_center,y_-50,so_${startTime},eo_${targetDuration}`);
       } else {
-        transformationParts.push(`l_branding:itmatters_logo,w_${Math.round(logoSize * 0.7)},g_north_east,x_20,y_20,so_${startTime},eo_${targetDuration}`);
+        transformationParts.push(`l_branding:itmatters_logo.png,w_${Math.round(logoSize * 0.7)},g_north_east,x_20,y_20,so_${startTime},eo_${targetDuration}`);
       }
       
       // Add end frame text
