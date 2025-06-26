@@ -190,7 +190,7 @@ async function createRender(template: any): Promise<string> {
         'Content-Type': 'application/json',
       },
       body: JSON.stringify({
-        template: template,
+        source: template,  // Use 'source' instead of 'template'
         output_format: 'mp4'
       })
     });
