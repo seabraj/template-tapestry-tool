@@ -1,4 +1,3 @@
-
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
 import { v2 as cloudinary } from 'npm:cloudinary@^1.41.1';
@@ -203,7 +202,7 @@ async function applyCustomizationOverlays(baseVideoId: string, customization: an
   const finalVideoId = `final_video_${timestamp}`;
   
   try {
-    const transformationParts = [];
+    const transformations = [];
     
     // Phase 1: Add text overlay for full video duration minus 3 seconds
     if (customization?.supers?.text) {
@@ -223,14 +222,35 @@ async function applyCustomizationOverlays(baseVideoId: string, customization: an
       
       const textEndTime = Math.max(targetDuration - 3, 0);
       const fontWeight = style === 'bold' ? 'bold' : 'normal';
-      const encodedText = encodeURIComponent(text);
       
       if (textEndTime > 0) {
         // Text overlay with time limits
-        transformationParts.push(`l_text:Arial_${Math.round(baseFontSize)}_${fontWeight}:${encodedText},co_white,g_${gravity},y_${yOffset},so_0,eo_${textEndTime}`);
+        transformations.push({
+          overlay: {
+            font_family: 'Arial',
+            font_size: Math.round(baseFontSize),
+            font_weight: fontWeight,
+            text: text
+          },
+          color: 'white',
+          gravity: gravity,
+          y: yOffset,
+          start_offset: 0,
+          end_offset: textEndTime
+        });
       } else {
         // Text overlay for full duration
-        transformationParts.push(`l_text:Arial_${Math.round(baseFontSize)}_${fontWeight}:${encodedText},co_white,g_${gravity},y_${yOffset}`);
+        transformations.push({
+          overlay: {
+            font_family: 'Arial',
+            font_size: Math.round(baseFontSize),
+            font_weight: fontWeight,
+            text: text
+          },
+          color: 'white',
+          gravity: gravity,
+          y: yOffset
+        });
       }
       
       debugLog('Added text overlay transformation', { text, duration: textEndTime > 0 ? `0-${textEndTime}s` : 'full video' });
@@ -242,25 +262,51 @@ async function applyCustomizationOverlays(baseVideoId: string, customization: an
     if (customization?.endFrame?.enabled && startTime < targetDuration) {
       const logoSize = Math.min(platformConfig.width, platformConfig.height) * 0.15;
       
-      // Add logo with .png extension
+      // Add logo
       if (customization.endFrame.logoPosition === 'center') {
-        transformationParts.push(`l_branding:itmatters_logo.png,w_${Math.round(logoSize)},g_center,y_-50,so_${startTime},eo_${targetDuration}`);
+        transformations.push({
+          overlay: 'branding:itmatters_logo',
+          width: Math.round(logoSize),
+          gravity: 'center',
+          y: -50,
+          start_offset: startTime,
+          end_offset: targetDuration
+        });
       } else {
-        transformationParts.push(`l_branding:itmatters_logo.png,w_${Math.round(logoSize * 0.7)},g_north_east,x_20,y_20,so_${startTime},eo_${targetDuration}`);
+        transformations.push({
+          overlay: 'branding:itmatters_logo',
+          width: Math.round(logoSize * 0.7),
+          gravity: 'north_east',
+          x: 20,
+          y: 20,
+          start_offset: startTime,
+          end_offset: targetDuration
+        });
       }
       
       // Add end frame text
       if (customization.endFrame.text) {
         const fontSize = Math.min(platformConfig.width, platformConfig.height) * 0.05;
         const yPos = customization.endFrame.logoPosition === 'center' ? 100 : 0;
-        const encodedEndText = encodeURIComponent(customization.endFrame.text);
-        transformationParts.push(`l_text:Arial_${Math.round(fontSize)}_bold:${encodedEndText},co_white,g_center,y_${yPos},so_${startTime},eo_${targetDuration}`);
+        transformations.push({
+          overlay: {
+            font_family: 'Arial',
+            font_size: Math.round(fontSize),
+            font_weight: 'bold',
+            text: customization.endFrame.text
+          },
+          color: 'white',
+          gravity: 'center',
+          y: yPos,
+          start_offset: startTime,
+          end_offset: targetDuration
+        });
       }
       
-      debugLog('Added end frame elements with logo', { duration: `${startTime}-${targetDuration}s` });
+      debugLog('Added end frame elements', { duration: `${startTime}-${targetDuration}s` });
     }
     
-    // Phase 3: Add CTA overlay for last 3 seconds - simplified approach with emojis
+    // Phase 3: Add CTA overlay for last 3 seconds
     if (customization?.cta?.enabled && customization?.cta?.text && startTime < targetDuration) {
       const { text, style } = customization.cta;
       const fontSize = Math.min(platformConfig.width, platformConfig.height) * 0.04;
@@ -268,19 +314,30 @@ async function applyCustomizationOverlays(baseVideoId: string, customization: an
       
       let ctaText = text;
       if (style === 'button') {
-        ctaText = `🔵 ${text} 🔵`;
+        ctaText = `[${text}]`;
       } else if (style === 'animated') {
         ctaText = `✨ ${text} ✨`;
       }
       
-      const encodedCtaText = encodeURIComponent(ctaText);
-      transformationParts.push(`l_text:Arial_${Math.round(fontSize)}_bold:${encodedCtaText},co_white,g_south,y_${yPos},so_${startTime},eo_${targetDuration}`);
+      transformations.push({
+        overlay: {
+          font_family: 'Arial',
+          font_size: Math.round(fontSize),
+          font_weight: 'bold',
+          text: ctaText
+        },
+        color: 'white',
+        gravity: 'south',
+        y: yPos,
+        start_offset: startTime,
+        end_offset: targetDuration
+      });
       
       debugLog('Added CTA overlay', { text, style, duration: `${startTime}-${targetDuration}s` });
     }
     
     // Only proceed if we have transformations to apply
-    if (transformationParts.length === 0) {
+    if (transformations.length === 0) {
       debugLog('⚠️ No overlays to apply, returning base video');
       const fallbackUrl = cloudinary.url(baseVideoId, {
         resource_type: 'video',
@@ -289,20 +346,20 @@ async function applyCustomizationOverlays(baseVideoId: string, customization: an
       return { publicId: baseVideoId, url: fallbackUrl };
     }
     
-    // Join all transformation parts with forward slashes
-    const transformationString = transformationParts.join('/');
-    
-    debugLog('Final transformation string', { transformationString });
-    
-    // Create the transformation URL
-    const transformationUrl = cloudinary.url(baseVideoId, {
-      resource_type: 'video',
-      transformation: transformationString
+    // Add final quality settings
+    transformations.push({
+      quality: 'auto:good',
+      audio_codec: 'aac'
     });
     
-    debugLog('Generated transformation URL', { transformationUrl });
+    const customizationUrl = cloudinary.url(baseVideoId, {
+      resource_type: 'video',
+      transformation: transformations
+    });
     
-    const result = await cloudinary.uploader.upload(transformationUrl, {
+    debugLog('Generated customization URL', { customizationUrl });
+    
+    const result = await cloudinary.uploader.upload(customizationUrl, {
       resource_type: 'video',
       public_id: finalVideoId,
       overwrite: true,
