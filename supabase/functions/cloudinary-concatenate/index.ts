@@ -232,40 +232,38 @@ async function applyCustomizationOverlays(baseVideoId: string, customization: an
         color: 'white',
         gravity: gravity,
         y: yOffset,
-        start_offset: 0,
-        end_offset: textEndTime
+        start_offset: `${0}s`,
+        end_offset: `${textEndTime}s`
       });
       
       debugLog('Added text overlay', { text, duration: `0-${textEndTime}s` });
     }
     
-    // Phase 2: Add end frame elements for last 3 seconds (with corrected logo path)
+    // Phase 2: Add end frame elements for last 3 seconds
     const startTime = Math.max(targetDuration - 3, 0);
     
     if (customization?.endFrame?.enabled) {
       const logoSize = Math.min(platformConfig.width, platformConfig.height) * 0.15;
       
-      // Add logo with correct path and resource type
+      // Add logo
       if (customization.endFrame.logoPosition === 'center') {
         transformations.push({
-          overlay: 'branding/itmatters_logo.png',
-          resource_type: 'image',
+          overlay: 'branding:itmatters_logo.png',
           width: Math.round(logoSize),
           gravity: 'center',
           y: -50,
-          start_offset: startTime,
-          end_offset: targetDuration
+          start_offset: `${startTime}s`,
+          end_offset: `${targetDuration}s`
         });
       } else {
         transformations.push({
-          overlay: 'branding/itmatters_logo.png',
-          resource_type: 'image',
+          overlay: 'branding:itmatters_logo.png',
           width: Math.round(logoSize * 0.7),
           gravity: 'north_east',
           x: 20,
           y: 20,
-          start_offset: startTime,
-          end_offset: targetDuration
+          start_offset: `${startTime}s`,
+          end_offset: `${targetDuration}s`
         });
       }
       
@@ -282,15 +280,15 @@ async function applyCustomizationOverlays(baseVideoId: string, customization: an
           color: 'white',
           gravity: 'center',
           y: customization.endFrame.logoPosition === 'center' ? 100 : 0,
-          start_offset: startTime,
-          end_offset: targetDuration
+          start_offset: `${startTime}s`,
+          end_offset: `${targetDuration}s`
         });
       }
       
       debugLog('Added end frame elements with logo', { duration: `${startTime}-${targetDuration}s` });
     }
     
-    // Phase 3: Add CTA overlay for last 3 seconds with proper button/animation backgrounds
+    // Phase 3: Add CTA overlay for last 3 seconds with proper button backgrounds
     if (customization?.cta?.enabled && customization?.cta?.text) {
       const { text, style } = customization.cta;
       const fontSize = Math.min(platformConfig.width, platformConfig.height) * 0.04;
@@ -298,18 +296,18 @@ async function applyCustomizationOverlays(baseVideoId: string, customization: an
       const buttonHeight = Math.round(fontSize * 2.5);
       
       if (style === 'button') {
-        // Create button background using a colored rectangle
+        // Create button background using solid color overlay
         transformations.push({
           overlay: {
-            color: 'blue',
+            color: '#3B82F6', // Blue color
             width: buttonWidth,
             height: buttonHeight
           },
           gravity: 'south',
           y: Math.round(platformConfig.height * 0.15),
-          start_offset: startTime,
-          end_offset: targetDuration,
-          radius: Math.round(buttonHeight * 0.3) // Rounded corners
+          start_offset: `${startTime}s`,
+          end_offset: `${targetDuration}s`,
+          radius: Math.round(buttonHeight * 0.3)
         });
         
         // Add button text on top
@@ -323,8 +321,8 @@ async function applyCustomizationOverlays(baseVideoId: string, customization: an
           color: 'white',
           gravity: 'south',
           y: Math.round(platformConfig.height * 0.15),
-          start_offset: startTime,
-          end_offset: targetDuration
+          start_offset: `${startTime}s`,
+          end_offset: `${targetDuration}s`
         });
         
         debugLog('Added CTA button overlay', { text, style, duration: `${startTime}-${targetDuration}s` });
@@ -340,29 +338,28 @@ async function applyCustomizationOverlays(baseVideoId: string, customization: an
           color: 'white',
           gravity: 'south',
           y: Math.round(platformConfig.height * 0.1),
-          start_offset: startTime,
-          end_offset: targetDuration
+          start_offset: `${startTime}s`,
+          end_offset: `${targetDuration}s`
         });
         
         debugLog('Added CTA text overlay', { text, style, duration: `${startTime}-${targetDuration}s` });
         
       } else if (style === 'animated') {
-        // Create animated button background with gradient effect
+        // Create animated button background with purple color
         transformations.push({
           overlay: {
-            color: 'purple',
+            color: '#8B5CF6', // Purple color
             width: buttonWidth,
             height: buttonHeight
           },
           gravity: 'south',
           y: Math.round(platformConfig.height * 0.15),
-          start_offset: startTime,
-          end_offset: targetDuration,
-          radius: Math.round(buttonHeight * 0.3),
-          effect: 'gradient_fade:symmetric' // Add gradient effect
+          start_offset: `${startTime}s`,
+          end_offset: `${targetDuration}s`,
+          radius: Math.round(buttonHeight * 0.3)
         });
         
-        // Add animated button text with sparkle emoji
+        // Add animated button text with sparkle
         transformations.push({
           overlay: {
             font_family: 'Arial',
@@ -373,22 +370,16 @@ async function applyCustomizationOverlays(baseVideoId: string, customization: an
           color: 'white',
           gravity: 'south',
           y: Math.round(platformConfig.height * 0.15),
-          start_offset: startTime,
-          end_offset: targetDuration
+          start_offset: `${startTime}s`,
+          end_offset: `${targetDuration}s`
         });
         
         debugLog('Added CTA animated overlay', { text, style, duration: `${startTime}-${targetDuration}s` });
       }
     }
     
-    // Phase 4: Add final quality settings
-    transformations.push({
-      quality: 'auto:good',
-      audio_codec: 'aac'
-    });
-    
     // Only proceed if we have transformations to apply
-    if (transformations.length <= 1) { // Only quality setting
+    if (transformations.length === 0) {
       debugLog('⚠️ No overlays to apply, returning base video');
       const fallbackUrl = cloudinary.url(baseVideoId, {
         resource_type: 'video',
@@ -397,13 +388,16 @@ async function applyCustomizationOverlays(baseVideoId: string, customization: an
       return { publicId: baseVideoId, url: fallbackUrl };
     }
     
-    // Apply all transformations to the base video
+    // Apply all transformations to the base video in a single transformation chain
     const finalUrl = cloudinary.url(baseVideoId, {
       resource_type: 'video',
       transformation: transformations
     });
     
-    debugLog('Applying customization overlays', { transformationCount: transformations.length });
+    debugLog('Applying customization overlays', { 
+      transformationCount: transformations.length,
+      finalUrl: finalUrl.substring(0, 100) + '...'
+    });
     
     const result = await cloudinary.uploader.upload(finalUrl, {
       resource_type: 'video',
