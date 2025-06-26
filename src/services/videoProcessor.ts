@@ -94,13 +94,18 @@ export class VideoProcessor {
           console.log(`📡 Attempt ${attempt}/${maxRetries} - Calling edge function...`);
           
           // Make direct HTTP request to bypass JWT authentication
-          const edgeFunctionUrl = 'https://rihlnnxodrxzaxunwurc.supabase.co/functions/v1/cloudinary-concatenate';
+// Retrieve session and JWT token
+const { data: { session } } = await supabase.auth.getSession();
+const jwt = session?.access_token;
+
+const edgeFunctionUrl = 'https://rihlnnxodrxzaxunwurc.supabase.co/functions/v1/cloudinary-concatenate';
           
           const response = await fetch(edgeFunctionUrl, {
             method: 'POST',
             headers: {
               'Content-Type': 'application/json',
-              'apikey': 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InJpaGxubnhvZHJ4emF4dW53dXJjIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NTAwNzMyMjIsImV4cCI6MjA2NTY0OTIyMn0.0NfXK2GWdduughXFjPhRR2wGx1AROIRkaMcarj2cBYg'
+'apikey': 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InJpaGxubnhvZHJ4emF4dW53dXJjIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NTAwNzMyMjIsImV4cCI6MjA2NTY0OTIyMn0.0NfXK2GWdduughXFjPhRR2wGx1AROIRkaMcarj2cBYg',
+'Authorization': `Bearer ${jwt}`
             },
             body: JSON.stringify(requestBody)
           });

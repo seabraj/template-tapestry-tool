@@ -91,6 +91,13 @@ const ExportPanel = ({
     try {
       console.log('🧹 Starting cleanup of temporary Cloudinary assets...');
       
+      // Check if user is authenticated
+      const { data: { session } } = await supabase.auth.getSession();
+      if (!session) {
+        console.warn('⚠️ No authentication session found for cleanup function');
+        return;
+      }
+      
       const { data, error } = await supabase.functions.invoke('cleanup-temp-assets', {
         body: {}
       });

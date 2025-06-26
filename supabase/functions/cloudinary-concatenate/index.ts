@@ -1,4 +1,5 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
+import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
 import { v2 as cloudinary } from 'npm:cloudinary@^1.41.1';
 
 // CORS headers - comprehensive
@@ -127,13 +128,59 @@ serve(async (req) => {
     });
   }
 
-  // Allow requests without JWT authentication
   if (req.method !== 'POST') {
     return new Response(JSON.stringify({ error: 'Method not allowed' }), {
       status: 405,
       headers: { ...corsHeaders, "Content-Type": "application/json" },
     });
   }
+
+  // Optional JWT Authentication Logic
+  let user = null;
+  const authHeader = req.headers.get('Authorization');
+  
+  if (authHeader && authHeader.startsWith('Bearer ')) {
+    try {
+      // Initialize Supabase client for JWT verification
+      const supabaseClient = createClient(
+        Deno.env.get('SUPABASE_URL') ?? '',
+        Deno.env.get('SUPABASE_ANON_KEY') ?? ''
+      );
+      
+      const token = authHeader.substring(7); // Remove 'Bearer ' prefix
+      const { data, error } = await supabaseClient.auth.getUser(token);
+      
+      if (error) {
+        debugLog('JWT verification failed:', error.message);
+        // Continue without authentication - JWT is optional
+      } else {
+        user = data.user;
+        debugLog('JWT verified successfully for user:', user?.email || user?.id);
+      }
+    } catch (error) {
+      debugLog('JWT processing error:', error.message);
+      // Continue without authentication - JWT is optional
+    }
+  } else {
+    debugLog('No JWT token provided - proceeding with API key authentication');
+  }
+  
+  // Verify API key as fallback
+  const apiKey = req.headers.get('apikey');
+  if (!apiKey) {
+    return new Response(JSON.stringify({ 
+      error: 'Missing API key. Either provide a valid JWT token or API key.' 
+    }), {
+      status: 401,
+      headers: { ...corsHeaders, "Content-Type": "application/json" },
+    });
+  }
+  
+  debugLog('Authentication check complete', { 
+    hasJWT: !!user, 
+    hasAPIKey: !!apiKey,
+    userEmail: user?.email || 'N/A'
+  });
 
   const temporaryAssetIds = new Set<string>();
   try {
