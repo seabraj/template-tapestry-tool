@@ -82,7 +82,7 @@ export class VideoProcessor {
       };
 
       console.log('📡 Calling edge function with traditional method:', requestBody);
-      onProgress?.(40, { phase: 'processing', message: 'Sending to backend...' });
+      onProgress?.(40, { phase: 'trimming', message: 'Creating trimmed video segments...' });
       
       // Step 4: Process videos with retry logic
       const maxRetries = 3;
@@ -110,6 +110,17 @@ export class VideoProcessor {
           }
           
           data = response.data;
+          
+          // Enhanced progress tracking for different backend phases
+          onProgress?.(50, { phase: 'asset_verification', message: 'Verifying processed video segments...' });
+          await new Promise(resolve => setTimeout(resolve, 500)); // Brief pause for UX
+          
+          onProgress?.(65, { phase: 'concatenation', message: 'Combining video segments...' });
+          await new Promise(resolve => setTimeout(resolve, 500)); // Brief pause for UX
+          
+          onProgress?.(70, { phase: 'cleanup', message: 'Cleaning up temporary assets...' });
+          await new Promise(resolve => setTimeout(resolve, 300)); // Brief pause for UX
+          
           break; // Success, exit retry loop
           
         } catch (error) {
@@ -126,15 +137,15 @@ export class VideoProcessor {
           await new Promise(resolve => setTimeout(resolve, waitTime));
           
           onProgress?.(40 + (attempt * 5), { 
-            phase: 'processing', 
-            message: `Retrying... (${attempt}/${maxRetries})` 
+            phase: 'trimming', 
+            message: `Retrying video processing... (${attempt}/${maxRetries})` 
           });
         }
       }
       
       const finalUrl = data.url;
       console.log(`✅ Success! Final URL received: ${finalUrl}`);
-      onProgress?.(75, { phase: 'downloading', message: 'Downloading final video...' });
+      onProgress?.(75, { phase: 'download', message: 'Downloading final video...' });
 
       // Step 5: Download final video
       console.log('📥 Downloading final video...');

@@ -70,16 +70,17 @@ const ExportPanel = ({
       'idle': 'Ready to begin processing',
       'starting': 'Initializing video processor and environment',
       'initialization': 'Setting up Cloudinary connection and validating assets',
-      'duration_detection': 'Analyzing video files and detecting exact durations',
-      'trimming': 'Creating and uploading trimmed video segments to Cloudinary',
-      'asset_verification': 'Verifying all processed segments are available for concatenation',
-      'concatenation': 'Combining video segments using Cloudinary transformation engine',
-      'cleanup': 'Removing temporary assets and cleaning up cloud storage',
-      'download': 'Preparing final video file for download',
-      'complete': 'Video processing completed successfully!',
+      'validation': 'Validating video sequences and ensuring compatibility',
+      'duration_detection': 'Analyzing video files and detecting exact durations for precise trimming',
+      'trimming': 'Creating and uploading trimmed video segments with platform-specific dimensions',
+      'asset_verification': 'Verifying all processed segments are available and ready for concatenation',
+      'concatenation': 'Combining video segments using Cloudinary transformation engine with optimal quality',
+      'cleanup': 'Removing temporary assets and cleaning up cloud storage to optimize account usage',
+      'download': 'Preparing final video file for download and creating secure download link',
+      'complete': 'Video processing completed successfully! Your video is ready to download.',
       'error': 'An error occurred during processing'
     };
-    return phaseDescriptions[phase] || 'Processing video...';
+    return phaseDescriptions[phase] || 'Processing video with advanced optimization...';
   };
 
   const getProgressBarColor = () => {
@@ -396,7 +397,7 @@ const ExportPanel = ({
           <div className="space-y-4">
             <div className="flex items-center justify-between">
               <span className="text-sm font-medium text-gray-300">
-                Current Phase:
+                Overall Progress:
               </span>
               <span className="text-sm font-medium text-gray-300">
                 {progressState.progress >= 0 ? `${progressState.progress.toFixed(1)}%` : 'Error'}
