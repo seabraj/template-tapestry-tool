@@ -36,41 +36,143 @@ function debugLog(message: string, data?: any) {
 }
 
 // Simple asset wait - based on your working version
-async function waitForAssetAvailability(publicId: string, resourceType: string = 'video', maxAttempts: number = 10): Promise<boolean> {
+async function waitForAssetAvailability(publicId: string, resourceType: string = 'video', maxAttempts: number = 15): Promise<boolean> {
   for (let attempt = 1; attempt <= maxAttempts; attempt++) {
     try {
-      await cloudinary.api.resource(publicId, { resource_type: resourceType });
+      const resource = await cloudinary.api.resource(publicId, { resource_type: resourceType });
+      
+      // Additional checks for video processing status
+      if (resourceType === 'video' && resource.status && resource.status !== 'complete') {
+        debugLog(`⏳ Asset ${publicId} still processing, status: ${resource.status} (attempt ${attempt}/${maxAttempts})`);
+        throw new Error(`Asset still processing: ${resource.status}`);
+      }
+      
       debugLog(`✅ Asset ${publicId} is available (attempt ${attempt})`);
       return true;
     } catch (error) {
-      debugLog(`⏳ Asset ${publicId} not ready yet (attempt ${attempt}/${maxAttempts})`);
+      debugLog(`⏳ Asset ${publicId} not ready yet (attempt ${attempt}/${maxAttempts}): ${error.message}`);
       if (attempt === maxAttempts) {
         throw new Error(`Asset ${publicId} never became available after ${maxAttempts} attempts`);
       }
-      // Wait 2 seconds before retrying - same as your working version
-      await new Promise(resolve => setTimeout(resolve, 2000));
+      // Progressive wait times: 2s, 3s, 4s, etc.
+      await new Promise(resolve => setTimeout(resolve, 1000 + (attempt * 1000)));
     }
   }
   return false;
 }
 
-// Platform dimensions with explicit cropping
+// Enhanced platform dimensions with safer cropping strategies
 function getPlatformDimensions(platform: string) {
   switch (platform?.toLowerCase()) {
     case 'youtube':
-      return { width: 1920, height: 1080, crop: 'pad', background: 'black' };
+      return { 
+        width: 1920, 
+        height: 1080, 
+        crop: 'pad', 
+        background: 'black',
+        gravity: 'center'
+      };
     case 'facebook':
-      return { width: 1080, height: 1080, crop: 'fill', gravity: 'auto' }; // Square format 1:1
+      // For 1:1 from 16:9 source, use smart cropping with center focus
+      return { 
+        width: 1080, 
+        height: 1080, 
+        crop: 'fill', 
+        gravity: 'center', // More predictable than 'auto'
+        quality: 'auto:good'
+      };
     case 'instagram':
-      return { width: 1080, height: 1920, crop: 'fill', gravity: 'auto' }; // Vertical format 9:16
-    case 'instagram_post':
-      return { width: 1080, height: 1080, crop: 'fill', gravity: 'auto' };
     case 'instagram_story':
-      return { width: 1080, height: 1920, crop: 'fill', gravity: 'auto' };
     case 'tiktok':
-      return { width: 1080, height: 1920, crop: 'fill', gravity: 'auto' }; // TikTok vertical
+      // For 9:16 from 16:9 source, crop to center and fill
+      return { 
+        width: 1080, 
+        height: 1920, 
+        crop: 'fill', 
+        gravity: 'center',
+        quality: 'auto:good'
+      };
+    case 'instagram_post':
+      return { 
+        width: 1080, 
+        height: 1080, 
+        crop: 'fill', 
+        gravity: 'center',
+        quality: 'auto:good'
+      };
     default:
-      return { width: 1920, height: 1080, crop: 'pad', background: 'black' };
+      return { 
+        width: 1920, 
+        height: 1080, 
+        crop: 'pad', 
+        background: 'black',
+        gravity: 'center'
+      };
+  }
+}
+
+// Safer segment creation with fallback strategies
+async function createVideoSegment(video: any, index: number, timestamp: number, platformConfig: any, proportionalDuration: number): Promise<string> {
+  const segmentId = `segment_${index}_${timestamp}`;
+  
+  // Primary transformation with enhanced error handling
+  const primaryTransformation = [
+    { duration: proportionalDuration.toFixed(4) },
+    { ...platformConfig }
+  ];
+  
+  const sourceUrl = cloudinary.url(video.publicId, {
+    resource_type: 'video',
+    transformation: primaryTransformation
+  });
+
+  debugLog(`Creating segment ${index + 1}`, { segmentId, sourceUrl, platformConfig });
+
+  try {
+    // Attempt primary upload
+    const uploadResult = await cloudinary.uploader.upload(sourceUrl, {
+      resource_type: 'video',
+      public_id: segmentId,
+      overwrite: true,
+      timeout: 120000, // 2 minute timeout
+    });
+
+    return uploadResult.public_id;
+  } catch (primaryError) {
+    debugLog(`❌ Primary segment creation failed for ${segmentId}:`, primaryError.message);
+    
+    // Fallback strategy: simpler transformation
+    const fallbackTransformation = [
+      { duration: proportionalDuration.toFixed(4) },
+      { 
+        width: platformConfig.width, 
+        height: platformConfig.height, 
+        crop: 'pad', // Safer than fill
+        background: 'black',
+        quality: 'auto:good'
+      }
+    ];
+    
+    const fallbackUrl = cloudinary.url(video.publicId, {
+      resource_type: 'video',
+      transformation: fallbackTransformation
+    });
+    
+    debugLog(`🔄 Attempting fallback creation for ${segmentId}`, { fallbackUrl });
+    
+    try {
+      const fallbackResult = await cloudinary.uploader.upload(fallbackUrl, {
+        resource_type: 'video',
+        public_id: `${segmentId}_fallback`,
+        overwrite: true,
+        timeout: 120000,
+      });
+
+      return fallbackResult.public_id;
+    } catch (fallbackError) {
+      debugLog(`❌ Fallback segment creation also failed for ${segmentId}:`, fallbackError.message);
+      throw new Error(`Both primary and fallback segment creation failed: ${fallbackError.message}`);
+    }
   }
 }
 
@@ -85,7 +187,6 @@ async function buildConcatenationUrl(assetIds: string[], platformConfig: any): P
     return cloudinary.url(assetIds[0], {
       resource_type: 'video',
       transformation: [
-        { ...platformConfig },
         { quality: 'auto:good', audio_codec: 'aac' }
       ]
     });
@@ -105,7 +206,7 @@ async function buildConcatenationUrl(assetIds: string[], platformConfig: any): P
     });
   });
 
-  // Add final quality settings only (platform dimensions already applied to segments)
+  // Add final quality settings
   transformations.push({
     quality: 'auto:good',
     audio_codec: 'aac'
@@ -168,43 +269,31 @@ serve(async (req) => {
     const timestamp = Date.now();
     const totalOriginalDuration = videos.reduce((sum, v) => sum + v.duration, 0);
     const platformConfig = getPlatformDimensions(platform);
+    
+    debugLog("📐 Platform configuration", { platform, config: platformConfig });
 
     // ====================================================================
-    // PHASE 1: Create Trimmed & Cropped Video Segments
+    // PHASE 1: Create Trimmed & Cropped Video Segments with Enhanced Error Handling
     // ====================================================================
     debugLog("--- PHASE 1: Creating trimmed and cropped segments ---");
     const segmentPromises = videos.map(async (video, i) => {
       const proportionalDuration = (video.duration / totalOriginalDuration) * targetDuration;
-      const segmentId = `segment_${i}_${timestamp}`;
-      temporaryAssetIds.add(segmentId);
-
-      // This transformation both trims the video and applies the platform's frame
-      const transformation = [
-        { duration: proportionalDuration.toFixed(4) },
-        { ...platformConfig }
-      ];
-
-      const sourceUrl = cloudinary.url(video.publicId, {
-        resource_type: 'video',
-        transformation: transformation
-      });
-
-      debugLog(`Creating segment ${i + 1}`, { segmentId, sourceUrl });
-
-      const uploadResult = await cloudinary.uploader.upload(sourceUrl, {
-        resource_type: 'video',
-        public_id: segmentId,
-        overwrite: true,
-      });
-
-      return { publicId: uploadResult.public_id, order: i };
+      
+      try {
+        const publicId = await createVideoSegment(video, i, timestamp, platformConfig, proportionalDuration);
+        temporaryAssetIds.add(publicId);
+        return { publicId, order: i };
+      } catch (error) {
+        debugLog(`❌ Failed to create segment ${i}:`, error.message);
+        throw new Error(`Failed to create video segment ${i + 1}: ${error.message}`);
+      }
     });
 
     const createdSegments = await Promise.all(segmentPromises);
     debugLog("--- PHASE 1 COMPLETE ---", { count: createdSegments.length });
 
     // ====================================================================
-    // PHASE 2: Wait for Asset Availability
+    // PHASE 2: Wait for Asset Availability with Enhanced Checks
     // ====================================================================
     debugLog("--- PHASE 2: Ensuring asset availability ---");
     const sortedSegments = createdSegments.sort((a, b) => a.order - b.order);
@@ -214,7 +303,7 @@ serve(async (req) => {
     debugLog("--- PHASE 2 COMPLETE ---");
 
     // ====================================================================
-    // PHASE 3: Concatenate using URL-based method (PROVEN WORKING)
+    // PHASE 3: Concatenate using URL-based method
     // ====================================================================
     debugLog("--- PHASE 3: Concatenating segments ---");
     const finalVideoPublicId = `final_video_${timestamp}`;
@@ -222,7 +311,6 @@ serve(async (req) => {
     const publicIdsToConcat = sortedSegments.map(asset => asset.publicId);
     debugLog("Assets to concatenate in order:", publicIdsToConcat);
 
-    // Use the EXACT method from your working code
     try {
       debugLog("Attempting URL-based concatenation...");
       const concatenationUrl = await buildConcatenationUrl(publicIdsToConcat, platformConfig);
@@ -232,6 +320,7 @@ serve(async (req) => {
         resource_type: 'video',
         public_id: finalVideoPublicId,
         overwrite: true,
+        timeout: 180000, // 3 minute timeout for final video
         transformation: [
           { quality: 'auto:good' }
         ]
