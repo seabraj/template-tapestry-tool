@@ -65,12 +65,14 @@ const ExportPanel = ({
       'idle': 'Ready to begin',
       'starting': 'Initializing video processor',
       'initialization': 'Setting up processing environment',
+      'validation': 'Validating video sequences',
       'duration_detection': 'Analyzing video files and detecting durations',
-      'trimming': 'Creating trimmed video segments from original files',
-      'asset_verification': 'Verifying all processed assets are ready',
-      'concatenation': 'Combining video segments into final output',
-      'cleanup': 'Removing temporary files and optimizing storage',
-      'download': 'Preparing final video for download',
+      'processing': 'Processing video segments',
+      'text_overlay': 'Adding text overlays to video',
+      'end_frame': 'Creating end frame with logo',
+      'cta_processing': 'Adding call-to-action elements',
+      'final_composition': 'Combining all video elements',
+      'downloading': 'Preparing final video for download',
       'complete': 'Processing completed successfully',
       'error': 'An error occurred during processing'
     };
@@ -80,7 +82,10 @@ const ExportPanel = ({
   const getProgressBarColor = () => {
     if (progressState.progress < 0) return 'bg-red-600';
     if (progressState.progress === 100) return 'bg-green-600';
-    if (progressState.phase === 'concatenation') return 'bg-purple-600';
+    if (progressState.phase === 'text_overlay') return 'bg-blue-600';
+    if (progressState.phase === 'end_frame') return 'bg-purple-600';
+    if (progressState.phase === 'cta_processing') return 'bg-orange-600';
+    if (progressState.phase === 'final_composition') return 'bg-pink-600';
     return 'bg-blue-600';
   };
 
@@ -122,7 +127,7 @@ const ExportPanel = ({
   };
 
   const handleGenerateVideo = async () => {
-    console.log('🎬 Generate Video button clicked');
+    console.log('🎬 Generate Video button clicked with customization');
     
     setProcessingError(null);
     
@@ -150,12 +155,13 @@ const ExportPanel = ({
       return;
     }
 
-    console.log('📋 Processing request with:', {
+    console.log('📋 Processing request with customization:', {
       selectedSequences: selectedSequences.length,
       platform,
       language,
       duration,
       totalDuration,
+      customization,
       sequences: selectedSequences.map(s => ({
         id: s.id,
         name: s.name,
@@ -170,14 +176,14 @@ const ExportPanel = ({
       setProgressState({
         progress: 0,
         phase: 'starting',
-        message: 'Initializing video processing...'
+        message: 'Initializing video processing with customization...'
       });
       
-      console.log('🚀 Creating VideoProcessor instance...');
+      console.log('🚀 Creating VideoProcessor instance with customization...');
       const videoProcessor = new VideoProcessor();
       console.log('✅ VideoProcessor created successfully');
       
-      console.log('🎯 Starting video processing...');
+      console.log('🎯 Starting video processing with customization...');
       const videoBlob = await videoProcessor.processVideo({
         sequences: selectedSequences.map(seq => ({
           id: seq.id,
@@ -203,7 +209,7 @@ const ExportPanel = ({
         });
       });
 
-      console.log('✅ Video processing completed, creating download URL...');
+      console.log('✅ Video processing with customization completed, creating download URL...');
       
       const url = URL.createObjectURL(videoBlob);
       setProcessedVideoUrl(url);
@@ -211,13 +217,13 @@ const ExportPanel = ({
       setProgressState({
         progress: 100,
         phase: 'complete',
-        message: 'Video processing completed successfully!'
+        message: 'Video with customization completed successfully!'
       });
 
-      console.log('🎉 Video generation successful!');
+      console.log('🎉 Video generation with customization successful!');
       toast({
         title: "Video Generated Successfully!",
-        description: `Your video has been processed and ${duration < totalDuration ? 'trimmed ' : ''}is ready for download.`,
+        description: `Your video has been processed with customization and ${duration < totalDuration ? 'trimmed ' : ''}is ready for download.`,
       });
 
       console.log('🧹 Starting background cleanup of temporary assets...');
@@ -226,7 +232,7 @@ const ExportPanel = ({
       }, 2000);
 
     } catch (error) {
-      console.error('❌ Video processing failed:', error);
+      console.error('❌ Video processing with customization failed:', error);
       
       const errorMessage = error instanceof Error ? error.message : 'Unknown error occurred';
       setProcessingError(errorMessage);
@@ -243,7 +249,7 @@ const ExportPanel = ({
       });
     } finally {
       setIsProcessing(false);
-      console.log('🏁 Video processing attempt completed');
+      console.log('🏁 Video processing with customization attempt completed');
     }
   };
 
@@ -327,7 +333,7 @@ const ExportPanel = ({
         </h3>
         
         <p className="text-gray-300">
-          Your {selectedSequences.length} sequence(s) have been successfully processed and combined.
+          Your {selectedSequences.length} sequence(s) have been successfully processed and combined with customization.
         </p>
         
         <div className="flex justify-center space-x-4">
@@ -358,7 +364,7 @@ const ExportPanel = ({
     );
   }
 
-  // Processing state with enhanced progress tracking
+  // Processing state with enhanced progress tracking for customization
   if (isProcessing) {
     return (
       <div className="text-center space-y-8">
@@ -366,7 +372,7 @@ const ExportPanel = ({
           <Video className="text-white text-2xl animate-pulse" />
         </div>
         <h3 className="text-2xl font-bold text-white">
-          Generating Your Video...
+          Generating Your Custom Video...
         </h3>
         
         <div className="max-w-md mx-auto space-y-6">
@@ -407,12 +413,12 @@ const ExportPanel = ({
           
           {/* Processing Stats */}
           <p className="text-sm text-blue-400 font-medium">
-            Processing {selectedSequences.length} video sequence(s)...
+            Processing {selectedSequences.length} video sequence(s) with customization...
           </p>
         </div>
         
         <p className="text-sm text-gray-400">
-          Please wait while we generate your video with real-time progress tracking
+          Please wait while we generate your custom video with text overlays, end frame, and call-to-action
         </p>
       </div>
     );
@@ -425,7 +431,7 @@ const ExportPanel = ({
       <div className="bg-[#1a1a2e] border border-white/10 rounded-3xl p-8">
         <h4 className="font-semibold text-xl mb-6 text-white flex items-center">
           <Video className="h-6 w-6 mr-3" />
-          Video Summary
+          Video Summary with Customization
         </h4>
         
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
@@ -458,6 +464,52 @@ const ExportPanel = ({
                 </span>
               )}
             </p>
+          </div>
+        </div>
+      </div>
+
+      {/* Customization Summary */}
+      <div className="bg-[#1a1a2e] border border-white/10 rounded-3xl p-8">
+        <h4 className="font-semibold text-xl mb-6 text-white">Customization Applied</h4>
+        
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+          {/* Text Overlay */}
+          <div className="text-center">
+            <h5 className="font-medium text-blue-300 mb-2">Text Overlay</h5>
+            {customization.supers.text ? (
+              <>
+                <p className="text-lg font-bold text-blue-400 mb-1">"{customization.supers.text}"</p>
+                <p className="text-sm text-blue-300/80 capitalize">{customization.supers.position} • {customization.supers.style}</p>
+              </>
+            ) : (
+              <p className="text-sm text-gray-400">None</p>
+            )}
+          </div>
+          
+          {/* End Frame */}
+          <div className="text-center">
+            <h5 className="font-medium text-purple-300 mb-2">End Frame</h5>
+            {customization.endFrame.enabled ? (
+              <>
+                <p className="text-lg font-bold text-purple-400 mb-1">✓ Enabled</p>
+                <p className="text-sm text-purple-300/80">{customization.endFrame.text || 'With logo'}</p>
+              </>
+            ) : (
+              <p className="text-sm text-gray-400">Disabled</p>
+            )}
+          </div>
+          
+          {/* Call to Action */}
+          <div className="text-center">
+            <h5 className="font-medium text-green-300 mb-2">Call to Action</h5>
+            {customization.cta.enabled ? (
+              <>
+                <p className="text-lg font-bold text-green-400 mb-1">"{customization.cta.text}"</p>
+                <p className="text-sm text-green-300/80 capitalize">{customization.cta.style}</p>
+              </>
+            ) : (
+              <p className="text-sm text-gray-400">Disabled</p>
+            )}
           </div>
         </div>
       </div>
@@ -545,8 +597,8 @@ const ExportPanel = ({
         >
           <Video className="h-5 w-5 mr-2" />
           {duration < totalDuration 
-            ? `Generate & Trim to ${duration}s`
-            : 'Generate Video'
+            ? `Generate Custom Video & Trim to ${duration}s`
+            : 'Generate Custom Video'
           }
         </Button>
         {selectedSequences.length === 0 ? (
@@ -555,7 +607,7 @@ const ExportPanel = ({
           </p>
         ) : (
           <p className="text-sm text-white/60 mt-3">
-            Generate your final video with {selectedSequences.length} sequence(s)
+            Generate your final video with {selectedSequences.length} sequence(s) and customization
             {duration < totalDuration && (
               <span className="text-yellow-400"> • Proportional trimming will be applied</span>
             )}

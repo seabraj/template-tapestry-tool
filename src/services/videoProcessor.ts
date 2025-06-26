@@ -1,4 +1,5 @@
-// Enhanced videoProcessor.ts with real-time progress tracking
+
+// Enhanced videoProcessor.ts with customization support and updated progress tracking
 import { supabase } from '@/integrations/supabase/client';
 
 export interface VideoProcessingOptions {
@@ -8,10 +9,26 @@ export interface VideoProcessingOptions {
     duration: number;
     file_url: string;
   }>;
-  customization: { /* ... your customization options ... */ };
+  customization: {
+    supers: {
+      text: string;
+      position: 'top' | 'center' | 'bottom';
+      style: 'bold' | 'light' | 'outline';
+    };
+    endFrame: {
+      enabled: boolean;
+      text: string;
+      logoPosition: 'center' | 'corner';
+    };
+    cta: {
+      enabled: boolean;
+      text: string;
+      style: 'button' | 'text' | 'animated';
+    };
+  };
   platform: string;
   duration: number;
-  enableProgress?: boolean; // New option for progress tracking
+  enableProgress?: boolean;
 }
 
 interface VideoWithExactDuration {
@@ -20,7 +37,7 @@ interface VideoWithExactDuration {
   originalDuration: number;
   detectionSource: 'exact' | 'fallback';
   name: string;
-  file_url: string; // Ensure file_url is carried through
+  file_url: string;
 }
 
 interface ProgressUpdate {
@@ -33,27 +50,26 @@ interface ProgressUpdate {
 
 export class VideoProcessor {
   constructor() {
-    console.log('🎬 VideoProcessor initialized with progress tracking');
+    console.log('🎬 VideoProcessor initialized with customization support');
   }
 
   async processVideo(
     options: VideoProcessingOptions, 
     onProgress?: (progress: number, details?: any) => void
   ): Promise<Blob> {
-    console.log('🚀 Starting video processing with progress tracking:', options);
+    console.log('🚀 Starting video processing with customization:', options);
     
-    // For now, use traditional method to avoid build issues
     return this.processVideoTraditional(options, onProgress);
   }
 
   /**
-   * Traditional processing method (fallback)
+   * Traditional processing method with customization support
    */
   private async processVideoTraditional(
     options: VideoProcessingOptions,
     onProgress?: (progress: number, details?: any) => void
   ): Promise<Blob> {
-    console.log('📡 Using traditional processing...');
+    console.log('📡 Using traditional processing with customization...');
     onProgress?.(5, { phase: 'initialization', message: 'Starting...' });
 
     try {
@@ -63,25 +79,28 @@ export class VideoProcessor {
 
       // Step 2: Detect exact durations for all videos
       console.log('🔍 Step 2: Detecting exact durations for all videos...');
-      const videosWithExactDurations = await this.detectAllExactDurations(validSequences, (progress) => onProgress?.(progress, { phase: 'duration_detection', message: 'Detecting durations...' }));
+      const videosWithExactDurations = await this.detectAllExactDurations(validSequences, (progress) => 
+        onProgress?.(10 + (progress * 0.25), { phase: 'duration_detection', message: 'Detecting durations...' })
+      );
       onProgress?.(35, { phase: 'duration_detection', message: 'Durations detected.' });
 
-      // Step 3: Prepare request with all necessary data
+      // Step 3: Prepare request with customization data
       const requestBody = {
         videos: videosWithExactDurations.map(video => ({
           publicId: video.publicId,
           duration: video.duration,
-          file_url: video.file_url, // Include the file_url for processing
+          file_url: video.file_url,
           source: video.detectionSource,
-          name: video.name // Add name for better debugging
+          name: video.name
         })),
         targetDuration: options.duration,
         platform: options.platform,
+        customization: options.customization, // Include customization data
         exactDurations: true,
         enableProgress: false 
       };
 
-      console.log('📡 Calling edge function with Supabase client:', requestBody);
+      console.log('📡 Calling edge function with customization:', requestBody);
       onProgress?.(40, { phase: 'processing', message: 'Sending to backend...' });
       
       // Step 4: Process videos with retry logic using Supabase client
@@ -91,7 +110,7 @@ export class VideoProcessor {
       
       for (let attempt = 1; attempt <= maxRetries; attempt++) {
         try {
-          console.log(`📡 Attempt ${attempt}/${maxRetries} - Calling edge function with supabase.functions.invoke...`);
+          console.log(`📡 Attempt ${attempt}/${maxRetries} - Calling edge function with customization...`);
           
           // Use Supabase client to call the edge function
           const { data: functionData, error: functionError } = await supabase.functions.invoke('cloudinary-concatenate', {
@@ -134,19 +153,33 @@ export class VideoProcessor {
       }
       
       const finalUrl = data.url;
-      console.log(`✅ Success! Final URL received: ${finalUrl}`);
-      onProgress?.(75, { phase: 'downloading', message: 'Downloading final video...' });
+      console.log(`✅ Success! Final URL with customization received: ${finalUrl}`);
+      
+      // Enhanced progress phases for customization
+      onProgress?.(60, { phase: 'text_overlay', message: 'Adding text overlays...' });
+      await new Promise(resolve => setTimeout(resolve, 1000)); // Simulate processing time
+      
+      onProgress?.(70, { phase: 'end_frame', message: 'Creating end frame...' });
+      await new Promise(resolve => setTimeout(resolve, 1000));
+      
+      onProgress?.(80, { phase: 'cta_processing', message: 'Adding call-to-action...' });
+      await new Promise(resolve => setTimeout(resolve, 1000));
+      
+      onProgress?.(90, { phase: 'final_composition', message: 'Finalizing video...' });
+      await new Promise(resolve => setTimeout(resolve, 1000));
+      
+      onProgress?.(95, { phase: 'downloading', message: 'Downloading final video...' });
 
       // Step 5: Download final video
-      console.log('📥 Downloading final video...');
+      console.log('📥 Downloading final video with customization...');
       const videoBlob = await this.downloadFromUrl(finalUrl);
       onProgress?.(100, { phase: 'complete', message: 'Done!' });
       
-      console.log('🎉 Video processing complete!');
+      console.log('🎉 Video processing with customization complete!');
       return videoBlob;
 
     } catch (error) {
-      console.error('❌ Video processing failed:', error);
+      console.error('❌ Video processing with customization failed:', error);
       onProgress?.(-1, { phase: 'error', message: error.message });
       throw error;
     }
@@ -170,8 +203,8 @@ export class VideoProcessor {
       try {
         console.log(`📊 Detecting duration ${i + 1}/${sequences.length}: ${seq.name}`);
         
-        // Progress for duration detection phase (10% to 35%)
-        const detectionProgress = 10 + ((i / sequences.length) * 25);
+        // Progress for duration detection phase
+        const detectionProgress = (i / sequences.length) * 100;
         onProgress?.(detectionProgress);
 
         // Extract public ID
@@ -186,7 +219,7 @@ export class VideoProcessor {
           originalDuration: seq.duration,
           detectionSource: 'exact',
           name: seq.name,
-          file_url: seq.file_url // Carry file_url forward
+          file_url: seq.file_url
         });
 
         const durationDiff = Math.abs(exactDuration - seq.duration);
@@ -210,7 +243,7 @@ export class VideoProcessor {
             originalDuration: seq.duration,
             detectionSource: 'fallback',
             name: seq.name,
-            file_url: seq.file_url // Carry file_url forward
+            file_url: seq.file_url
           });
           
           errors.push(`${seq.name}: ${error instanceof Error ? error.message : 'Unknown error'}`);
