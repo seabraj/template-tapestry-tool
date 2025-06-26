@@ -1,3 +1,4 @@
+
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
 import { v2 as cloudinary } from 'npm:cloudinary@^1.41.1';
@@ -232,23 +233,23 @@ async function applyCustomizationOverlays(baseVideoId: string, customization: an
         color: 'white',
         gravity: gravity,
         y: yOffset,
-        start_offset: `${0}s`,
-        end_offset: `${textEndTime}s`
+        start_offset: textEndTime > 0 ? `0s` : undefined,
+        end_offset: textEndTime > 0 ? `${textEndTime}s` : undefined
       });
       
-      debugLog('Added text overlay', { text, duration: `0-${textEndTime}s` });
+      debugLog('Added text overlay', { text, duration: textEndTime > 0 ? `0-${textEndTime}s` : 'full video' });
     }
     
     // Phase 2: Add end frame elements for last 3 seconds
     const startTime = Math.max(targetDuration - 3, 0);
     
-    if (customization?.endFrame?.enabled) {
+    if (customization?.endFrame?.enabled && startTime < targetDuration) {
       const logoSize = Math.min(platformConfig.width, platformConfig.height) * 0.15;
       
-      // Add logo
+      // Add logo using the correct public_id format
       if (customization.endFrame.logoPosition === 'center') {
         transformations.push({
-          overlay: 'branding:itmatters_logo.png',
+          overlay: 'branding/itmatters_logo',
           width: Math.round(logoSize),
           gravity: 'center',
           y: -50,
@@ -257,7 +258,7 @@ async function applyCustomizationOverlays(baseVideoId: string, customization: an
         });
       } else {
         transformations.push({
-          overlay: 'branding:itmatters_logo.png',
+          overlay: 'branding/itmatters_logo',
           width: Math.round(logoSize * 0.7),
           gravity: 'north_east',
           x: 20,
@@ -289,25 +290,24 @@ async function applyCustomizationOverlays(baseVideoId: string, customization: an
     }
     
     // Phase 3: Add CTA overlay for last 3 seconds with proper button backgrounds
-    if (customization?.cta?.enabled && customization?.cta?.text) {
+    if (customization?.cta?.enabled && customization?.cta?.text && startTime < targetDuration) {
       const { text, style } = customization.cta;
       const fontSize = Math.min(platformConfig.width, platformConfig.height) * 0.04;
       const buttonWidth = Math.round(platformConfig.width * 0.3);
       const buttonHeight = Math.round(fontSize * 2.5);
       
       if (style === 'button') {
-        // Create button background using solid color overlay
+        // Create button background using rectangle overlay
         transformations.push({
           overlay: {
-            color: '#3B82F6', // Blue color
+            color: '#3B82F6',
             width: buttonWidth,
             height: buttonHeight
           },
           gravity: 'south',
           y: Math.round(platformConfig.height * 0.15),
           start_offset: `${startTime}s`,
-          end_offset: `${targetDuration}s`,
-          radius: Math.round(buttonHeight * 0.3)
+          end_offset: `${targetDuration}s`
         });
         
         // Add button text on top
@@ -348,15 +348,14 @@ async function applyCustomizationOverlays(baseVideoId: string, customization: an
         // Create animated button background with purple color
         transformations.push({
           overlay: {
-            color: '#8B5CF6', // Purple color
+            color: '#8B5CF6',
             width: buttonWidth,
             height: buttonHeight
           },
           gravity: 'south',
           y: Math.round(platformConfig.height * 0.15),
           start_offset: `${startTime}s`,
-          end_offset: `${targetDuration}s`,
-          radius: Math.round(buttonHeight * 0.3)
+          end_offset: `${targetDuration}s`
         });
         
         // Add animated button text with sparkle
@@ -388,23 +387,27 @@ async function applyCustomizationOverlays(baseVideoId: string, customization: an
       return { publicId: baseVideoId, url: fallbackUrl };
     }
     
-    // Apply all transformations to the base video in a single transformation chain
-    const finalUrl = cloudinary.url(baseVideoId, {
-      resource_type: 'video',
-      transformation: transformations
-    });
-    
+    // Apply all transformations to the base video
     debugLog('Applying customization overlays', { 
       transformationCount: transformations.length,
-      finalUrl: finalUrl.substring(0, 100) + '...'
+      transformations: transformations.map(t => ({ 
+        type: t.overlay?.text ? 'text' : (t.overlay?.color ? 'rectangle' : 'image'),
+        timing: t.start_offset ? `${t.start_offset}-${t.end_offset}` : 'full'
+      }))
     });
     
-    const result = await cloudinary.uploader.upload(finalUrl, {
-      resource_type: 'video',
-      public_id: finalVideoId,
-      overwrite: true,
-      timeout: 180000,
-    });
+    const result = await cloudinary.uploader.upload(
+      cloudinary.url(baseVideoId, {
+        resource_type: 'video',
+        transformation: transformations
+      }),
+      {
+        resource_type: 'video',
+        public_id: finalVideoId,
+        overwrite: true,
+        timeout: 180000,
+      }
+    );
     
     debugLog(`✅ Customization applied successfully: ${finalVideoId}`);
     return { publicId: finalVideoId, url: result.secure_url };
