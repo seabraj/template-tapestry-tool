@@ -93,20 +93,30 @@ export class VideoProcessor {
         try {
           console.log(`📡 Attempt ${attempt}/${maxRetries} - Calling edge function...`);
           
-          // Make direct HTTP request to bypass JWT authentication
-// Retrieve session and JWT token
-const { data: { session } } = await supabase.auth.getSession();
-const jwt = session?.access_token;
+          // Make direct HTTP request with proper authentication handling
+          // Retrieve session and JWT token
+          const { data: { session } } = await supabase.auth.getSession();
+          const jwt = session?.access_token;
 
-const edgeFunctionUrl = 'https://rihlnnxodrxzaxunwurc.supabase.co/functions/v1/cloudinary-concatenate';
+          const edgeFunctionUrl = 'https://rihlnnxodrxzaxunwurc.supabase.co/functions/v1/cloudinary-concatenate';
+          
+          // Prepare headers - only include Authorization if we have a valid JWT
+          const headers: Record<string, string> = {
+            'Content-Type': 'application/json',
+            'apikey': 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InJpaGxubnhvZHJ4emF4dW53dXJjIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NTAwNzMyMjIsImV4cCI6MjA2NTY0OTIyMn0.0NfXK2GWdduughXFjPhRR2wGx1AROIRkaMcarj2cBYg'
+          };
+          
+          // Only add Authorization header if we have a valid JWT token
+          if (jwt) {
+            headers['Authorization'] = `Bearer ${jwt}`;
+            console.log('📡 Using JWT authentication');
+          } else {
+            console.log('📡 Using anonymous API key authentication');
+          }
           
           const response = await fetch(edgeFunctionUrl, {
             method: 'POST',
-            headers: {
-              'Content-Type': 'application/json',
-'apikey': 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InJpaGxubnhvZHJ4emF4dW53dXJjIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NTAwNzMyMjIsImV4cCI6MjA2NTY0OTIyMn0.0NfXK2GWdduughXFjPhRR2wGx1AROIRkaMcarj2cBYg',
-'Authorization': `Bearer ${jwt}`
-            },
+            headers,
             body: JSON.stringify(requestBody)
           });
           
