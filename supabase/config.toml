@@ -1,1 +1,5 @@
+
 project_id = "rihlnnxodrxzaxunwurc"
+
+[functions.cloudinary-concatenate]
+verify_jwt = false

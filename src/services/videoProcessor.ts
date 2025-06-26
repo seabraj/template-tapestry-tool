@@ -81,60 +81,36 @@ export class VideoProcessor {
         enableProgress: false 
       };
 
-      console.log('📡 Calling edge function with traditional method:', requestBody);
+      console.log('📡 Calling edge function with Supabase client:', requestBody);
       onProgress?.(40, { phase: 'processing', message: 'Sending to backend...' });
       
-      // Step 4: Process videos with retry logic
+      // Step 4: Process videos with retry logic using Supabase client
       const maxRetries = 3;
       let lastError: Error | null = null;
       let data: any = null;
       
       for (let attempt = 1; attempt <= maxRetries; attempt++) {
         try {
-          console.log(`📡 Attempt ${attempt}/${maxRetries} - Calling edge function...`);
+          console.log(`📡 Attempt ${attempt}/${maxRetries} - Calling edge function with supabase.functions.invoke...`);
           
-          // Make direct HTTP request with proper authentication handling
-          // Retrieve session and JWT token
-          const { data: { session } } = await supabase.auth.getSession();
-          const jwt = session?.access_token;
-
-          const edgeFunctionUrl = 'https://rihlnnxodrxzaxunwurc.supabase.co/functions/v1/cloudinary-concatenate';
-          
-          // Prepare headers - only include Authorization if we have a valid JWT
-          const headers: Record<string, string> = {
-            'Content-Type': 'application/json',
-            'apikey': 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InJpaGxubnhvZHJ4emF4dW53dXJjIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NTAwNzMyMjIsImV4cCI6MjA2NTY0OTIyMn0.0NfXK2GWdduughXFjPhRR2wGx1AROIRkaMcarj2cBYg'
-          };
-          
-          // Only add Authorization header if we have a valid JWT token
-          if (jwt) {
-            headers['Authorization'] = `Bearer ${jwt}`;
-            console.log('📡 Using JWT authentication');
-          } else {
-            console.log('📡 Using anonymous API key authentication');
-          }
-          
-          const response = await fetch(edgeFunctionUrl, {
-            method: 'POST',
-            headers,
-            body: JSON.stringify(requestBody)
+          // Use Supabase client to call the edge function
+          const { data: functionData, error: functionError } = await supabase.functions.invoke('cloudinary-concatenate', {
+            body: requestBody
           });
           
-          if (!response.ok) {
-            const errorText = await response.text();
-            throw new Error(`HTTP ${response.status}: ${errorText}`);
+          if (functionError) {
+            throw new Error(`Function error: ${functionError.message || JSON.stringify(functionError)}`);
           }
           
-          data = await response.json();
-          
-          if (!data?.success) {
-            throw new Error(data?.error || 'Backend processing failed');
+          if (!functionData?.success) {
+            throw new Error(functionData?.error || 'Backend processing failed');
           }
           
-          if (!data?.url) {
+          if (!functionData?.url) {
             throw new Error('Backend failed to return a valid video URL');
           }
           
+          data = functionData;
           break; // Success, exit retry loop
           
         } catch (error) {
