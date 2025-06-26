@@ -111,8 +111,8 @@ function getPlatformDimensions(platform: string) {
   }
 }
 
-// Create text overlay transformation
-function createTextOverlay(customization: any, platformConfig: any) {
+// Create text overlay transformation for full video duration minus 3s
+function createTextOverlay(customization: any, platformConfig: any, targetDuration: number) {
   if (!customization?.supers?.text) return null;
   
   const { text, position, style } = customization.supers;
@@ -120,18 +120,7 @@ function createTextOverlay(customization: any, platformConfig: any) {
   // Calculate font size based on platform dimensions
   const baseFontSize = Math.min(platformConfig.width, platformConfig.height) * 0.06;
   
-  let textStyle = `Arial_${Math.round(baseFontSize)}`;
   let textColor = 'white';
-  
-  // Apply text styling
-  if (style === 'bold') {
-    textStyle += '_bold';
-  } else if (style === 'light') {
-    textStyle += '_normal';
-  } else if (style === 'outline') {
-    textStyle += '_bold';
-    textColor = 'white';
-  }
   
   // Determine text position
   let gravity = 'center';
@@ -145,6 +134,9 @@ function createTextOverlay(customization: any, platformConfig: any) {
     yOffset = Math.round(platformConfig.height * 0.1);
   }
   
+  // Apply text overlay for full duration minus 3 seconds (for end frame)
+  const overlayEndTime = Math.max(targetDuration - 3, 0);
+  
   return {
     overlay: {
       font_family: 'Arial',
@@ -154,16 +146,71 @@ function createTextOverlay(customization: any, platformConfig: any) {
     },
     color: textColor,
     gravity: gravity,
-    y: yOffset
+    y: yOffset,
+    start_offset: 0,
+    end_offset: overlayEndTime
   };
 }
 
-// Create CTA overlay
-function createCTAOverlay(customization: any, platformConfig: any, isEndFrame: boolean = false) {
+// Create end frame overlay elements (logo + text) for last 3 seconds
+function createEndFrameOverlays(customization: any, platformConfig: any, targetDuration: number) {
+  const overlays = [];
+  const startTime = Math.max(targetDuration - 3, 0);
+  
+  if (customization?.endFrame?.enabled) {
+    // Add logo overlay for last 3 seconds
+    const logoSize = Math.min(platformConfig.width, platformConfig.height) * 0.15;
+    
+    if (customization.endFrame.logoPosition === 'center') {
+      overlays.push({
+        overlay: 'branding/itmatters_logo',
+        width: Math.round(logoSize),
+        gravity: 'center',
+        y: -50,
+        start_offset: startTime,
+        end_offset: targetDuration
+      });
+    } else {
+      overlays.push({
+        overlay: 'branding/itmatters_logo',
+        width: Math.round(logoSize * 0.7),
+        gravity: 'north_east',
+        x: 20,
+        y: 20,
+        start_offset: startTime,
+        end_offset: targetDuration
+      });
+    }
+    
+    // Add end frame text overlay for last 3 seconds
+    if (customization.endFrame.text) {
+      const fontSize = Math.min(platformConfig.width, platformConfig.height) * 0.05;
+      overlays.push({
+        overlay: {
+          font_family: 'Arial',
+          font_size: Math.round(fontSize),
+          font_weight: 'bold',
+          text: customization.endFrame.text
+        },
+        color: 'white',
+        gravity: 'center',
+        y: customization.endFrame.logoPosition === 'center' ? 100 : 0,
+        start_offset: startTime,
+        end_offset: targetDuration
+      });
+    }
+  }
+  
+  return overlays;
+}
+
+// Create CTA overlay for last 3 seconds
+function createCTAOverlay(customization: any, platformConfig: any, targetDuration: number) {
   if (!customization?.cta?.enabled || !customization?.cta?.text) return null;
   
   const { text, style } = customization.cta;
   const fontSize = Math.min(platformConfig.width, platformConfig.height) * 0.04;
+  const startTime = Math.max(targetDuration - 3, 0);
   
   if (style === 'button') {
     return {
@@ -176,7 +223,9 @@ function createCTAOverlay(customization: any, platformConfig: any, isEndFrame: b
       color: 'white',
       gravity: 'south',
       y: Math.round(platformConfig.height * 0.15),
-      background: 'blue'
+      background: 'blue',
+      start_offset: startTime,
+      end_offset: targetDuration
     };
   } else if (style === 'text') {
     return {
@@ -188,7 +237,9 @@ function createCTAOverlay(customization: any, platformConfig: any, isEndFrame: b
       },
       color: 'white',
       gravity: 'south',
-      y: Math.round(platformConfig.height * 0.1)
+      y: Math.round(platformConfig.height * 0.1),
+      start_offset: startTime,
+      end_offset: targetDuration
     };
   } else if (style === 'animated') {
     return {
@@ -201,88 +252,13 @@ function createCTAOverlay(customization: any, platformConfig: any, isEndFrame: b
       color: 'white',
       gravity: 'south',
       y: Math.round(platformConfig.height * 0.15),
-      background: 'purple'
+      background: 'purple',
+      start_offset: startTime,
+      end_offset: targetDuration
     };
   }
   
   return null;
-}
-
-// Create end frame with logo and text
-async function createEndFrame(customization: any, platformConfig: any, timestamp: number): Promise<string> {
-  const endFrameId = `end_frame_${timestamp}`;
-  const logoUrl = 'https://res.cloudinary.com/dsxrmo3kt/image/upload/v1750947547/branding/itmatters_logo.png';
-  
-  debugLog('Creating end frame with logo and customization', { endFrameId, customization });
-  
-  // Create a 3-second solid color background
-  const transformations = [
-    { width: platformConfig.width, height: platformConfig.height },
-    { background: 'black' },
-    { duration: 3.0 }, // 3 seconds
-    { quality: 'auto:good' }
-  ];
-  
-  // Add logo overlay
-  if (customization?.endFrame?.enabled) {
-    const logoSize = Math.min(platformConfig.width, platformConfig.height) * 0.15;
-    
-    if (customization.endFrame.logoPosition === 'center') {
-      transformations.push({
-        overlay: logoUrl.split('/').pop().replace('.png', ''),
-        width: Math.round(logoSize),
-        gravity: 'center',
-        y: -50
-      });
-    } else {
-      transformations.push({
-        overlay: logoUrl.split('/').pop().replace('.png', ''),
-        width: Math.round(logoSize * 0.7),
-        gravity: 'north_east',
-        x: 20,
-        y: 20
-      });
-    }
-    
-    // Add end frame text
-    if (customization.endFrame.text) {
-      const fontSize = Math.min(platformConfig.width, platformConfig.height) * 0.05;
-      transformations.push({
-        overlay: {
-          font_family: 'Arial',
-          font_size: Math.round(fontSize),
-          font_weight: 'bold',
-          text: customization.endFrame.text
-        },
-        color: 'white',
-        gravity: 'center',
-        y: customization.endFrame.logoPosition === 'center' ? 100 : 0
-      });
-    }
-  }
-  
-  // Add CTA overlay to end frame
-  const ctaOverlay = createCTAOverlay(customization, platformConfig, true);
-  if (ctaOverlay) {
-    transformations.push(ctaOverlay);
-  }
-  
-  // Create the end frame by transforming a simple colored rectangle
-  const endFrameUrl = cloudinary.url('sample', {
-    resource_type: 'video',
-    transformation: transformations
-  });
-  
-  debugLog('End frame URL created', { endFrameUrl });
-  
-  const uploadResult = await cloudinary.uploader.upload(endFrameUrl, {
-    resource_type: 'video',
-    public_id: endFrameId,
-    overwrite: true,
-    timeout: 120000,
-  });
-  
-  return uploadResult.public_id;
 }
 
 // Safer segment creation with fallback strategies
@@ -350,63 +326,63 @@ async function createVideoSegment(video: any, index: number, timestamp: number, 
   }
 }
 
-// Build concatenation URL with platform dimensions and customization
-async function buildConcatenationUrl(assetIds: string[], platformConfig: any, customization: any, mainVideoDuration: number): Promise<string> {
+// Build concatenation URL with customization overlays applied correctly
+async function buildConcatenationUrl(assetIds: string[], platformConfig: any, customization: any, targetDuration: number): Promise<string> {
   if (assetIds.length === 0) {
     throw new Error('No assets to concatenate');
   }
 
-  if (assetIds.length === 1) {
-    // Single video, apply platform dimensions and text overlay
-    const transformations = [];
-    
-    // Add text overlay for main duration minus 3 seconds
-    const textOverlay = createTextOverlay(customization, platformConfig);
-    if (textOverlay && mainVideoDuration > 3) {
-      transformations.push({
-        ...textOverlay,
-        start_offset: 0,
-        end_offset: mainVideoDuration - 3
-      });
-    }
-    
-    transformations.push({ quality: 'auto:good', audio_codec: 'aac' });
-    
-    return cloudinary.url(assetIds[0], {
-      resource_type: 'video',
-      transformation: transformations
-    });
-  }
-
-  // For multiple videos, use the video overlay approach with fl_splice
-  const baseVideo = assetIds[0];
-  const overlayVideos = assetIds.slice(1);
-
   const transformations = [];
 
-  // Add text overlay for main video duration minus 3 seconds
-  const textOverlay = createTextOverlay(customization, platformConfig);
-  if (textOverlay && mainVideoDuration > 3) {
-    transformations.push({
-      ...textOverlay,
-      start_offset: 0,
-      end_offset: mainVideoDuration - 3
+  // Phase 1: Add text overlay for full video duration minus 3 seconds
+  const textOverlay = createTextOverlay(customization, platformConfig, targetDuration);
+  if (textOverlay) {
+    debugLog('Adding text overlay for duration', { startOffset: textOverlay.start_offset, endOffset: textOverlay.end_offset });
+    transformations.push(textOverlay);
+  }
+
+  // Phase 2: Handle video concatenation
+  if (assetIds.length === 1) {
+    // Single video - no splicing needed
+    debugLog('Single video detected, no splicing required');
+  } else {
+    // Multiple videos - use the video overlay approach with fl_splice
+    const overlayVideos = assetIds.slice(1);
+    debugLog('Multiple videos detected, adding splice overlays', { overlayVideos });
+
+    // Add each overlay video with fl_splice
+    overlayVideos.forEach((videoId, index) => {
+      transformations.push({
+        overlay: `video:${videoId}`,
+        flags: 'splice'
+      });
     });
   }
 
-  // Add each overlay video with fl_splice
-  overlayVideos.forEach((videoId, index) => {
-    transformations.push({
-      overlay: `video:${videoId}`,
-      flags: 'splice'
+  // Phase 3: Add end frame overlays for last 3 seconds
+  const endFrameOverlays = createEndFrameOverlays(customization, platformConfig, targetDuration);
+  if (endFrameOverlays.length > 0) {
+    debugLog('Adding end frame overlays for last 3 seconds', { count: endFrameOverlays.length });
+    endFrameOverlays.forEach(overlay => {
+      transformations.push(overlay);
     });
-  });
+  }
 
-  // Add final quality settings
+  // Phase 4: Add CTA overlay for last 3 seconds
+  const ctaOverlay = createCTAOverlay(customization, platformConfig, targetDuration);
+  if (ctaOverlay) {
+    debugLog('Adding CTA overlay for last 3 seconds', { startOffset: ctaOverlay.start_offset, endOffset: ctaOverlay.end_offset });
+    transformations.push(ctaOverlay);
+  }
+
+  // Phase 5: Add final quality settings
   transformations.push({
     quality: 'auto:good',
     audio_codec: 'aac'
   });
+
+  const baseVideo = assetIds[0];
+  debugLog('Building final concatenation URL', { baseVideo, transformationCount: transformations.length });
 
   return cloudinary.url(baseVideo, {
     resource_type: 'video',
@@ -461,7 +437,7 @@ serve(async (req) => {
       });
     }
     
-    debugLog("🚀 PROCESSING START", { videoCount: videos.length, targetDuration, platform, hasCustomization: !!customization });
+    debugLog("🚀 PROCESSING START WITH FIXED CUSTOMIZATION", { videoCount: videos.length, targetDuration, platform, hasCustomization: !!customization });
     const timestamp = Date.now();
     const totalOriginalDuration = videos.reduce((sum, v) => sum + v.duration, 0);
     const platformConfig = getPlatformDimensions(platform);
@@ -499,42 +475,23 @@ serve(async (req) => {
     debugLog("--- PHASE 2 COMPLETE ---");
 
     // ====================================================================
-    // PHASE 3: Create End Frame (if customization enabled)
+    // PHASE 3: Concatenate with Fixed Customization Overlays
     // ====================================================================
-    let endFrameId = null;
-    if (customization?.endFrame?.enabled || customization?.cta?.enabled) {
-      debugLog("--- PHASE 3: Creating end frame with customization ---");
-      try {
-        endFrameId = await createEndFrame(customization, platformConfig, timestamp);
-        temporaryAssetIds.add(endFrameId);
-        await waitForAssetAvailability(endFrameId);
-        debugLog("--- PHASE 3 COMPLETE: End frame created ---", { endFrameId });
-      } catch (error) {
-        debugLog("⚠️ End frame creation failed, continuing without it:", error.message);
-      }
-    }
-
-    // ====================================================================
-    // PHASE 4: Concatenate using URL-based method with customization
-    // ====================================================================
-    debugLog("--- PHASE 4: Concatenating segments with customization ---");
+    debugLog("--- PHASE 3: Concatenating segments with FIXED customization overlays ---");
     const finalVideoPublicId = `final_video_${timestamp}`;
     
     const publicIdsToConcat = sortedSegments.map(asset => asset.publicId);
-    if (endFrameId) {
-      publicIdsToConcat.push(endFrameId);
-    }
     debugLog("Assets to concatenate in order:", publicIdsToConcat);
 
     try {
-      debugLog("Attempting URL-based concatenation with customization...");
+      debugLog("Attempting URL-based concatenation with FIXED customization overlays...");
       const concatenationUrl = await buildConcatenationUrl(
         publicIdsToConcat, 
         platformConfig, 
         customization, 
         targetDuration
       );
-      debugLog("Built concatenation URL:", concatenationUrl);
+      debugLog("Built concatenation URL with fixed overlays:", concatenationUrl);
 
       const finalVideoResult = await cloudinary.uploader.upload(concatenationUrl, {
         resource_type: 'video',
@@ -547,7 +504,7 @@ serve(async (req) => {
       });
 
       const finalUrl = finalVideoResult.secure_url;
-      debugLog("--- PHASE 4 COMPLETE: Final video created with customization ---", { 
+      debugLog("--- PHASE 3 COMPLETE: Final video created with FIXED customization ---", { 
         finalUrl, 
         public_id: finalVideoPublicId 
       });
@@ -557,7 +514,7 @@ serve(async (req) => {
       }
 
       // ====================================================================
-      // PHASE 5: CLEANUP (before sending response)
+      // PHASE 4: CLEANUP (before sending response)
       // ====================================================================
       if (temporaryAssetIds.size > 0) {
         debugLog("--- CLEANUP: Deleting temporary assets ---", { ids: Array.from(temporaryAssetIds) });
@@ -580,7 +537,7 @@ serve(async (req) => {
       // ====================================================================
       // FINAL RESPONSE
       // ====================================================================
-      debugLog("🎉 SUCCESS: Returning final response", { finalUrl });
+      debugLog("🎉 SUCCESS: Returning final response with FIXED customization", { finalUrl });
       return new Response(JSON.stringify({ success: true, url: finalUrl }), {
         headers: { ...corsHeaders, "Content-Type": "application/json" },
         status: 200,
