@@ -197,11 +197,17 @@ async function createRender(template: any): Promise<string> {
 
     if (!response.ok) {
       const errorText = await response.text();
+      debugLog(`❌ Render creation failed with status ${response.status}`, { error: errorText });
       throw new Error(`Failed to create render: ${response.status} ${errorText}`);
     }
 
     const result = await response.json();
-    debugLog(`✅ Render created`, { renderId: result.id });
+    debugLog(`✅ Render created successfully`, { renderId: result.id, status: result.status });
+    
+    if (!result.id) {
+      throw new Error('Render creation succeeded but no ID was returned');
+    }
+    
     return result.id;
   } catch (error) {
     debugLog(`❌ Render creation failed:`, error.message);
@@ -214,42 +220,87 @@ async function waitForRenderCompletion(renderId: string): Promise<string> {
   const maxAttempts = 60; // 5 minutes max wait time
   const pollInterval = 5000; // 5 seconds
 
+  debugLog(`Starting render polling for ID: ${renderId}`);
+
   for (let attempt = 1; attempt <= maxAttempts; attempt++) {
     try {
       debugLog(`Checking render status (attempt ${attempt}/${maxAttempts})`, { renderId });
       
       const response = await fetch(`${CREATOMATE_API_BASE}/renders/${renderId}`, {
+        method: 'GET',
         headers: {
           'Authorization': `Bearer ${CREATOMATE_API_KEY}`,
+          'Content-Type': 'application/json',
         }
       });
 
+      debugLog(`Render status API response: ${response.status}`, { 
+        url: `${CREATOMATE_API_BASE}/renders/${renderId}`,
+        headers: response.headers 
+      });
+
       if (!response.ok) {
-        throw new Error(`Failed to check render status: ${response.status}`);
+        const errorText = await response.text();
+        debugLog(`❌ Status check failed with ${response.status}`, { error: errorText, renderId });
+        
+        if (response.status === 404) {
+          throw new Error(`Render not found (ID: ${renderId}). The render may have expired or been deleted.`);
+        }
+        
+        if (response.status === 401) {
+          throw new Error(`Authentication failed. Please check your Creatomate API key.`);
+        }
+        
+        throw new Error(`Failed to check render status: ${response.status} - ${errorText}`);
       }
 
       const result = await response.json();
-      debugLog(`Render status: ${result.status}`, { renderId, progress: result.progress });
+      debugLog(`Render status response:`, { 
+        status: result.status, 
+        progress: result.progress,
+        hasUrl: !!result.url,
+        error: result.error 
+      });
 
       if (result.status === 'succeeded') {
+        if (!result.url) {
+          throw new Error('Render succeeded but no URL was provided');
+        }
         debugLog(`✅ Render completed successfully`, { url: result.url });
         return result.url;
       } else if (result.status === 'failed') {
-        throw new Error(`Render failed: ${result.error || 'Unknown error'}`);
+        const errorMsg = result.error || result.failure_reason || 'Unknown render failure';
+        debugLog(`❌ Render failed`, { error: errorMsg, renderId });
+        throw new Error(`Render failed: ${errorMsg}`);
+      } else {
+        // Still processing - continue polling
+        debugLog(`🔄 Render still processing`, { 
+          status: result.status, 
+          progress: result.progress || 'unknown',
+          attempt: `${attempt}/${maxAttempts}`
+        });
       }
 
       // Wait before next poll
-      await new Promise(resolve => setTimeout(resolve, pollInterval));
-    } catch (error) {
-      debugLog(`❌ Error checking render status:`, error.message);
-      if (attempt === maxAttempts) {
-        throw new Error(`Render status check failed after ${maxAttempts} attempts`);
+      if (attempt < maxAttempts) {
+        debugLog(`⏳ Waiting ${pollInterval}ms before next check...`);
+        await new Promise(resolve => setTimeout(resolve, pollInterval));
       }
+      
+    } catch (error) {
+      debugLog(`❌ Error during status check attempt ${attempt}:`, error.message);
+      
+      if (attempt === maxAttempts) {
+        throw new Error(`Render status check failed after ${maxAttempts} attempts: ${error.message}`);
+      }
+      
+      // Wait before retrying on error
+      debugLog(`⏳ Waiting ${pollInterval}ms before retry due to error...`);
       await new Promise(resolve => setTimeout(resolve, pollInterval));
     }
   }
 
-  throw new Error(`Render timed out after ${maxAttempts} attempts`);
+  throw new Error(`Render timed out after ${maxAttempts} attempts (${(maxAttempts * pollInterval / 1000 / 60).toFixed(1)} minutes)`);
 }
 
 serve(async (req) => {
