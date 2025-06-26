@@ -45,37 +45,6 @@ function getPlatformDimensions(platform: string) {
   }
 }
 
-// Upload video to Creatomate media library
-async function uploadToCreatomate(videoUrl: string, name: string): Promise<string> {
-  try {
-    debugLog(`Uploading video to Creatomate: ${name}`, { url: videoUrl });
-    
-    const response = await fetch(`${CREATOMATE_API_BASE}/sources`, {
-      method: 'POST',
-      headers: {
-        'Authorization': `Bearer ${CREATOMATE_API_KEY}`,
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({
-        url: videoUrl,
-        name: name
-      })
-    });
-
-    if (!response.ok) {
-      const errorText = await response.text();
-      throw new Error(`Failed to upload to Creatomate: ${response.status} ${errorText}`);
-    }
-
-    const result = await response.json();
-    debugLog(`✅ Video uploaded to Creatomate`, { sourceId: result.id, name });
-    return result.id;
-  } catch (error) {
-    debugLog(`❌ Upload to Creatomate failed:`, error.message);
-    throw error;
-  }
-}
-
 // Create dynamic template for video processing
 function createDynamicTemplate(videos: any[], platformConfig: any, customization: any, targetDuration: number) {
   const template = {
@@ -95,7 +64,7 @@ function createDynamicTemplate(videos: any[], platformConfig: any, customization
     
     template.elements.push({
       type: 'video',
-      source: video.sourceId,
+      source: video.file_url, // Use direct URLs instead of uploading
       x: '50%',
       y: '50%',
       width: '100%',
@@ -335,42 +304,25 @@ serve(async (req) => {
     debugLog("📐 Platform configuration", { platform, config: platformConfig });
 
     // ====================================================================
-    // PHASE 1: Upload videos to Creatomate media library
+    // PHASE 1: Create dynamic template (no upload needed, use direct URLs)
     // ====================================================================
-    debugLog("--- PHASE 1: Uploading videos to Creatomate ---");
-    const uploadPromises = videos.map(async (video, index) => {
-      try {
-        const sourceId = await uploadToCreatomate(video.file_url, `${video.name}_${index}`);
-        return { ...video, sourceId };
-      } catch (error) {
-        debugLog(`❌ Failed to upload video ${index}:`, error.message);
-        throw new Error(`Failed to upload video ${index + 1}: ${error.message}`);
-      }
-    });
-
-    const videosWithSources = await Promise.all(uploadPromises);
-    debugLog("--- PHASE 1 COMPLETE ---", { uploadedCount: videosWithSources.length });
+    debugLog("--- PHASE 1: Creating dynamic template ---");
+    const template = createDynamicTemplate(videos, platformConfig, customization, targetDuration);
+    debugLog("--- PHASE 1 COMPLETE ---", { elementsCount: template.elements.length });
 
     // ====================================================================
-    // PHASE 2: Create dynamic template
+    // PHASE 2: Create render
     // ====================================================================
-    debugLog("--- PHASE 2: Creating dynamic template ---");
-    const template = createDynamicTemplate(videosWithSources, platformConfig, customization, targetDuration);
-    debugLog("--- PHASE 2 COMPLETE ---", { elementsCount: template.elements.length });
-
-    // ====================================================================
-    // PHASE 3: Create render
-    // ====================================================================
-    debugLog("--- PHASE 3: Creating render ---");
+    debugLog("--- PHASE 2: Creating render ---");
     const renderId = await createRender(template);
-    debugLog("--- PHASE 3 COMPLETE ---", { renderId });
+    debugLog("--- PHASE 2 COMPLETE ---", { renderId });
 
     // ====================================================================
-    // PHASE 4: Wait for render completion
+    // PHASE 3: Wait for render completion
     // ====================================================================
-    debugLog("--- PHASE 4: Waiting for render completion ---");
+    debugLog("--- PHASE 3: Waiting for render completion ---");
     const finalVideoUrl = await waitForRenderCompletion(renderId);
-    debugLog("--- PHASE 4 COMPLETE ---", { finalVideoUrl });
+    debugLog("--- PHASE 3 COMPLETE ---", { finalVideoUrl });
 
     // ====================================================================
     // FINAL RESPONSE
