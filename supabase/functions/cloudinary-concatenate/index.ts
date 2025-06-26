@@ -198,7 +198,7 @@ async function concatenateVideoSegments(segmentIds: string[], timestamp: number)
 }
 
 // Apply customization overlays to the concatenated video
-async function applyCustomizationOverlays(baseVideoId: string, customization: any, platformConfig: any, targetDuration: number, timestamp: number): Promise<string> {
+async function applyCustomizationOverlays(baseVideoId: string, customization: any, platformConfig: any, targetDuration: number, timestamp: number): Promise<{publicId: string, url: string}> {
   const finalVideoId = `final_video_${timestamp}`;
   
   try {
@@ -239,53 +239,26 @@ async function applyCustomizationOverlays(baseVideoId: string, customization: an
       debugLog('Added text overlay', { text, duration: `0-${textEndTime}s` });
     }
     
-    // Phase 2: Add end frame elements for last 3 seconds
+    // Phase 2: Add end frame elements for last 3 seconds (without logo for now)
     const startTime = Math.max(targetDuration - 3, 0);
     
-    if (customization?.endFrame?.enabled) {
-      const logoSize = Math.min(platformConfig.width, platformConfig.height) * 0.15;
+    if (customization?.endFrame?.enabled && customization?.endFrame?.text) {
+      const fontSize = Math.min(platformConfig.width, platformConfig.height) * 0.05;
+      transformations.push({
+        overlay: {
+          font_family: 'Arial',
+          font_size: Math.round(fontSize),
+          font_weight: 'bold',
+          text: customization.endFrame.text
+        },
+        color: 'white',
+        gravity: 'center',
+        y: 0,
+        start_offset: startTime,
+        end_offset: targetDuration
+      });
       
-      // Add logo
-      if (customization.endFrame.logoPosition === 'center') {
-        transformations.push({
-          overlay: 'branding/itmatters_logo',
-          width: Math.round(logoSize),
-          gravity: 'center',
-          y: -50,
-          start_offset: startTime,
-          end_offset: targetDuration
-        });
-      } else {
-        transformations.push({
-          overlay: 'branding/itmatters_logo',
-          width: Math.round(logoSize * 0.7),
-          gravity: 'north_east',
-          x: 20,
-          y: 20,
-          start_offset: startTime,
-          end_offset: targetDuration
-        });
-      }
-      
-      // Add end frame text
-      if (customization.endFrame.text) {
-        const fontSize = Math.min(platformConfig.width, platformConfig.height) * 0.05;
-        transformations.push({
-          overlay: {
-            font_family: 'Arial',
-            font_size: Math.round(fontSize),
-            font_weight: 'bold',
-            text: customization.endFrame.text
-          },
-          color: 'white',
-          gravity: 'center',
-          y: customization.endFrame.logoPosition === 'center' ? 100 : 0,
-          start_offset: startTime,
-          end_offset: targetDuration
-        });
-      }
-      
-      debugLog('Added end frame elements', { duration: `${startTime}-${targetDuration}s` });
+      debugLog('Added end frame text', { text: customization.endFrame.text, duration: `${startTime}-${targetDuration}s` });
     }
     
     // Phase 3: Add CTA overlay for last 3 seconds
@@ -347,6 +320,16 @@ async function applyCustomizationOverlays(baseVideoId: string, customization: an
       quality: 'auto:good',
       audio_codec: 'aac'
     });
+    
+    // Only proceed if we have transformations to apply
+    if (transformations.length <= 1) { // Only quality setting
+      debugLog('⚠️ No overlays to apply, returning base video');
+      const fallbackUrl = cloudinary.url(baseVideoId, {
+        resource_type: 'video',
+        transformation: [{ quality: 'auto:good' }]
+      });
+      return { publicId: baseVideoId, url: fallbackUrl };
+    }
     
     // Apply all transformations to the base video
     const finalUrl = cloudinary.url(baseVideoId, {
