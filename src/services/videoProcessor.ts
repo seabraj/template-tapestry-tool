@@ -1,5 +1,4 @@
-
-// Enhanced videoProcessor.ts with customization support and updated progress tracking
+// Enhanced videoProcessor.ts with Creatomate support and updated progress tracking
 import { supabase } from '@/integrations/supabase/client';
 
 export interface VideoProcessingOptions {
@@ -50,27 +49,27 @@ interface ProgressUpdate {
 
 export class VideoProcessor {
   constructor() {
-    console.log('🎬 VideoProcessor initialized with customization support');
+    console.log('🎬 VideoProcessor initialized with Creatomate support');
   }
 
   async processVideo(
     options: VideoProcessingOptions, 
     onProgress?: (progress: number, details?: any) => void
   ): Promise<Blob> {
-    console.log('🚀 Starting video processing with customization:', options);
+    console.log('🚀 Starting video processing with Creatomate:', options);
     
-    return this.processVideoTraditional(options, onProgress);
+    return this.processVideoWithCreatomate(options, onProgress);
   }
 
   /**
-   * Traditional processing method with customization support
+   * New Creatomate processing method
    */
-  private async processVideoTraditional(
+  private async processVideoWithCreatomate(
     options: VideoProcessingOptions,
     onProgress?: (progress: number, details?: any) => void
   ): Promise<Blob> {
-    console.log('📡 Using traditional processing with customization...');
-    onProgress?.(5, { phase: 'initialization', message: 'Starting...' });
+    console.log('🎨 Using Creatomate for video processing...');
+    onProgress?.(5, { phase: 'initialization', message: 'Starting Creatomate processing...' });
 
     try {
       // Step 1: Validate sequences
@@ -84,7 +83,7 @@ export class VideoProcessor {
       );
       onProgress?.(35, { phase: 'duration_detection', message: 'Durations detected.' });
 
-      // Step 3: Prepare request with customization data
+      // Step 3: Prepare request for Creatomate
       const requestBody = {
         videos: videosWithExactDurations.map(video => ({
           publicId: video.publicId,
@@ -95,13 +94,13 @@ export class VideoProcessor {
         })),
         targetDuration: options.duration,
         platform: options.platform,
-        customization: options.customization, // Include customization data
+        customization: options.customization,
         exactDurations: true,
         enableProgress: false 
       };
 
-      console.log('📡 Calling edge function with customization:', requestBody);
-      onProgress?.(40, { phase: 'processing', message: 'Sending to backend...' });
+      console.log('🎨 Calling Creatomate edge function:', requestBody);
+      onProgress?.(40, { phase: 'processing', message: 'Sending to Creatomate...' });
       
       // Step 4: Process videos with retry logic using Supabase client
       const maxRetries = 3;
@@ -110,10 +109,10 @@ export class VideoProcessor {
       
       for (let attempt = 1; attempt <= maxRetries; attempt++) {
         try {
-          console.log(`📡 Attempt ${attempt}/${maxRetries} - Calling edge function with customization...`);
+          console.log(`🎨 Attempt ${attempt}/${maxRetries} - Calling Creatomate edge function...`);
           
-          // Use Supabase client to call the edge function
-          const { data: functionData, error: functionError } = await supabase.functions.invoke('cloudinary-concatenate', {
+          // Use Supabase client to call the new Creatomate edge function
+          const { data: functionData, error: functionError } = await supabase.functions.invoke('creatomate-process', {
             body: requestBody
           });
           
@@ -122,11 +121,11 @@ export class VideoProcessor {
           }
           
           if (!functionData?.success) {
-            throw new Error(functionData?.error || 'Backend processing failed');
+            throw new Error(functionData?.error || 'Creatomate processing failed');
           }
           
           if (!functionData?.url) {
-            throw new Error('Backend failed to return a valid video URL');
+            throw new Error('Creatomate failed to return a valid video URL');
           }
           
           data = functionData;
@@ -137,7 +136,7 @@ export class VideoProcessor {
           console.error(`❌ Attempt ${attempt} failed:`, lastError.message);
           
           if (attempt === maxRetries) {
-            throw new Error(`Video processing failed after ${maxRetries} attempts. Last error: ${lastError.message}`);
+            throw new Error(`Creatomate processing failed after ${maxRetries} attempts. Last error: ${lastError.message}`);
           }
           
           // Wait before retrying (exponential backoff)
@@ -153,33 +152,33 @@ export class VideoProcessor {
       }
       
       const finalUrl = data.url;
-      console.log(`✅ Success! Final URL with customization received: ${finalUrl}`);
+      console.log(`✅ Success! Final URL from Creatomate received: ${finalUrl}`);
       
-      // Enhanced progress phases for customization
-      onProgress?.(60, { phase: 'text_overlay', message: 'Adding text overlays...' });
+      // Enhanced progress phases for Creatomate
+      onProgress?.(60, { phase: 'template_creation', message: 'Creating dynamic template...' });
       await new Promise(resolve => setTimeout(resolve, 1000)); // Simulate processing time
       
-      onProgress?.(70, { phase: 'end_frame', message: 'Creating end frame...' });
+      onProgress?.(70, { phase: 'media_upload', message: 'Uploading videos to Creatomate...' });
       await new Promise(resolve => setTimeout(resolve, 1000));
       
-      onProgress?.(80, { phase: 'cta_processing', message: 'Adding call-to-action...' });
+      onProgress?.(80, { phase: 'rendering', message: 'Rendering video with customization...' });
       await new Promise(resolve => setTimeout(resolve, 1000));
       
-      onProgress?.(90, { phase: 'final_composition', message: 'Finalizing video...' });
+      onProgress?.(90, { phase: 'finalizing', message: 'Finalizing render...' });
       await new Promise(resolve => setTimeout(resolve, 1000));
       
       onProgress?.(95, { phase: 'downloading', message: 'Downloading final video...' });
 
       // Step 5: Download final video
-      console.log('📥 Downloading final video with customization...');
+      console.log('📥 Downloading final video from Creatomate...');
       const videoBlob = await this.downloadFromUrl(finalUrl);
       onProgress?.(100, { phase: 'complete', message: 'Done!' });
       
-      console.log('🎉 Video processing with customization complete!');
+      console.log('🎉 Creatomate video processing complete!');
       return videoBlob;
 
     } catch (error) {
-      console.error('❌ Video processing with customization failed:', error);
+      console.error('❌ Creatomate video processing failed:', error);
       onProgress?.(-1, { phase: 'error', message: error.message });
       throw error;
     }
@@ -320,7 +319,6 @@ export class VideoProcessor {
     });
   }
 
-  // Keep all your existing methods unchanged
   private validateSequences(sequences: any[]) {
     console.log('🔍 Validating sequences...');
     
@@ -347,11 +345,6 @@ export class VideoProcessor {
       } catch (e) {
         errors.push(`Sequence ${i + 1} (${seq.name || 'Unnamed'}): Invalid URL format`);
         continue;
-      }
-      
-      // Check if it's a Cloudinary URL
-      if (!seq.file_url.includes('cloudinary.com')) {
-        console.warn(`⚠️ Sequence ${i + 1} is not a Cloudinary URL: ${seq.file_url}`);
       }
       
       validSequences.push(seq);
