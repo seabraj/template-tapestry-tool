@@ -202,7 +202,7 @@ async function applyCustomizationOverlays(baseVideoId: string, customization: an
   const finalVideoId = `final_video_${timestamp}`;
   
   try {
-    const transformationParts = [];
+    const transformations = [];
     
     // Phase 1: Add text overlay for full video duration minus 3 seconds
     if (customization?.supers?.text) {
@@ -224,9 +224,31 @@ async function applyCustomizationOverlays(baseVideoId: string, customization: an
       const fontWeight = style === 'bold' ? 'bold' : 'normal';
       
       if (textEndTime > 0) {
-        transformationParts.push(`l_text:Arial_${Math.round(baseFontSize)}_${fontWeight}:${encodeURIComponent(text)},co_white,g_${gravity},y_${yOffset},so_0,eo_${textEndTime}`);
+        transformations.push({
+          overlay: {
+            font_family: 'Arial',
+            font_size: Math.round(baseFontSize),
+            font_weight: fontWeight,
+            text: text
+          },
+          color: 'white',
+          gravity: gravity,
+          y: yOffset,
+          start_offset: 0,
+          end_offset: textEndTime
+        });
       } else {
-        transformationParts.push(`l_text:Arial_${Math.round(baseFontSize)}_${fontWeight}:${encodeURIComponent(text)},co_white,g_${gravity},y_${yOffset}`);
+        transformations.push({
+          overlay: {
+            font_family: 'Arial',
+            font_size: Math.round(baseFontSize),
+            font_weight: fontWeight,
+            text: text
+          },
+          color: 'white',
+          gravity: gravity,
+          y: yOffset
+        });
       }
       
       debugLog('Added text overlay', { text, duration: textEndTime > 0 ? `0-${textEndTime}s` : 'full video' });
@@ -238,60 +260,115 @@ async function applyCustomizationOverlays(baseVideoId: string, customization: an
     if (customization?.endFrame?.enabled && startTime < targetDuration) {
       const logoSize = Math.min(platformConfig.width, platformConfig.height) * 0.15;
       
-      // Add logo using the correct format
+      // Add logo - try without .png extension first
       if (customization.endFrame.logoPosition === 'center') {
-        transformationParts.push(`l_branding:itmatters_logo.png,w_${Math.round(logoSize)},g_center,y_-50,so_${startTime},eo_${targetDuration}`);
+        transformations.push({
+          overlay: 'branding:itmatters_logo',
+          width: Math.round(logoSize),
+          gravity: 'center',
+          y: -50,
+          start_offset: startTime,
+          end_offset: targetDuration
+        });
       } else {
-        transformationParts.push(`l_branding:itmatters_logo.png,w_${Math.round(logoSize * 0.7)},g_north_east,x_20,y_20,so_${startTime},eo_${targetDuration}`);
+        transformations.push({
+          overlay: 'branding:itmatters_logo',
+          width: Math.round(logoSize * 0.7),
+          gravity: 'north_east',
+          x: 20,
+          y: 20,
+          start_offset: startTime,
+          end_offset: targetDuration
+        });
       }
       
       // Add end frame text
       if (customization.endFrame.text) {
         const fontSize = Math.min(platformConfig.width, platformConfig.height) * 0.05;
         const yPos = customization.endFrame.logoPosition === 'center' ? 100 : 0;
-        transformationParts.push(`l_text:Arial_${Math.round(fontSize)}_bold:${encodeURIComponent(customization.endFrame.text)},co_white,g_center,y_${yPos},so_${startTime},eo_${targetDuration}`);
+        transformations.push({
+          overlay: {
+            font_family: 'Arial',
+            font_size: Math.round(fontSize),
+            font_weight: 'bold',
+            text: customization.endFrame.text
+          },
+          color: 'white',
+          gravity: 'center',
+          y: yPos,
+          start_offset: startTime,
+          end_offset: targetDuration
+        });
       }
       
       debugLog('Added end frame elements with logo', { duration: `${startTime}-${targetDuration}s` });
     }
     
-    // Phase 3: Add CTA overlay for last 3 seconds with proper button backgrounds
+    // Phase 3: Add CTA overlay for last 3 seconds - simplified approach
     if (customization?.cta?.enabled && customization?.cta?.text && startTime < targetDuration) {
       const { text, style } = customization.cta;
       const fontSize = Math.min(platformConfig.width, platformConfig.height) * 0.04;
-      const buttonWidth = Math.round(platformConfig.width * 0.3);
-      const buttonHeight = Math.round(fontSize * 2.5);
       const yPos = Math.round(platformConfig.height * 0.15);
       
       if (style === 'button') {
-        // Create button background using solid color overlay
-        transformationParts.push(`l_solid:3B82F6,w_${buttonWidth},h_${buttonHeight},g_south,y_${yPos},so_${startTime},eo_${targetDuration}`);
+        // Simple button text with background color effect
+        transformations.push({
+          overlay: {
+            font_family: 'Arial',
+            font_size: Math.round(fontSize),
+            font_weight: 'bold',
+            text: `🔵 ${text} 🔵`
+          },
+          color: 'white',
+          gravity: 'south',
+          y: yPos,
+          start_offset: startTime,
+          end_offset: targetDuration
+        });
         
-        // Add button text on top
-        transformationParts.push(`l_text:Arial_${Math.round(fontSize)}_bold:${encodeURIComponent(text)},co_white,g_south,y_${yPos},so_${startTime},eo_${targetDuration}`);
-        
-        debugLog('Added CTA button overlay', { text, style, duration: `${startTime}-${targetDuration}s` });
+        debugLog('Added CTA button overlay (simplified)', { text, style, duration: `${startTime}-${targetDuration}s` });
         
       } else if (style === 'text') {
         const textYPos = Math.round(platformConfig.height * 0.1);
-        transformationParts.push(`l_text:Arial_${Math.round(fontSize)}_bold:${encodeURIComponent(text)},co_white,g_south,y_${textYPos},so_${startTime},eo_${targetDuration}`);
+        transformations.push({
+          overlay: {
+            font_family: 'Arial',
+            font_size: Math.round(fontSize),
+            font_weight: 'bold',
+            text: text
+          },
+          color: 'white',
+          gravity: 'south',
+          y: textYPos,
+          start_offset: startTime,
+          end_offset: targetDuration
+        });
         
         debugLog('Added CTA text overlay', { text, style, duration: `${startTime}-${targetDuration}s` });
         
       } else if (style === 'animated') {
-        // Create animated button background with purple color
-        transformationParts.push(`l_solid:8B5CF6,w_${buttonWidth},h_${buttonHeight},g_south,y_${yPos},so_${startTime},eo_${targetDuration}`);
-        
-        // Add animated button text with sparkle
-        const animatedText = `${text} ✨`;
-        transformationParts.push(`l_text:Arial_${Math.round(fontSize)}_bold:${encodeURIComponent(animatedText)},co_white,g_south,y_${yPos},so_${startTime},eo_${targetDuration}`);
+        // Animated with sparkle
+        const animatedText = `✨ ${text} ✨`;
+        transformations.push({
+          overlay: {
+            font_family: 'Arial',
+            font_size: Math.round(fontSize),
+            font_weight: 'bold',
+            text: animatedText
+          },
+          color: 'white',
+          gravity: 'south',
+          y: yPos,
+          start_offset: startTime,
+          end_offset: targetDuration
+        });
         
         debugLog('Added CTA animated overlay', { text, style, duration: `${startTime}-${targetDuration}s` });
       }
     }
     
     // Only proceed if we have transformations to apply
-    if (transformationParts.length === 0) {
+    if (transformations.length === 0) {
       debugLog('⚠️ No overlays to apply, returning base video');
       const fallbackUrl = cloudinary.url(baseVideoId, {
         resource_type: 'video',
@@ -300,18 +377,18 @@ async function applyCustomizationOverlays(baseVideoId: string, customization: an
       return { publicId: baseVideoId, url: fallbackUrl };
     }
     
-    // Apply all transformations as a single chain
-    const transformationString = transformationParts.join('/');
-    
     debugLog('Applying customization overlays', { 
-      transformationCount: transformationParts.length,
-      transformationString: transformationString.substring(0, 200) + '...' // Log first 200 chars
+      transformationCount: transformations.length,
+      transformations: transformations.map(t => ({ 
+        type: t.overlay ? (typeof t.overlay === 'string' ? 'image' : 'text') : 'unknown',
+        text: typeof t.overlay === 'object' ? t.overlay.text : 'N/A'
+      }))
     });
     
     const result = await cloudinary.uploader.upload(
       cloudinary.url(baseVideoId, {
         resource_type: 'video',
-        transformation: transformationString
+        transformation: transformations
       }),
       {
         resource_type: 'video',
