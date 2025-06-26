@@ -93,23 +93,33 @@ export class VideoProcessor {
         try {
           console.log(`📡 Attempt ${attempt}/${maxRetries} - Calling edge function...`);
           
-          const response = await supabase.functions.invoke('cloudinary-concatenate', {
-            body: requestBody
+          // Make direct HTTP request to bypass JWT authentication
+          const edgeFunctionUrl = 'https://rihlnnxodrxzaxunwurc.supabase.co/functions/v1/cloudinary-concatenate';
+          
+          const response = await fetch(edgeFunctionUrl, {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              'apikey': 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InJpaGxubnhvZHJ4emF4dW53dXJjIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NTAwNzMyMjIsImV4cCI6MjA2NTY0OTIyMn0.0NfXK2GWdduughXFjPhRR2wGx1AROIRkaMcarj2cBYg'
+            },
+            body: JSON.stringify(requestBody)
           });
           
-          if (response.error) {
-            throw new Error(`Edge function error: ${response.error.message}`);
+          if (!response.ok) {
+            const errorText = await response.text();
+            throw new Error(`HTTP ${response.status}: ${errorText}`);
           }
           
-          if (!response.data?.success) {
-            throw new Error(response.data?.error || 'Backend processing failed');
+          data = await response.json();
+          
+          if (!data?.success) {
+            throw new Error(data?.error || 'Backend processing failed');
           }
           
-          if (!response.data?.url) {
+          if (!data?.url) {
             throw new Error('Backend failed to return a valid video URL');
           }
           
-          data = response.data;
           break; // Success, exit retry loop
           
         } catch (error) {

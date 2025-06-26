@@ -127,6 +127,14 @@ serve(async (req) => {
     });
   }
 
+  // Allow requests without JWT authentication
+  if (req.method !== 'POST') {
+    return new Response(JSON.stringify({ error: 'Method not allowed' }), {
+      status: 405,
+      headers: { ...corsHeaders, "Content-Type": "application/json" },
+    });
+  }
+
   const temporaryAssetIds = new Set<string>();
   try {
     const { videos, targetDuration, platform } = await req.json();
