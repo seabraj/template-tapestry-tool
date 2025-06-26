@@ -48,9 +48,11 @@ function getPlatformDimensions(platform: string) {
 // Create dynamic template for video processing
 function createDynamicTemplate(videos: any[], platformConfig: any, customization: any, targetDuration: number) {
   const template = {
+    output_format: 'mp4',
     width: platformConfig.width,
     height: platformConfig.height,
     duration: targetDuration,
+    frame_rate: 30,
     elements: []
   };
 
@@ -64,14 +66,15 @@ function createDynamicTemplate(videos: any[], platformConfig: any, customization
     
     template.elements.push({
       type: 'video',
-      source: video.file_url, // Use direct URLs instead of uploading
+      source: video.file_url,
       x: '50%',
       y: '50%',
       width: '100%',
       height: '100%',
       time: currentTime,
       duration: proportionalDuration,
-      fit: 'cover'
+      fit: 'cover',
+      volume: 1
     });
 
     currentTime += proportionalDuration;
@@ -95,11 +98,14 @@ function createDynamicTemplate(videos: any[], platformConfig: any, customization
       height: 'auto',
       time: 0,
       duration: Math.min(7, targetDuration),
-      font_family: 'Arial',
+      font_family: 'Arial Black',
       font_size: Math.round(fontSize),
       font_weight: style === 'bold' ? 'bold' : 'normal',
       fill_color: '#ffffff',
-      align: 'center'
+      stroke_color: '#000000',
+      stroke_width: 2,
+      align: 'center',
+      vertical_align: 'middle'
     });
   }
 
@@ -108,7 +114,7 @@ function createDynamicTemplate(videos: any[], platformConfig: any, customization
   if (customization?.endFrame?.enabled && endFrameStart < targetDuration) {
     const endFrameDuration = targetDuration - endFrameStart;
     
-    // Add logo (placeholder for now - would need actual logo asset)
+    // Add logo placeholder
     if (customization.endFrame.logoPosition === 'center') {
       template.elements.push({
         type: 'text',
@@ -119,11 +125,14 @@ function createDynamicTemplate(videos: any[], platformConfig: any, customization
         height: 'auto',
         time: endFrameStart,
         duration: endFrameDuration,
-        font_family: 'Arial',
+        font_family: 'Arial Black',
         font_size: Math.round(platformConfig.width * 0.08),
         font_weight: 'bold',
         fill_color: '#ffffff',
-        align: 'center'
+        stroke_color: '#000000',
+        stroke_width: 2,
+        align: 'center',
+        vertical_align: 'middle'
       });
     }
     
@@ -142,7 +151,10 @@ function createDynamicTemplate(videos: any[], platformConfig: any, customization
         font_size: Math.round(platformConfig.width * 0.05),
         font_weight: 'bold',
         fill_color: '#ffffff',
-        align: 'center'
+        stroke_color: '#000000',
+        stroke_width: 1,
+        align: 'center',
+        vertical_align: 'middle'
       });
     }
   }
@@ -171,7 +183,10 @@ function createDynamicTemplate(videos: any[], platformConfig: any, customization
       font_size: Math.round(platformConfig.width * 0.04),
       font_weight: 'bold',
       fill_color: '#ffffff',
-      align: 'center'
+      stroke_color: '#000000',
+      stroke_width: 1,
+      align: 'center',
+      vertical_align: 'middle'
     });
   }
 
@@ -181,7 +196,24 @@ function createDynamicTemplate(videos: any[], platformConfig: any, customization
 // Create render using Creatomate API
 async function createRender(template: any): Promise<string> {
   try {
-    debugLog('Creating render with Creatomate', { templateElements: template.elements.length });
+    debugLog('Creating render with Creatomate API', { 
+      templateWidth: template.width,
+      templateHeight: template.height,
+      templateDuration: template.duration,
+      elementsCount: template.elements.length 
+    });
+    
+    // Use the correct Creatomate API structure
+    const requestBody = {
+      template_id: null, // We're using a custom template, not a pre-made one
+      template: template, // Pass the full template object
+      webhook_url: null
+    };
+    
+    debugLog('Sending request to Creatomate', { 
+      url: `${CREATOMATE_API_BASE}/renders`,
+      bodyKeys: Object.keys(requestBody)
+    });
     
     const response = await fetch(`${CREATOMATE_API_BASE}/renders`, {
       method: 'POST',
@@ -189,28 +221,43 @@ async function createRender(template: any): Promise<string> {
         'Authorization': `Bearer ${CREATOMATE_API_KEY}`,
         'Content-Type': 'application/json',
       },
-      body: JSON.stringify({
-        source: template,  // Use 'source' instead of 'template'
-        output_format: 'mp4'
-      })
+      body: JSON.stringify(requestBody)
+    });
+
+    debugLog(`API Response status: ${response.status}`, { 
+      ok: response.ok,
+      statusText: response.statusText 
     });
 
     if (!response.ok) {
       const errorText = await response.text();
-      debugLog(`❌ Render creation failed with status ${response.status}`, { error: errorText });
-      throw new Error(`Failed to create render: ${response.status} ${errorText}`);
+      debugLog(`❌ Render creation failed with status ${response.status}`, { 
+        error: errorText,
+        headers: Object.fromEntries(response.headers.entries())
+      });
+      throw new Error(`Failed to create render: ${response.status} - ${errorText}`);
     }
 
     const result = await response.json();
-    debugLog(`✅ Render created successfully`, { renderId: result.id, status: result.status });
+    debugLog(`✅ API Response received`, { 
+      hasId: !!result.id,
+      status: result.status,
+      resultKeys: Object.keys(result)
+    });
     
     if (!result.id) {
+      debugLog('❌ No render ID in response', { fullResponse: result });
       throw new Error('Render creation succeeded but no ID was returned');
     }
     
+    debugLog(`✅ Render created successfully with ID: ${result.id}`);
     return result.id;
+    
   } catch (error) {
-    debugLog(`❌ Render creation failed:`, error.message);
+    debugLog(`❌ Render creation failed:`, { 
+      message: error.message,
+      stack: error.stack 
+    });
     throw error;
   }
 }
@@ -224,7 +271,7 @@ async function waitForRenderCompletion(renderId: string): Promise<string> {
 
   for (let attempt = 1; attempt <= maxAttempts; attempt++) {
     try {
-      debugLog(`Checking render status (attempt ${attempt}/${maxAttempts})`, { renderId });
+      debugLog(`Polling attempt ${attempt}/${maxAttempts} for render ${renderId}`);
       
       const response = await fetch(`${CREATOMATE_API_BASE}/renders/${renderId}`, {
         method: 'GET',
@@ -234,14 +281,17 @@ async function waitForRenderCompletion(renderId: string): Promise<string> {
         }
       });
 
-      debugLog(`Render status API response: ${response.status}`, { 
-        url: `${CREATOMATE_API_BASE}/renders/${renderId}`,
-        headers: response.headers 
+      debugLog(`Status check response: ${response.status}`, { 
+        ok: response.ok,
+        statusText: response.statusText
       });
 
       if (!response.ok) {
         const errorText = await response.text();
-        debugLog(`❌ Status check failed with ${response.status}`, { error: errorText, renderId });
+        debugLog(`❌ Status check failed`, { 
+          status: response.status,
+          error: errorText 
+        });
         
         if (response.status === 404) {
           throw new Error(`Render not found (ID: ${renderId}). The render may have expired or been deleted.`);
@@ -255,11 +305,12 @@ async function waitForRenderCompletion(renderId: string): Promise<string> {
       }
 
       const result = await response.json();
-      debugLog(`Render status response:`, { 
+      debugLog(`Render status update:`, { 
         status: result.status, 
         progress: result.progress,
         hasUrl: !!result.url,
-        error: result.error 
+        hasError: !!result.error,
+        attempt: `${attempt}/${maxAttempts}`
       });
 
       if (result.status === 'succeeded') {
@@ -276,8 +327,7 @@ async function waitForRenderCompletion(renderId: string): Promise<string> {
         // Still processing - continue polling
         debugLog(`🔄 Render still processing`, { 
           status: result.status, 
-          progress: result.progress || 'unknown',
-          attempt: `${attempt}/${maxAttempts}`
+          progress: result.progress || 'unknown'
         });
       }
 
@@ -288,7 +338,10 @@ async function waitForRenderCompletion(renderId: string): Promise<string> {
       }
       
     } catch (error) {
-      debugLog(`❌ Error during status check attempt ${attempt}:`, error.message);
+      debugLog(`❌ Error during status check attempt ${attempt}:`, { 
+        message: error.message,
+        isLastAttempt: attempt === maxAttempts 
+      });
       
       if (attempt === maxAttempts) {
         throw new Error(`Render status check failed after ${maxAttempts} attempts: ${error.message}`);
@@ -328,7 +381,12 @@ serve(async (req) => {
 
   try {
     const requestBody = await req.json();
-    debugLog('📨 Request body received', requestBody);
+    debugLog('📨 Request body received', { 
+      hasVideos: !!requestBody.videos,
+      videoCount: requestBody.videos?.length,
+      platform: requestBody.platform,
+      targetDuration: requestBody.targetDuration
+    });
 
     const { videos, targetDuration, platform, customization } = requestBody;
 
@@ -355,7 +413,7 @@ serve(async (req) => {
     debugLog("📐 Platform configuration", { platform, config: platformConfig });
 
     // ====================================================================
-    // PHASE 1: Create dynamic template (no upload needed, use direct URLs)
+    // PHASE 1: Create dynamic template
     // ====================================================================
     debugLog("--- PHASE 1: Creating dynamic template ---");
     const template = createDynamicTemplate(videos, platformConfig, customization, targetDuration);
@@ -385,7 +443,11 @@ serve(async (req) => {
     });
 
   } catch (error) {
-    debugLog("❌ FATAL ERROR", { message: error.message, stack: error.stack });
+    debugLog("❌ FATAL ERROR", { 
+      message: error.message, 
+      stack: error.stack,
+      name: error.name 
+    });
     
     return new Response(JSON.stringify({ 
       success: false, 
