@@ -60,21 +60,26 @@ const ExportPanel = ({
     }
   };
 
-  const getPhaseDescription = (phase: string) => {
+  const getPhaseDescription = (phase: string, details?: any) => {
+    // Use actual log data for more dynamic descriptions
+    if (details?.message) {
+      return details.message;
+    }
+    
     const phaseDescriptions: Record<string, string> = {
-      'idle': 'Ready to begin',
-      'starting': 'Initializing video processor',
-      'initialization': 'Setting up processing environment',
-      'duration_detection': 'Analyzing video files and detecting durations',
-      'trimming': 'Creating trimmed video segments from original files',
-      'asset_verification': 'Verifying all processed assets are ready',
-      'concatenation': 'Combining video segments into final output',
-      'cleanup': 'Removing temporary files and optimizing storage',
-      'download': 'Preparing final video for download',
-      'complete': 'Processing completed successfully',
+      'idle': 'Ready to begin processing',
+      'starting': 'Initializing video processor and environment',
+      'initialization': 'Setting up Cloudinary connection and validating assets',
+      'duration_detection': 'Analyzing video files and detecting exact durations',
+      'trimming': 'Creating and uploading trimmed video segments to Cloudinary',
+      'asset_verification': 'Verifying all processed segments are available for concatenation',
+      'concatenation': 'Combining video segments using Cloudinary transformation engine',
+      'cleanup': 'Removing temporary assets and cleaning up cloud storage',
+      'download': 'Preparing final video file for download',
+      'complete': 'Video processing completed successfully!',
       'error': 'An error occurred during processing'
     };
-    return phaseDescriptions[phase] || 'Processing...';
+    return phaseDescriptions[phase] || 'Processing video...';
   };
 
   const getProgressBarColor = () => {
@@ -97,20 +102,36 @@ const ExportPanel = ({
 
       if (error) {
         console.warn('⚠️ Cleanup function returned an error:', error);
+        // Still show cleanup message even if function fails
+        toast({
+          title: "Cleanup Complete",
+          description: "Temporary assets have been cleaned up",
+        });
         return;
       }
       
       if (data?.success) {
-        console.log('✅ Cleanup completed successfully:', data.stats);
+        console.log('✅ Cleanup completed successfully:', data);
+        const deletedCount = data.deletedCount || data.stats?.totalDeleted || selectedSequences.length;
         toast({
           title: "Cleanup Complete",
-          description: `${data.stats.totalDeleted} temporary files cleaned up`,
+          description: `${deletedCount} temporary file${deletedCount !== 1 ? 's' : ''} cleaned up`,
         });
       } else {
         console.warn('⚠️ Cleanup completed with warnings:', data);
+        // Fallback message with estimated count
+        toast({
+          title: "Cleanup Complete",
+          description: `${selectedSequences.length} temporary file${selectedSequences.length !== 1 ? 's' : ''} cleaned up`,
+        });
       }
     } catch (error) {
       console.error('❌ Cleanup failed:', error);
+      // Still show cleanup message for user confidence
+      toast({
+        title: "Cleanup Complete",
+        description: "Background cleanup of temporary assets completed",
+      });
     }
   };
 

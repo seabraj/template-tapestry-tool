@@ -10,6 +10,7 @@ import ExportPanel from '@/components/ExportPanel';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
 import { Play, Sparkles, Upload, Settings, Video } from 'lucide-react';
+import { getFullVersionString } from '@/utils/version';
 
 export type Platform = 'youtube' | 'facebook' | 'instagram';
 export type Language = 'en' | 'es' | 'fr' | 'de';
@@ -310,6 +311,13 @@ const Index = () => {
           </div>
         </div>
       </div>
+      
+      {/* Version Footer */}
+      <footer className="text-center py-6 border-t border-white/10 mt-12">
+        <p className="text-sm text-white/40">
+          {getFullVersionString()}
+        </p>
+      </footer>
     </div>
   );
 };
