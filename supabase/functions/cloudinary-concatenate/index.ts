@@ -1,4 +1,3 @@
-
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
 import { v2 as cloudinary } from 'npm:cloudinary@^1.41.1';
@@ -365,7 +364,7 @@ async function applyCustomizationOverlays(baseVideoId: string, customization: an
     });
     
     debugLog(`✅ Customization applied successfully: ${finalVideoId}`);
-    return result.secure_url;
+    return { publicId: finalVideoId, url: result.secure_url };
   } catch (error) {
     debugLog(`❌ Customization overlay failed:`, error.message);
     // Return the base concatenated video as fallback
@@ -374,7 +373,7 @@ async function applyCustomizationOverlays(baseVideoId: string, customization: an
       transformation: [{ quality: 'auto:good' }]
     });
     debugLog(`⚠️ Returning fallback video without customization`);
-    return fallbackUrl;
+    return { publicId: baseVideoId, url: fallbackUrl };
   }
 }
 
@@ -402,6 +401,8 @@ serve(async (req) => {
   }
 
   const temporaryAssetIds = new Set<string>();
+  let finalVideoId: string | null = null;
+  
   try {
     const requestBody = await req.json();
     debugLog('📨 Request body received', requestBody);
@@ -476,20 +477,32 @@ serve(async (req) => {
     // PHASE 4: Apply Customization Overlays
     // ====================================================================
     debugLog("--- PHASE 4: Applying customization overlays ---");
-    const finalUrl = await applyCustomizationOverlays(
+    const customizationResult = await applyCustomizationOverlays(
       concatenatedVideoId, 
       customization, 
       platformConfig, 
       targetDuration, 
       timestamp
     );
+    
+    // If customization created a new video, track it but don't delete it
+    if (customizationResult.publicId !== concatenatedVideoId) {
+      finalVideoId = customizationResult.publicId;
+      debugLog("✅ New customized video created", { finalVideoId });
+    } else {
+      // If using fallback, don't delete the concatenated video
+      finalVideoId = concatenatedVideoId;
+      temporaryAssetIds.delete(concatenatedVideoId); // Remove from cleanup list
+      debugLog("⚠️ Using fallback concatenated video", { finalVideoId });
+    }
+    
     debugLog("--- PHASE 4 COMPLETE ---");
 
     // ====================================================================
-    // PHASE 5: CLEANUP
+    // PHASE 5: CLEANUP (Only delete segments, keep final video)
     // ====================================================================
     if (temporaryAssetIds.size > 0) {
-      debugLog("--- CLEANUP: Deleting temporary assets ---", { ids: Array.from(temporaryAssetIds) });
+      debugLog("--- CLEANUP: Deleting temporary segments only ---", { ids: Array.from(temporaryAssetIds) });
       try {
         for (const assetId of temporaryAssetIds) {
           try {
@@ -508,8 +521,8 @@ serve(async (req) => {
     // ====================================================================
     // FINAL RESPONSE
     // ====================================================================
-    debugLog("🎉 SUCCESS: Returning final response", { finalUrl });
-    return new Response(JSON.stringify({ success: true, url: finalUrl }), {
+    debugLog("🎉 SUCCESS: Returning final response", { finalUrl: customizationResult.url });
+    return new Response(JSON.stringify({ success: true, url: customizationResult.url }), {
       headers: { ...corsHeaders, "Content-Type": "application/json" },
       status: 200,
     });
@@ -517,10 +530,15 @@ serve(async (req) => {
   } catch (error) {
     debugLog("❌ FATAL ERROR", { message: error.message, stack: error.stack });
     
-    // Cleanup on error
-    if (temporaryAssetIds.size > 0) {
-      debugLog("--- CLEANUP ON ERROR: Deleting temporary assets ---", { ids: Array.from(temporaryAssetIds) });
-      for (const assetId of temporaryAssetIds) {
+    // Cleanup on error (delete everything including final video if it was created)
+    if (temporaryAssetIds.size > 0 || finalVideoId) {
+      debugLog("--- CLEANUP ON ERROR: Deleting all assets ---");
+      const allAssets = [...Array.from(temporaryAssetIds)];
+      if (finalVideoId && !temporaryAssetIds.has(finalVideoId)) {
+        allAssets.push(finalVideoId);
+      }
+      
+      for (const assetId of allAssets) {
         cloudinary.uploader.destroy(assetId, { resource_type: 'video' }).catch(err => {
           debugLog(`⚠️ Failed to delete ${assetId} during error cleanup:`, err.message);
         });
